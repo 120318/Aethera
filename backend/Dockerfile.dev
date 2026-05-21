@@ -1,0 +1,49 @@
+FROM python:3.12-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+  build-essential gcc libffi-dev libssl-dev curl ca-certificates libglib2.0-0 ffmpeg openssh-client sshpass \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --chown=${USER_ID}:${GROUP_ID} requirements.txt /app/
+RUN python3 -m pip install --upgrade pip setuptools wheel \
+  && python3 -m pip install --no-cache-dir -r /app/requirements.txt
+
+COPY --chown=${USER_ID}:${GROUP_ID} app /app/app
+COPY --chown=${USER_ID}:${GROUP_ID} scripts /app/scripts
+COPY --chown=${USER_ID}:${GROUP_ID} alembic /app/alembic
+COPY --chown=${USER_ID}:${GROUP_ID} alembic.ini /app/alembic.ini
+
+# Create a user with the requested UID/GID so the image has a non-root user.
+# We create the user after dependencies are installed to keep install steps running as root.
+RUN set -eux \
+  && groupadd -g ${GROUP_ID} appgroup || true \
+  && id -u appuser >/dev/null 2>&1 || useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/sh appuser || true
+
+EXPOSE 3001
+
+# Copy entrypoint and make it executable. Keep default user as root so entrypoint
+# can perform chown on mounted volumes, then drop privileges to the target user.
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+FROM base AS dev
+
+COPY --chown=${USER_ID}:${GROUP_ID} requirements-dev.txt /app/
+RUN python3 -m pip install --no-cache-dir -r /app/requirements-dev.txt
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python", "-m", "app.bootstrap"]
+
+FROM base AS runtime
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python", "-m", "app.bootstrap"]

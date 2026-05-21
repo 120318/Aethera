@@ -1,0 +1,25 @@
+FROM node:20-alpine
+
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+
+WORKDIR /app
+
+# Create non-root user in the image to avoid running dev server as root when
+# the container is started without an explicit user. Use build args to set
+# UID/GID; docker-compose `user:` will still override at runtime when used.
+RUN apk add --no-cache shadow || true
+RUN addgroup -g ${GROUP_ID} appgroup \
+		&& adduser -D -u ${USER_ID} -G appgroup -s /bin/sh appuser || true
+
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+COPY . .
+RUN chown -R ${USER_ID}:${GROUP_ID} /app || true
+
+EXPOSE 5173
+
+USER ${USER_ID}:${GROUP_ID}
+
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]

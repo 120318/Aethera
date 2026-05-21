@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+httpx
+aiohttp
+pydantic
+python-dotenv
+sqlalchemy>=2.0,<2.1
+alembic>=1.13,<2
+bencodepy
+apscheduler
+libtorrent
+pytest-asyncio
+qbittorrent-api>=2025.11
+diskcache
+PyYAML
+PyJWT[crypto]

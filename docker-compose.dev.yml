@@ -1,0 +1,71 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+      target: dev
+      args:
+        USER_ID: ${PUID:-1000}
+        GROUP_ID: ${PGID:-1000}
+    command: python -m app.bootstrap
+    volumes:
+      - ./backend/app:/app/app # Mount backend source during development.
+      - ./backend/scripts:/app/scripts
+      - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini:ro
+      - ./backend/entrypoint.sh:/entrypoint.sh:ro
+      - ./config:/config
+      - ${AETHERA_MEDIA_PATH:-./media}:/data
+    ports:
+      - '${AETHERA_DEV_BACKEND_PORT:-8001}:3001'
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - TZ=Asia/Shanghai
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - BACKEND_MODE=${AETHERA_DEV_BACKEND_MODE:-dev}
+      - AETHERA_DEV_HOT_RELOAD=${AETHERA_DEV_HOT_RELOAD:-1}
+      - UVICORN_WORKERS=${AETHERA_DEV_UVICORN_WORKERS:-4}
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+      args:
+        USER_ID: ${AETHERA_DEV_UID:-1000}
+        GROUP_ID: ${AETHERA_DEV_GID:-1000}
+    # Run frontend dev server as host user to avoid permission issues on mounted
+    # frontend files and created artifacts.
+    user: "${AETHERA_DEV_UID:-1000}:${AETHERA_DEV_GID:-1000}"
+    command:
+      - sh
+      - -c
+      - |
+        if [ "$${AETHERA_DEV_HOT_RELOAD:-1}" = "1" ]; then
+          npm run dev -- --host 0.0.0.0 --port 5173
+        else
+          npm run build -- --outDir /tmp/aethera-frontend-dist --emptyOutDir
+          npm run preview -- --host 0.0.0.0 --port 5173 --outDir /tmp/aethera-frontend-dist
+        fi
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules # Keep container node_modules from being overwritten.
+    ports:
+      - '${AETHERA_DEV_FRONTEND_PORT:-8173}:5173'
+    environment:
+      - NODE_ENV=development
+      - TZ=Asia/Shanghai
+      - AETHERA_DEV_HOT_RELOAD=${AETHERA_DEV_HOT_RELOAD:-1}
+    depends_on:
+      - backend
+
+  sqlite-web:
+    image: coleifer/sqlite-web
+    command: sqlite_web /data/aethera.db --host 0.0.0.0 --port 8080
+    volumes:
+      - ./config/db:/data:ro
+    ports:
+      - '${AETHERA_SQLITE_WEB_PORT:-8081}:8080'
+    depends_on:
+      - backend

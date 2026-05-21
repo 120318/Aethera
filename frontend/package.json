@@ -1,0 +1,39 @@
+{
+  "name": "aethera-frontend",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "quality:custom": "node scripts/check-quality.mjs",
+    "quality": "npm run quality:custom && npm run lint && npm run build"
+  },
+  "dependencies": {
+    "@primeuix/themes": "^2.0.3",
+    "@primevue/forms": "^4.5.4",
+    "@primevue/themes": "^4.5.4",
+    "axios": "^1.4.0",
+    "pinia": "^3.0.4",
+    "primeicons": "^7.0.0",
+    "primevue": "^4.5.4",
+    "sortablejs": "^1.15.7",
+    "vue": "^3.3.0",
+    "vue-i18n": "^11.4.0",
+    "vue-router": "^4.5.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "@vitejs/plugin-vue": "^4.6.2",
+    "autoprefixer": "^10.4.24",
+    "eslint": "^9.18.0",
+    "eslint-plugin-vue": "^9.32.0",
+    "globals": "^15.14.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.18",
+    "tailwindcss-primeui": "^0.6.1",
+    "vite": "^5.0.0"
+  }
+}

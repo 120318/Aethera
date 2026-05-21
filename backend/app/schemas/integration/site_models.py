@@ -1,0 +1,49 @@
+from pydantic import BaseModel
+
+from app.schemas.domain.media_types import MediaType
+
+
+class SiteInfo(BaseModel):
+    """Internal helper."""
+    id: str
+    name: str
+    description: str
+    language: str
+    type: str
+
+
+class SiteSearchCapabilities(BaseModel):
+    supports_doubanid: bool = False
+    supports_imdbid: bool = False
+    supports_q: bool = True
+    supports_movie: bool = True
+    supports_tv: bool = True
+
+
+class IndexerSiteSetting(BaseModel):
+    site_id: str
+    enabled: bool = True
+    disable_title: bool = False
+    disable_imdb: bool = False
+    disable_douban: bool = False
+    media_types: list[MediaType] | None = None
+
+
+def supported_media_types_from_caps(capabilities: SiteSearchCapabilities) -> set[MediaType]:
+    supported_media_types: set[MediaType] = set()
+    if capabilities.supports_movie:
+        supported_media_types.add(MediaType.movie)
+    if capabilities.supports_tv:
+        supported_media_types.add(MediaType.tv)
+    return supported_media_types
+
+
+def effective_media_types_from_caps(
+    capabilities: SiteSearchCapabilities,
+    media_types: list[MediaType] | None,
+) -> set[MediaType]:
+    supported_media_types = supported_media_types_from_caps(capabilities)
+    if media_types is None:
+        return supported_media_types
+    requested_media_types = set(media_types)
+    return requested_media_types & supported_media_types

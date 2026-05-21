@@ -1,0 +1,19 @@
+# Aethera release deployment template.
+# Download this file together with env.example from a GitHub release.
+
+services:
+  aethera:
+    image: ${AETHERA_IMAGE:-n120318/aethera}:${AETHERA_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - BACKEND_MODE=prod
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-4}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - AETHERA_ADMIN_PASSWORD=${AETHERA_ADMIN_PASSWORD:-}
+    ports:
+      - '${AETHERA_HTTP_PORT:-8173}:3001'
+    volumes:
+      - ${AETHERA_CONFIG_PATH:-./config}:/config
+      - ${AETHERA_MEDIA_PATH:-./media}:/data

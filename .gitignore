@@ -1,0 +1,58 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# Environment / local tool state
+.env
+.env.bak*
+.env.local
+.env.*.local
+.codex
+.agents/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+.coverage-reports/
+htmlcov/
+.venv/
+env/
+venv/
+ENV/
+*.egg-info/
+
+# Node / frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs / temp
+dist/
+build/
+*.log
+/tmp/
+
+# App runtime data
+/config/
+/media/
+*.torrent
+*.magnet
+
+# Local secrets / overrides
+*.conf.local
+*.config.local
+config.local.*
+secrets.json
+.secrets
