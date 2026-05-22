@@ -41,6 +41,8 @@ export default {
     networkError: '网络错误: {message}',
     connectionSuccess: '连接成功',
     unknownError: '未知错误',
+    showSecret: '显示密钥',
+    hideSecret: '隐藏密钥',
   },
   empty: {
     noData: '暂无数据',

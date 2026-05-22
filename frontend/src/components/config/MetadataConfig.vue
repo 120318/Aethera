@@ -43,11 +43,10 @@
         <div class="grid grid-cols-1 md:grid-cols-2 gap-item items-center">
           <div class="ui-dialog-section m-none md:self-center">
             <label for="tmdb-api-key" class="ui-dialog-item-title block">{{ $t('common.apiKey') }}</label>
-            <InputText
-              id="tmdb-api-key"
+            <SecretInput
               v-model="tmdb.api_key"
+              input-id="tmdb-api-key"
               :placeholder="$t('settings.metadata.apiKeyPlaceholder')"
-              class="w-full"
             />
           </div>
           <div class="ui-dialog-section m-none">
@@ -133,7 +132,6 @@
 
 <script setup>
 import { computed, reactive, ref, onMounted, watch } from 'vue'
-import InputText from 'primevue/inputtext'
 import Button from 'primevue/button'
 import PickList from 'primevue/picklist'
 import ToggleSwitch from 'primevue/toggleswitch'
@@ -143,6 +141,7 @@ import { useNotificationStore } from '@/stores/notification'
 import { useMediaImageSettingsStore } from '@/stores/media-image-settings'
 import { saveDoubanConfig, saveServicesConfig, saveTMDBConfig } from '@/api/config'
 import { getDiscoverListMetas } from '@/api/discover'
+import SecretInput from '@/components/common/SecretInput.vue'
 
 const props = defineProps({
   config: {
