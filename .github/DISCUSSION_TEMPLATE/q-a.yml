@@ -1,0 +1,29 @@
+title: "[Q&A]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for questions that do not require code changes.
+        Do not share API keys, cookies, tracker credentials, or private download links.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What do you want to understand?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Include deployment mode, related service, logs, or redacted config if useful.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I have checked the documentation and existing discussions.
+          required: true
+        - label: I have removed secrets and private tracker information.
+          required: true

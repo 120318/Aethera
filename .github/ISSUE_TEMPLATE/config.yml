@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/120318/Aethera/tree/main/docs
+    about: Check the docs before opening a new issue.
+  - name: Discussions
+    url: https://github.com/120318/Aethera/discussions
+    about: Use Discussions for questions, ideas, and workflow sharing.

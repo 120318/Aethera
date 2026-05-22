@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import fnmatch
 from pathlib import Path
 import re
@@ -353,7 +354,7 @@ def path_allowed(path: str, patterns: tuple[str, ...]) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
-def should_skip(path: Path) -> bool:
+def should_skip(path: Path, text_extensions: set[str]) -> bool:
     relative = rel(path)
     relative_parts = path.relative_to(ROOT).parts
     if relative == "scripts/check_language_tokens.py":
@@ -364,7 +365,7 @@ def should_skip(path: Path) -> bool:
         return True
     if any(fnmatch.fnmatch(relative, pattern) for pattern in SKIP_PATHS):
         return True
-    return path.suffix not in TEXT_EXTENSIONS
+    return path.suffix not in text_extensions
 
 
 def line_number(text: str, index: int) -> int:
@@ -400,20 +401,42 @@ def check_file(path: Path) -> list[str]:
     return findings
 
 
-def iter_files() -> list[Path]:
+def normalize_extensions(raw_extensions: str | None) -> set[str]:
+    if not raw_extensions:
+        return set(TEXT_EXTENSIONS)
+    extensions = set()
+    for item in raw_extensions.split(","):
+        extension = item.strip()
+        if not extension:
+            continue
+        if not extension.startswith("."):
+            extension = f".{extension}"
+        extensions.add(extension)
+    return extensions
+
+
+def iter_files(text_extensions: set[str]) -> list[Path]:
     result: list[Path] = []
     for path in ROOT.rglob("*"):
         if not path.is_file():
             continue
-        if should_skip(path):
+        if should_skip(path, text_extensions):
             continue
         result.append(path)
     return result
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Check repository language token boundaries.")
+    parser.add_argument(
+        "--extensions",
+        help="Comma-separated file extensions to scan. Defaults to all text extensions.",
+    )
+    args = parser.parse_args()
+    text_extensions = normalize_extensions(args.extensions)
+
     findings: list[str] = []
-    for path in iter_files():
+    for path in iter_files(text_extensions):
         findings.extend(check_file(path))
     if findings:
         print("Repository language token check failed:", file=sys.stderr)

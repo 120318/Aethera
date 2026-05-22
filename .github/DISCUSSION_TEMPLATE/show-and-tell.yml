@@ -1,0 +1,25 @@
+title: "[Show and Tell]: "
+labels: ["show-and-tell"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share your Aethera deployment, workflow, configuration patterns, or media automation setup.
+        Do not share private tracker URLs, credentials, cookies, or private media links.
+  - type: textarea
+    id: setup
+    attributes:
+      label: Setup
+      description: Describe your Aethera setup and the surrounding services.
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow
+      description: What workflow does this setup solve for you?
+  - type: textarea
+    id: lessons
+    attributes:
+      label: Notes or lessons learned
+      description: What should other users know if they try something similar?

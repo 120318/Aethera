@@ -1,0 +1,124 @@
+name: Bug report
+description: Report a reproducible Aethera bug.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please include enough context to reproduce it.
+        Do not paste API keys, cookies, tracker credentials, or private download links.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What broke?
+      placeholder: Describe the visible problem in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact steps that trigger the problem.
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Web UI
+        - Subscription
+        - Resource search
+        - Download dispatch
+        - File transfer or library import
+        - Media scraping or NFO generation
+        - Danmu generation
+        - Media server sync
+        - Authentication or setup
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Aethera version
+      description: Release tag, image tag, commit SHA, or "latest" with pull date.
+      placeholder: "v0.0.0, latest pulled on YYYY-MM-DD, or commit SHA"
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment mode
+      options:
+        - Docker Compose release image
+        - Docker Compose development
+        - Other Docker-based setup
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Docker version, browser, reverse proxy, and relevant services.
+      placeholder: |
+        Host OS:
+        Docker / Compose:
+        Browser:
+        Reverse proxy:
+        Indexer:
+        Downloader:
+        Media server:
+    validations:
+      required: true
+  - type: textarea
+    id: media_context
+    attributes:
+      label: Media context
+      description: Required for media matching, scraping, danmu, import, or sync bugs. Redact private paths if needed.
+      placeholder: |
+        Media type:
+        Media ID:
+        Title:
+        Season / episode:
+        Resource filename:
+        Library path:
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and console output
+      description: Paste relevant backend logs, browser console errors, and task/action IDs.
+      render: shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues and discussions.
+          required: true
+        - label: I have removed secrets, cookies, passkeys, and private tracker URLs.
+          required: true
+        - label: I understand Aethera does not provide media resources or tracker access.
+          required: true

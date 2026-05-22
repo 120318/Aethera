@@ -4,11 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 COMPOSE=("$ROOT_DIR/scripts/docker_compose.sh")
 TEST_CONFIG_ROOT="/tmp/aethera-quality-config-$(date +%s)-$$"
+LANGUAGE_TOKEN_EXTENSIONS="${LANGUAGE_TOKEN_EXTENSIONS:-.py,.sh,.js,.vue,.json,.toml,.yaml,.yml}"
 
 "${COMPOSE[@]}" run --rm \
   -v "$ROOT_DIR:/workspace:ro" \
   --entrypoint python \
-  backend /workspace/scripts/check_language_tokens.py
+  backend /workspace/scripts/check_language_tokens.py --extensions "$LANGUAGE_TOKEN_EXTENSIONS"
 
 "${COMPOSE[@]}" run --rm \
   -v "$ROOT_DIR/backend/tests:/app/tests:ro" \

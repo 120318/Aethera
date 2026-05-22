@@ -1,0 +1,32 @@
+title: "[Idea]: "
+labels: ["idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for broader workflow ideas, roadmap proposals, and integration discussions.
+        If you have a small, concrete request, open a Feature request issue instead.
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea
+      description: What should Aethera support or improve?
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow context
+      description: Describe your current setup and where the idea fits.
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Tradeoffs
+      description: What complexity, maintenance cost, or scope risk might this add?
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This idea is related to media automation rather than resource distribution.
+          required: true

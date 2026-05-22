@@ -1,0 +1,70 @@
+name: Support or troubleshooting
+description: Ask for help with deployment, setup, configuration, or integrations.
+title: "[Support]: "
+labels: ["support", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for setup and troubleshooting. For confirmed code defects, use Bug report.
+        Do not paste API keys, cookies, tracker credentials, or private download links.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to configure or understand?
+    validations:
+      required: true
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      options:
+        - Docker deployment
+        - Reverse proxy or HTTPS
+        - Initial setup or login
+        - TMDB or Douban metadata
+        - Jackett or Prowlarr
+        - qBittorrent or rTorrent
+        - Jellyfin, Emby, or Plex
+        - Library paths or permissions
+        - Import, naming, or transfer
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Docker Compose, image tag, reverse proxy, and related service versions.
+      placeholder: |
+        Host OS:
+        Docker / Compose:
+        Aethera image tag:
+        Reverse proxy:
+        Related services:
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: Paste redacted compose, env, directory, or integration settings.
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste relevant container logs or browser console output.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I have read the relevant documentation.
+          required: true
+        - label: I have removed secrets, cookies, passkeys, and private tracker URLs.
+          required: true
+        - label: I understand Aethera does not provide media resources, tracker invites, cookies, or credentials.
+          required: true

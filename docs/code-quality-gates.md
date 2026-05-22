@@ -39,7 +39,7 @@ Coverage currently generates a report only. It helps prioritize missing tests, b
 - backend custom gates in `backend/scripts/check_backend_quality.py`
 - backend selected regression tests marked `drift`, `health`, or `aggregation`
 - frontend `npm run quality`
-- repository language checks for user-facing hardcoded text outside locale files
+- repository language checks for user-facing hardcoded text in source and configuration files outside locale files
 
 All execution must go through Docker Compose or the repository scripts that use it. Do not bypass the containers with host Python or Node runtimes.
 
@@ -145,7 +145,7 @@ Future frontend gates should prioritize action-chain consistency:
 
 ## Repository Language Gates
 
-Repository-level language checks enforce the i18n boundary:
+Repository-level language checks enforce the i18n boundary for source and configuration files scanned by the review gate:
 
 - User-facing Simplified Chinese is allowed only in locale translation files.
 - Non-locale Chinese used as external protocol, provider, or parser data must be registered in `scripts/check_language_tokens.py` with token, allowed path pattern, and reason.
@@ -155,6 +155,8 @@ Repository-level language checks enforce the i18n boundary:
 - Non-localized backend catalogs live under `backend/app/services/i18n/locales`.
 - Frontend locale messages live under `frontend/src/i18n/locales`.
 - Backend wire fallbacks should not return localized placeholders such as translated unknown labels; return an empty/structured value and let the presentation layer render the localized copy.
+- Markdown documentation is not scanned by the default review gate language check.
+- The default review gate scans `.py,.sh,.js,.vue,.json,.toml,.yaml,.yml`; set `LANGUAGE_TOKEN_EXTENSIONS` when a narrower or broader suffix set is needed.
 
 English text outside locale files is allowed only when it is not user-facing product copy, or when the user explicitly asked for English documentation/comments. User-facing frontend copy still belongs in locale files.
 
