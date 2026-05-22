@@ -41,6 +41,8 @@ export default {
     networkError: 'Network error: {message}',
     connectionSuccess: 'Connection succeeded',
     unknownError: 'Unknown error',
+    showSecret: 'Show secret',
+    hideSecret: 'Hide secret',
   },
   empty: {
     noData: 'No data',

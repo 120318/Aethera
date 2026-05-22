@@ -72,9 +72,8 @@
           <div v-else class="ui-dialog-body">
             <div v-if="selectedStep === 'tmdb'" class="ui-dialog-section">
               <label class="ui-dialog-item-title block">{{ $t('settings.metadata.tmdbApiKey') }}</label>
-              <InputText
+              <SecretInput
                 v-model="config.themoviedb.api_key"
-                class="w-full"
                 :placeholder="$t('settings.metadata.apiKeyPlaceholder')"
                 autocomplete="off"
               />
@@ -320,6 +319,7 @@ import Button from 'primevue/button'
 import Card from 'primevue/card'
 import InputText from 'primevue/inputtext'
 import AppTag from '@/components/common/AppTag.vue'
+import SecretInput from '@/components/common/SecretInput.vue'
 import DirectoryConfig from '@/components/config/DirectoryConfig.vue'
 import DownloaderConfig from '@/components/config/DownloaderConfig.vue'
 import IndexerConfig from '@/components/config/IndexerConfig.vue'
