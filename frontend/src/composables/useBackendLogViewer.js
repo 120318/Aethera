@@ -22,6 +22,37 @@ function extractLogLevel(line) {
   return match ? match[1].toLowerCase() : ''
 }
 
+function buildLogEntries(logLines) {
+  const entries = []
+  let currentEntry = null
+
+  logLines.forEach((line, index) => {
+    const level = extractLogLevel(line)
+    if (level) {
+      currentEntry = {
+        key: `${index}:${line}`,
+        level,
+        lines: [line],
+      }
+      entries.push(currentEntry)
+      return
+    }
+
+    if (currentEntry) {
+      currentEntry.lines.push(line)
+      return
+    }
+
+    entries.push({
+      key: `${index}:${line}`,
+      level: '',
+      lines: [line],
+    })
+  })
+
+  return entries
+}
+
 export function useBackendLogViewer(isActive) {
   const lines = ref([])
   const keyword = ref('')
@@ -39,15 +70,16 @@ export function useBackendLogViewer(isActive) {
   let pollTimer = null
   let pollInFlight = false
 
-  const filteredLines = computed(() => {
+  const logEntries = computed(() => buildLogEntries(lines.value))
+
+  const filteredEntries = computed(() => {
     const needle = keyword.value.trim().toLowerCase()
     const level = selectedLevel.value
     const minRank = level ? (LOG_LEVEL_RANK[level] || 0) : 0
 
-    return lines.value.filter((line) => {
+    return logEntries.value.filter((entry) => {
       if (minRank > 0) {
-        const lineLevel = extractLogLevel(line)
-        const lineRank = LOG_LEVEL_RANK[lineLevel] || 0
+        const lineRank = LOG_LEVEL_RANK[entry.level] || 0
         if (lineRank < minRank) {
           return false
         }
@@ -55,10 +87,11 @@ export function useBackendLogViewer(isActive) {
       if (!needle) {
         return true
       }
-      return line.toLowerCase().includes(needle)
+      return entry.lines.some(line => line.toLowerCase().includes(needle))
     })
   })
 
+  const filteredLines = computed(() => filteredEntries.value.flatMap(entry => entry.lines))
   const lineCount = computed(() => lines.value.length)
   const filteredLineCount = computed(() => filteredLines.value.length)
 
@@ -174,6 +207,7 @@ export function useBackendLogViewer(isActive) {
   return {
     autoRefreshEnabled,
     filteredLineCount,
+    filteredEntries,
     filteredLines,
     initialized,
     initialLoading,

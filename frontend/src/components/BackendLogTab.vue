@@ -109,7 +109,7 @@ const { t } = useI18n()
 const {
   autoRefreshEnabled,
   filteredLineCount,
-  filteredLines,
+  filteredEntries,
   initialized,
   initialLoading,
   keyword,
@@ -135,20 +135,20 @@ const levelOptions = computed(() => [
 ])
 
 const displayLines = computed(() => (
-  [...filteredLines.value]
+  [...filteredEntries.value]
     .reverse()
-    .map((text, index) => ({
-      key: `${index}:${text}`,
+    .flatMap((entry, entryIndex) => entry.lines.map((text, lineIndex) => ({
+      key: `${entryIndex}:${lineIndex}:${entry.key}`,
       text,
-      className: getLineClassName(text),
-    }))
+      className: getLineClassName(text, entry.level),
+    })))
 ))
 
-function getLineClassName(line) {
-  if (line.includes(' | ERROR | ')) {
+function getLineClassName(line, level) {
+  if (level === 'error' || level === 'critical' || line.includes(' | ERROR | ') || line.includes(' | CRITICAL | ')) {
     return 'ui-log-line font-mono ui-log-line-error'
   }
-  if (line.includes(' | WARNING | ')) {
+  if (level === 'warning' || line.includes(' | WARNING | ')) {
     return 'ui-log-line font-mono ui-log-line-warn'
   }
   return 'ui-log-line font-mono'
