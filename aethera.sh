@@ -6,6 +6,9 @@
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT_DIR="$ROOT_DIR/scripts"
 DEV_COMPOSE="$ROOT_DIR/docker-compose.dev.yml"
+if [ ! -f "$DEV_COMPOSE" ]; then
+  DEV_COMPOSE="$ROOT_DIR/docker-compose.dev.example.yml"
+fi
 PROD_COMPOSE="$ROOT_DIR/compose.yaml"
 
 case "$1" in

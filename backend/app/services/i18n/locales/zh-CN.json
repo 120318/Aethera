@@ -129,6 +129,7 @@
   "alertMessages.danmuGenerateFailed": "弹幕生成失败：{target}。原因：{reason}",
   "alertMessages.mediaServerSyncFailed": "媒体库刮削失败：{target}。原因：{reason}",
   "alertMessages.notificationSendFailed": "消息通知发送失败：{channel}。原因：{reason}",
+  "alertMessages.indexerSiteFailed": "索引器站点连续失败：{indexer} / {site}，已失败 {failures} 次。原因：{reason}",
   "alertMessages.taskTransferFailed": "资源转移失败：{task}。原因：{reason}",
   "commandMessages.taskStorageChange.cancelled": "更换存储已取消",
   "commandMessages.taskStorageChange.failed": "更换存储失败",

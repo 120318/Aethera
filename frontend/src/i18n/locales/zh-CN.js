@@ -1777,6 +1777,7 @@ export default {
       danmu_generate: '弹幕生成',
       media_server_sync: '媒体库刮削',
       notification_send: '消息通知',
+      indexer_health: '索引器健康',
     },
     status: {
       error: '错误',
@@ -1787,6 +1788,7 @@ export default {
     danmuGenerateFailed: '弹幕生成失败：{target}。原因：{reason}',
     mediaServerSyncFailed: '媒体库刮削失败：{target}。原因：{reason}',
     notificationSendFailed: '消息通知发送失败：{channel}。原因：{reason}',
+    indexerSiteFailed: '索引器站点连续失败：{indexer} / {site}，已失败 {failures} 次。原因：{reason}',
   },
   route: {
     setup: '初始化',

@@ -9,6 +9,10 @@ from app.schemas.config import IndexerConfig, IndexerProviderConfig
 from app.schemas.exception import ConfigurationException
 from app.schemas.runtime.indexer_runtime import IndexerSiteSearchOutcome
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
+from app.services.domain.alerts.workflow_alerts import (
+    raise_indexer_site_alert,
+    resolve_indexer_site_alert,
+)
 
 
 class IndexerSiteHealthState:
@@ -66,6 +70,7 @@ class IndexerSiteHealthState:
             notify_pending=False,
             client_type=client_type,
         )
+        resolve_indexer_site_alert(indexer_id, site_id)
         return self._upsert(status)
 
     def record_failure(
@@ -80,7 +85,8 @@ class IndexerSiteHealthState:
     ) -> IndexerSiteHealthStatus:
         current = self._get_record(indexer_id, site_id)
         now = datetime.now()
-        consecutive_failures = (current.consecutive_failures if current else 0) + 1
+        previous_failures = current.consecutive_failures if current else 0
+        consecutive_failures = previous_failures + 1
         status = IndexerSiteHealthStatus(
             indexer_id=indexer_id,
             indexer_name=indexer_name,
@@ -95,6 +101,15 @@ class IndexerSiteHealthState:
             notify_pending=consecutive_failures >= 3,
             client_type=client_type,
         )
+        if consecutive_failures >= 3:
+            raise_indexer_site_alert(
+                indexer_id=indexer_id,
+                indexer_name=indexer_name,
+                site_id=site_id,
+                site_name=site_name,
+                consecutive_failures=consecutive_failures,
+                error=error_message,
+            )
         return self._upsert(status)
 
     def list_by_indexer(self, indexer_id: str) -> list[IndexerSiteHealthStatus]:

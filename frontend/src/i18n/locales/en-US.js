@@ -1776,6 +1776,7 @@ export default {
       danmu_generate: 'Danmu generation',
       media_server_sync: 'Media server sync',
       notification_send: 'Notification',
+      indexer_health: 'Indexer health',
     },
     status: {
       error: 'Error',
@@ -1786,6 +1787,7 @@ export default {
     danmuGenerateFailed: 'Danmu generation failed: {target}. Reason: {reason}',
     mediaServerSyncFailed: 'Media server sync failed: {target}. Reason: {reason}',
     notificationSendFailed: 'Notification send failed: {channel}. Reason: {reason}',
+    indexerSiteFailed: 'Indexer site failed repeatedly: {indexer} / {site}. Failed {failures} times. Reason: {reason}',
   },
   route: {
     setup: 'Setup',

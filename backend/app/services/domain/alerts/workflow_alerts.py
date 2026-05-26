@@ -155,3 +155,43 @@ def resolve_notification_alert(channel_id: str) -> None:
 
 def notification_alert_fingerprint(channel_id: str) -> str:
     return f"notification.send:{channel_id}"
+
+
+def raise_indexer_site_alert(
+    *,
+    indexer_id: str,
+    indexer_name: str,
+    site_id: str,
+    site_name: str,
+    consecutive_failures: int,
+    error: str,
+) -> None:
+    indexer = indexer_name or indexer_id
+    site = site_name or site_id
+    alert_service.raise_alert(
+        AlertRaiseRequest(
+            fingerprint=indexer_site_alert_fingerprint(indexer_id, site_id),
+            severity=AlertSeverity.error,
+            category=AlertCategory.indexer_health,
+            message_key="alertMessages.indexerSiteFailed",
+            message_params={
+                "target": f"{indexer} / {site}",
+                "indexer": indexer,
+                "site": site,
+                "failures": str(consecutive_failures),
+                "reason": error or "",
+            },
+            target_type=AlertTargetType.indexer_site,
+            target_id=f"{indexer_id}:{site_id}",
+        )
+    )
+
+
+def resolve_indexer_site_alert(indexer_id: str, site_id: str) -> None:
+    alert_service.resolve_alert(
+        AlertResolveRequest(fingerprint=indexer_site_alert_fingerprint(indexer_id, site_id))
+    )
+
+
+def indexer_site_alert_fingerprint(indexer_id: str, site_id: str) -> str:
+    return f"indexer.health:{indexer_id}:{site_id}"

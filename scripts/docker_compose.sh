@@ -2,7 +2,13 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-COMPOSE_FILES=(-f "$ROOT_DIR/docker-compose.dev.yml")
+COMPOSE_PATH="$ROOT_DIR/docker-compose.dev.yml"
+
+if [ ! -f "$COMPOSE_PATH" ]; then
+  COMPOSE_PATH="$ROOT_DIR/docker-compose.dev.example.yml"
+fi
+
+COMPOSE_FILES=(-f "$COMPOSE_PATH")
 
 export AETHERA_DEV_UID="${AETHERA_DEV_UID:-$(id -u)}"
 export AETHERA_DEV_GID="${AETHERA_DEV_GID:-$(id -g)}"
