@@ -92,6 +92,7 @@ def _insert_dispatch(session, item_id: str, minutes: int, status: EventDispatchS
 
 def test_action_repository_prunes_oldest_records_by_limit():
     with SessionLocal() as session:
+        session.query(ActionORM).delete()
         for index in range(4):
             _insert_action(session, f"action-{index}", index)
         session.commit()

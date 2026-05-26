@@ -132,7 +132,7 @@ async def test_schedule_service_uses_douban_vendor_web_url_for_tv_network():
     summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
 
     assert len(summary.networks) == 1
-    assert summary.networks[0].name == "Sample"
+    assert summary.networks[0].name == "爱奇艺"
     assert summary.networks[0].url == "http://www.iqiyi.com/v_1lr0jb5ixi8.html?vfm=m_331_dbdy"
 
 
@@ -158,7 +158,7 @@ async def test_schedule_service_converts_tencent_douban_deeplink_to_web_play_url
     summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
 
     assert len(summary.networks) == 1
-    assert summary.networks[0].name == "Sample"
+    assert summary.networks[0].name == "腾讯视频"
     assert summary.networks[0].url == "https://v.qq.com/x/cover/mzc002007tp60ap/w41025my54z.html"
 
 
@@ -213,7 +213,7 @@ async def test_schedule_service_converts_youku_douban_deeplink_to_web_show_url()
     summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
 
     assert len(summary.networks) == 1
-    assert summary.networks[0].name == "Sample"
+    assert summary.networks[0].name == "优酷"
     assert summary.networks[0].url == "https://v.youku.com/v_nextstage/id_dccc1a382ea3456eaa77.html"
 
 
@@ -233,7 +233,7 @@ async def test_schedule_service_ignores_unresolved_non_web_vendor_deeplink():
     summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
 
     assert len(summary.networks) == 1
-    assert summary.networks[0].name == "textTV"
+    assert summary.networks[0].name == "芒果TV"
     assert summary.networks[0].url == "https://www.mgtv.com/"
 
 

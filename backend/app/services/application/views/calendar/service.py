@@ -34,14 +34,7 @@ def _sub_matches_scope(active: bool, followed: bool, scope: CalendarScope) -> bo
 
 
 def _display_rating(profile: ManagedMediaProfile) -> tuple[float | None, int | None, str | None]:
-    if profile.douban_vote_average is not None:
-        return profile.douban_vote_average, profile.douban_rating_count, "douban"
-    tmdb_vote_average = profile.tmdb_vote_average
-    tmdb_rating_count = profile.tmdb_rating_count
-    if tmdb_vote_average is None and profile.rating_source == "tmdb":
-        tmdb_vote_average = profile.vote_average
-        tmdb_rating_count = profile.rating_count
-    return tmdb_vote_average, tmdb_rating_count, "tmdb" if tmdb_vote_average is not None else profile.rating_source
+    return profile.tmdb_vote_average, profile.tmdb_rating_count, "tmdb" if profile.tmdb_vote_average is not None else None
 
 
 def _airing_to_item(profile: ManagedMediaProfile, airing: ScheduleAiring) -> CalendarAiringItem:

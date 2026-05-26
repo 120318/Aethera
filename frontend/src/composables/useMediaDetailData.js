@@ -236,8 +236,8 @@ export function useMediaDetailData() {
       ? detail.value.seasons.find((season) => Number(season?.season_number) === normalized)
       : null
     const selectedDoubanId = selectedSeason?.douban_id || null
-    const doubanVoteAverage = detail.value.douban_vote_average ?? (detail.value.rating_source === 'douban' ? detail.value.vote_average : null)
-    const doubanRatingCount = detail.value.douban_rating_count ?? (detail.value.rating_source === 'douban' ? detail.value.rating_count : null)
+    const doubanVoteAverage = selectedSeason?.douban_vote_average ?? null
+    const doubanRatingCount = selectedSeason?.douban_rating_count ?? null
     const tmdbVoteAverage = detail.value.tmdb_vote_average ?? (detail.value.rating_source === 'tmdb' ? detail.value.vote_average : null)
     const tmdbRatingCount = detail.value.tmdb_rating_count ?? (detail.value.rating_source === 'tmdb' ? detail.value.rating_count : null)
     const ratingUpdates = selectedDoubanId
@@ -245,7 +245,7 @@ export function useMediaDetailData() {
           vote_average: doubanVoteAverage,
           rating_count: doubanRatingCount,
           vote_count: doubanRatingCount,
-          rating_source: doubanVoteAverage != null ? 'douban' : null,
+          rating_source: 'douban',
         }
       : {
           vote_average: tmdbVoteAverage,

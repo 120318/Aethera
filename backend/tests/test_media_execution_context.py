@@ -52,6 +52,62 @@ async def test_resolve_tv_season_snapshot_uses_full_profile_season_episode_count
 
 
 @pytest.mark.asyncio
+async def test_resolve_tv_season_snapshot_uses_cached_season_douban_id(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:233295")
+    full = MediaFullInfo(
+        media_id=media_id,
+        title="仙剑奇侠传三",
+        year=2025,
+        media_type=MediaType.tv,
+        episodes_count=36,
+        seasons_count=1,
+        seasons=[
+            MediaSeasonInfo(
+                season_number=1,
+                episode_count=36,
+                douban_id="36053703",
+            )
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.media.media_service.execution_snapshot_service.profile_service.simple_info", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.services.domain.media.media_service.execution_snapshot_service.profile_service.cached_info", AsyncMock(return_value=full))
+
+    snapshot = await media_service.resolve_execution_snapshot(
+        media_id,
+        season_number=1,
+        require_tv_season=True,
+    )
+
+    assert snapshot.season_number == 1
+    assert snapshot.douban_id == "36053703"
+
+
+@pytest.mark.asyncio
+async def test_resolve_tv_season_snapshot_clears_unknown_cached_season_episode_count(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:233295")
+    full = MediaFullInfo(
+        media_id=media_id,
+        title="仙剑奇侠传三",
+        year=2025,
+        media_type=MediaType.tv,
+        episodes_count=36,
+        seasons_count=1,
+        seasons=[MediaSeasonInfo(season_number=1, episode_count=None, douban_id="36053703")],
+    )
+    monkeypatch.setattr("app.services.domain.media.media_service.execution_snapshot_service.profile_service.simple_info", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.services.domain.media.media_service.execution_snapshot_service.profile_service.cached_info", AsyncMock(return_value=full))
+
+    snapshot = await media_service.resolve_execution_snapshot(
+        media_id,
+        season_number=1,
+        require_tv_season=True,
+    )
+
+    assert snapshot.season_number == 1
+    assert snapshot.episodes_count is None
+
+
+@pytest.mark.asyncio
 async def test_resolve_tv_season_snapshot_rejects_missing_cached_season_without_using_total_count(monkeypatch):
     media_id = MediaID.parse("tmdb:tv:43")
     full = MediaFullInfo(
@@ -66,7 +122,7 @@ async def test_resolve_tv_season_snapshot_rejects_missing_cached_season_without_
     monkeypatch.setattr("app.services.domain.media.media_service.execution_snapshot_service.profile_service.simple_info", AsyncMock(return_value=None))
     monkeypatch.setattr("app.services.domain.media.media_service.execution_snapshot_service.profile_service.cached_info", AsyncMock(return_value=full))
 
-    with pytest.raises(DownloadException, match="Sample"):
+    with pytest.raises(DownloadException, match="backendErrors.mediaExecutionSnapshotSeasonMissing"):
         await media_service.resolve_execution_snapshot(
             media_id,
             season_number=2,

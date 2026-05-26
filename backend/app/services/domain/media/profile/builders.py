@@ -77,7 +77,6 @@ def build_profile_from_media(
     episodes_count: int | None,
 ) -> ManagedMediaProfile:
     now = time.time()
-    profile_douban_id = media.douban_id if media.media_type != MediaType.tv else None
     schedule = media.schedule
     schedule_has_episode_progress = bool(
         schedule
@@ -110,7 +109,6 @@ def build_profile_from_media(
         overview=_localized_text(media.overview, existing.overview if existing else None),
         genres=_localized_text_items(list(media.genres), list(existing.genres) if existing else []),
         imdb_id=media.imdb_id,
-        douban_id=profile_douban_id,
         tmdb_id=media.tmdb_id,
         primary_metadata_source=media.primary_metadata_source,
         metadata_capabilities=media.metadata_capabilities,
@@ -120,12 +118,6 @@ def build_profile_from_media(
         studios=_localized_text_items(list(media.studios), list(existing.studios) if existing else []),
         vendors=media.vendors,
         duration=media.duration,
-        rating_count=media.rating_count,
-        vote_average=media.vote_average,
-        vote_count=media.vote_count,
-        rating_source=media.rating_source,
-        douban_vote_average=media.douban_vote_average,
-        douban_rating_count=media.douban_rating_count,
         tmdb_vote_average=media.tmdb_vote_average,
         tmdb_rating_count=media.tmdb_rating_count,
         release_date=media.release_date,

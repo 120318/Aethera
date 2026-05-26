@@ -13,6 +13,7 @@ from app.services.domain.media.profile.read_model import MediaProfileReadModel
 from app.services.domain.media.profile.scope_projection import (
     apply_scopes_to_profile,
     build_scope_from_media,
+    select_scope,
     scope_airing_from_schedule,
 )
 from app.services.domain.media.schedule.service import MediaScheduleService
@@ -106,7 +107,8 @@ class MediaProfileScheduleSnapshot:
             return await refresh_profile(media_id, existing=profile, season_number=season_number)
         scopes = await self.scope_repo.find_by_media_id(media_id)
         scoped_profile = apply_scopes_to_profile(profile, scopes, season_number=season_number)
-        media = self.read_model.snapshot_to_full(media_id, scoped_profile)
+        selected_scope = select_scope(profile, scopes, season_number=season_number)
+        media = self.read_model.snapshot_to_full(media_id, scoped_profile, selected_scope=selected_scope)
         if not media:
             return None
         summary, airings = await self.build_profile_schedule_snapshot(media, profile, season_number=season_number)

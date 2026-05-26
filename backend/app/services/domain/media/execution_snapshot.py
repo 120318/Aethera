@@ -30,7 +30,7 @@ class MediaExecutionSnapshotService:
             raise DownloadException("backendErrors.mediaExecutionSnapshotSeasonMissing")
         if selected.episode_count is None and require_episode_count:
             raise DownloadException("backendErrors.mediaExecutionSnapshotEpisodeCountMissing")
-        return media.model_copy(update={"season_number": int(season_number), "episodes_count": selected.episode_count})
+        return apply_media_season_context(media, season_number)
 
     async def resolve_execution_snapshot(
         self,

@@ -85,26 +85,33 @@ class MediaIdentityRepository:
 
     def _retarget_source_mapping(self, session, source_media_id: MediaID, target_media_id: MediaID) -> None:
         target_tmdb_id = int(target_media_id.id) if target_media_id.provider == Provider.tmdb else None
+        source_predicate = None
+        params = {
+            "target": str(target_media_id),
+            "target_tmdb_id": target_tmdb_id,
+            "updated_at": time.time(),
+            "media_type": source_media_id.media_type.value,
+        }
+        if source_media_id.provider == Provider.douban:
+            source_predicate = "douban_id = :source_external_id"
+            params["source_external_id"] = source_media_id.id
+        elif source_media_id.provider == Provider.tmdb:
+            source_predicate = "tmdb_id = :source_tmdb_id"
+            params["source_tmdb_id"] = int(source_media_id.id)
+        if not source_predicate:
+            return
         session.execute(
             text(
-                """
+                f"""
                 UPDATE media_external_mappings
                 SET media_id = :target,
                     tmdb_id = CASE WHEN :target_tmdb_id IS NOT NULL THEN :target_tmdb_id ELSE tmdb_id END,
                     updated_at = :updated_at
-                WHERE source = :source_provider
-                  AND source_id = :source_provider_item_id
+                WHERE {source_predicate}
                   AND media_type = :media_type
                 """
             ),
-            {
-                "target": str(target_media_id),
-                "target_tmdb_id": target_tmdb_id,
-                "updated_at": time.time(),
-                "source_provider": source_media_id.provider.value,
-                "source_provider_item_id": source_media_id.id,
-                "media_type": source_media_id.media_type.value,
-            },
+            params,
         )
 
     def _merge_singleton_rows(self, session, source: str, target: str) -> None:
