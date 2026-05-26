@@ -27,6 +27,7 @@ class AlertCategory(str, Enum):
     danmu_generate = "danmu_generate"
     media_server_sync = "media_server_sync"
     notification_send = "notification_send"
+    indexer_health = "indexer_health"
 
 
 class AlertTargetType(str, Enum):
@@ -34,6 +35,7 @@ class AlertTargetType(str, Enum):
     library_file = "library_file"
     notification_channel = "notification_channel"
     danmu_sidecar = "danmu_sidecar"
+    indexer_site = "indexer_site"
 
 
 class AlertBellState(str, Enum):

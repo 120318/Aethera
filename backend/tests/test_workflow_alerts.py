@@ -104,6 +104,37 @@ def test_notification_alert_uses_channel_fingerprint(monkeypatch):
     assert request.message_params["event_type"] == "media.import.failed"
 
 
+def test_indexer_site_alert_uses_site_fingerprint(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        workflow_alerts,
+        "alert_service",
+        SimpleNamespace(
+            raise_alert=lambda request: captured.setdefault("raise", request),
+            resolve_alert=lambda request: captured.setdefault("resolve", request),
+        ),
+    )
+
+    workflow_alerts.raise_indexer_site_alert(
+        indexer_id="jackett",
+        indexer_name="Jackett",
+        site_id="audiences",
+        site_name="Audiences",
+        consecutive_failures=3,
+        error="login failed",
+    )
+    workflow_alerts.resolve_indexer_site_alert("jackett", "audiences")
+
+    assert captured["raise"].fingerprint == "indexer.health:jackett:audiences"
+    assert captured["raise"].category == AlertCategory.indexer_health
+    assert captured["raise"].target_type == AlertTargetType.indexer_site
+    assert captured["raise"].message_key == "alertMessages.indexerSiteFailed"
+    assert captured["raise"].message_params["indexer"] == "Jackett"
+    assert captured["raise"].message_params["site"] == "Audiences"
+    assert captured["raise"].message_params["failures"] == "3"
+    assert captured["resolve"].fingerprint == captured["raise"].fingerprint
+
+
 @pytest.mark.asyncio
 async def test_notification_send_failure_raises_alert_with_event_type_value(monkeypatch):
     captured = {}

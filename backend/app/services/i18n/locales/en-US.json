@@ -129,6 +129,7 @@
   "alertMessages.danmuGenerateFailed": "Danmu generation failed: {target}. Reason: {reason}",
   "alertMessages.mediaServerSyncFailed": "Media server sync failed: {target}. Reason: {reason}",
   "alertMessages.notificationSendFailed": "Notification send failed: {channel}. Reason: {reason}",
+  "alertMessages.indexerSiteFailed": "Indexer site failed repeatedly: {indexer} / {site}. Failed {failures} times. Reason: {reason}",
   "alertMessages.taskTransferFailed": "Resource transfer failed: {task}. Reason: {reason}",
   "commandMessages.taskStorageChange.cancelled": "Storage change cancelled",
   "commandMessages.taskStorageChange.failed": "Storage change failed",
