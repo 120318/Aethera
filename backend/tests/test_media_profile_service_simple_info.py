@@ -154,6 +154,27 @@ def test_build_profile_from_media_persists_first_detail_schedule_snapshot():
     assert profile.schedule_updated_at is not None
 
 
+def test_profile_read_model_keeps_scope_douban_rating_source_without_score():
+    service = MediaProfileService(provider_service=None, schedule_service=MediaScheduleService())
+    media_id = MediaID.parse("tmdb:tv:233295")
+    profile = _ready_profile(media_id)
+    profile.rating_source = "tmdb"
+    profile.vote_average = 7.5
+    profile.rating_count = 100
+    profile.tmdb_vote_average = 7.5
+    profile.tmdb_rating_count = 100
+    profile.douban_vote_average = 8.8
+    profile.douban_rating_count = 2000
+    selected_scope = _scope(media_id, 1, douban_id="36053703")
+
+    media = service.read_model.to_full(media_id, profile, selected_scope=selected_scope)
+
+    assert media.douban_id == "36053703"
+    assert media.rating_source == "douban"
+    assert media.vote_average is None
+    assert media.rating_count is None
+
+
 def test_build_profile_from_media_stores_only_current_tv_season_airings():
     media_id = MediaID.parse("tmdb:tv:273129")
     existing = _ready_profile(media_id)

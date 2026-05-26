@@ -22,8 +22,8 @@ class MediaProfileReadModel:
     ) -> tuple[float | None, int | None, str | None]:
         if selected_scope and selected_scope.douban_id:
             return (
-                selected_scope.douban_vote_average or profile.douban_vote_average,
-                selected_scope.douban_rating_count or profile.douban_rating_count,
+                selected_scope.douban_vote_average,
+                selected_scope.douban_rating_count,
                 "douban",
             )
         tmdb_vote_average = profile.tmdb_vote_average

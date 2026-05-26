@@ -32,4 +32,7 @@ def apply_media_season_context[T: MediaFullInfo | MediaSimpleInfo](media: T, sea
             elif selected.episode_count is not None:
                 updates["episodes_count"] = selected.episode_count
                 updates["episode_count_override"] = None
+            else:
+                updates["episodes_count"] = None
+                updates["episode_count_override"] = None
     return media.model_copy(update=updates)
