@@ -101,7 +101,7 @@ class MediaProfileContextService:
             media_type=profile.media_type,
             title=profile.title,
             year=profile.year,
-            douban_id=profile.douban_id,
+            douban_id=None,
             imdb_id=profile.imdb_id,
             tmdb_id=profile.tmdb_id,
             season_number=season_number,

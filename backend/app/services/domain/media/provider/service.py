@@ -92,19 +92,26 @@ class MediaProviderService:
         if lookup.media_type == MediaType.tv:
             title, parsed_season = parse_tv_title(title)
             resolved_season = season_number or parsed_season
-        self._require_media_identity(
-            MediaID(provider=Provider.douban, media_type=lookup.media_type, id=lookup.source_id),
-            title,
-            detail.year,
-        )
 
         tmdb_details, _vendors = await self.detail.get_tmdb_detail_bundle(tmdb_id, subject_type_value)
         if not tmdb_details or not tmdb_details.provider_id:
             raise InvalidRequestException("backendErrors.tmdbIdInvalidOrTypeMismatch")
+        identity_year = detail.year
         if lookup.media_type == MediaType.tv:
             resolved_season = resolve_tmdb_selected_season(tmdb_details.seasons, resolved_season, detail.year)
             if not resolved_season or resolved_season <= 0:
                 raise InvalidRequestException("backendErrors.seasonRequired")
+            if identity_year is None:
+                selected = next((season for season in tmdb_details.seasons if season.season_number == resolved_season), None)
+                if selected and selected.air_date and selected.air_date[:4].isdigit():
+                    identity_year = int(selected.air_date[:4])
+                elif tmdb_details.first_air_date and tmdb_details.first_air_date[:4].isdigit():
+                    identity_year = int(tmdb_details.first_air_date[:4])
+        self._require_media_identity(
+            MediaID(provider=Provider.douban, media_type=lookup.media_type, id=lookup.source_id),
+            title,
+            identity_year,
+        )
         external = tmdb_details.external_ids or await self.clients.get_tmdb_client().get_external_ids(tmdb_id, subject_type_value)
         canonical_media_id = self._canonical_tmdb_media_id(lookup.media_type, tmdb_id)
         await self.mapping.set_cached_tmdb_mapping(

@@ -13,6 +13,7 @@ from app.db.repositories.media_profile_scope_repository import MediaProfileScope
 from app.db.repositories.task_repository import TaskRepository
 from app.schemas.domain.managed_media_profile import ManagedMediaProfile
 from app.schemas.domain.media import MediaFullInfo, MediaIdentity, MediaSimpleInfo
+from app.schemas.domain.media_profile_scope import MediaProfileScope
 from app.schemas.domain.media_source import MediaSourceLookup, MediaSourceName
 from app.schemas.domain.media_types import MediaType
 from app.schemas.exception import AppException, MediaNotFoundException, SearchMissingSeasonInfoException
@@ -29,6 +30,7 @@ from app.services.domain.media.profile.scope_projection import (
     apply_scopes_to_profile,
     build_scopes_from_media,
     has_scope_detail,
+    select_scope,
 )
 from app.services.domain.media.profile.season_metadata import (
     profile_episode_count,
@@ -73,11 +75,7 @@ class MediaProfileService:
     def profile_to_simple(self, media_id: MediaID, profile: ManagedMediaProfile) -> MediaSimpleInfo:
         return self.read_model.to_simple(media_id, profile)
 
-    def profile_to_full(
-        self,
-        media_id: MediaID,
-        profile: ManagedMediaProfile,
-    ) -> MediaFullInfo:
+    def profile_to_full(self, media_id: MediaID, profile: ManagedMediaProfile) -> MediaFullInfo:
         return self.read_model.to_full(media_id, profile)
 
     async def _profile_with_scopes(
@@ -88,6 +86,16 @@ class MediaProfileService:
     ) -> ManagedMediaProfile:
         scopes = await self.scope_repo.find_by_media_id(profile.media_id)
         return apply_scopes_to_profile(profile, scopes, season_number=season_number)
+
+    async def _profile_scope_context(
+        self,
+        profile: ManagedMediaProfile,
+        *,
+        season_number: int | None = None,
+    ) -> tuple[ManagedMediaProfile, MediaProfileScope | None]:
+        scopes = await self.scope_repo.find_by_media_id(profile.media_id)
+        scoped = apply_scopes_to_profile(profile, scopes, season_number=season_number)
+        return scoped, select_scope(profile, scopes, season_number=season_number)
 
     async def _has_cached_scope_detail(
         self,
@@ -151,7 +159,6 @@ class MediaProfileService:
             overview=existing.overview if existing else None,
             genres=list(existing.genres) if existing else [],
             imdb_id=existing.imdb_id if existing else None,
-            douban_id=existing.douban_id if existing else None,
             tmdb_id=existing.tmdb_id if existing else None,
             primary_metadata_source=existing.primary_metadata_source if existing else "douban",
             metadata_capabilities=existing.metadata_capabilities if existing else media_profile_context_service.build_capabilities(media_type, "douban"),
@@ -363,8 +370,8 @@ class MediaProfileService:
             raise SearchMissingSeasonInfoException()
         profile = await self.profile_repo.find_by_media_id(media_id)
         if profile and self.read_model.has_complete_detail(profile):
-            scoped_profile = await self._profile_with_scopes(profile, season_number=season_number)
-            cached = self.read_model.snapshot_to_full(media_id, scoped_profile)
+            scoped_profile, selected_scope = await self._profile_scope_context(profile, season_number=season_number)
+            cached = self.read_model.snapshot_to_full(media_id, scoped_profile, selected_scope=selected_scope)
             if cached:
                 effective_season = season_number
                 if include_default_season_details and media_id.media_type == MediaType.tv and effective_season is None:
@@ -383,8 +390,11 @@ class MediaProfileService:
             return None, "miss"
         media = with_season_external_ids(media, season_number or media.season_number, self.mapping_repo)
         updated_profile = await self._upsert_profile_from_media(media, existing=profile)
-        updated_profile = await self._profile_with_scopes(updated_profile, season_number=season_number or media.season_number)
-        result = self.read_model.snapshot_to_full(media_id, updated_profile)
+        updated_profile, selected_scope = await self._profile_scope_context(
+            updated_profile,
+            season_number=season_number or media.season_number,
+        )
+        result = self.read_model.snapshot_to_full(media_id, updated_profile, selected_scope=selected_scope)
         enriched = result or media
         effective_season = season_number
         if include_default_season_details and media_id.media_type == MediaType.tv and effective_season is None:
@@ -398,8 +408,8 @@ class MediaProfileService:
         profile = await self.profile_repo.find_by_media_id(media_id)
         if not profile or not self.read_model.has_complete_detail(profile):
             return None
-        scoped_profile = await self._profile_with_scopes(profile)
-        return self.read_model.snapshot_to_full(media_id, scoped_profile)
+        scoped_profile, selected_scope = await self._profile_scope_context(profile)
+        return self.read_model.snapshot_to_full(media_id, scoped_profile, selected_scope=selected_scope)
 
     async def info_from_source(self, lookup: MediaSourceLookup) -> MediaFullInfo | None:
         mapping = self._resolve_source_mapping(lookup)
@@ -407,8 +417,8 @@ class MediaProfileService:
             profile = await self.profile_repo.find_by_media_id(mapping.media_id)
             if profile and self.read_model.has_complete_detail(profile):
                 resolved_douban_id = mapping.douban_id or lookup.source_id
-                scoped_profile = await self._profile_with_scopes(profile, season_number=mapping.season_number)
-                cached = self.read_model.snapshot_to_full(mapping.media_id, scoped_profile)
+                scoped_profile, selected_scope = await self._profile_scope_context(profile, season_number=mapping.season_number)
+                cached = self.read_model.snapshot_to_full(mapping.media_id, scoped_profile, selected_scope=selected_scope)
                 if cached:
                     if lookup.source == MediaSourceName.douban:
                         self.mapping_repo.upsert(
@@ -456,8 +466,8 @@ class MediaProfileService:
         media = with_season_external_ids(media, media.season_number, self.mapping_repo)
         existing = await self.profile_repo.find_by_media_id(media.media_id)
         updated_profile = await self._upsert_profile_from_media(media, existing=existing)
-        updated_profile = await self._profile_with_scopes(updated_profile, season_number=media.season_number)
-        result = self.read_model.snapshot_to_full(media.media_id, updated_profile)
+        updated_profile, selected_scope = await self._profile_scope_context(updated_profile, season_number=media.season_number)
+        result = self.read_model.snapshot_to_full(media.media_id, updated_profile, selected_scope=selected_scope)
         return result or media
 
     def _resolve_source_mapping(self, lookup: MediaSourceLookup):
@@ -469,8 +479,8 @@ class MediaProfileService:
         profile = await self.profile_repo.find_by_media_id(media_id)
         if profile and profile.detail_ready:
             try:
-                scoped_profile = await self._profile_with_scopes(profile)
-                return self.read_model.to_simple(media_id, scoped_profile)
+                scoped_profile, selected_scope = await self._profile_scope_context(profile)
+                return self.read_model.to_simple(media_id, scoped_profile, selected_scope=selected_scope)
             except MediaNotFoundException:
                 logger.warning("Managed media profile missing required title/year: %s", media_id)
         return None
@@ -483,11 +493,14 @@ class MediaProfileService:
         season_number: int | None = None,
     ) -> ManagedMediaProfile | None:
         existing_profile = existing or await self.profile_repo.find_by_media_id(media_id)
+        source_scope_number = season_number if media_id.media_type == MediaType.tv else 0
+        source_scope = await self.scope_repo.find_by_media_id_and_season(media_id, int(source_scope_number or 0))
         media = await fetch_profile_refresh_media(
             self.provider_service,
             media_id,
             existing_profile,
             season_number=season_number,
+            source_douban_id=source_scope.douban_id if source_scope else None,
         )
         if not media:
             return None

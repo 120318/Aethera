@@ -22,7 +22,6 @@ class ManagedMediaProfile(BaseModel):
     overview: Optional[str] = None
     genres: list[str] = Field(default_factory=list)
     imdb_id: Optional[str] = None
-    douban_id: Optional[str] = None
     tmdb_id: Optional[int] = None
     primary_metadata_source: MediaPrimarySource = "douban"
     metadata_capabilities: MediaCapabilities = Field(default_factory=MediaCapabilities)

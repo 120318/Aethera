@@ -8,6 +8,7 @@ from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleEpisode
 from app.schemas.media_id import MediaID
 from app.services.application.views.library.overview import OVERVIEW_ACTIVE_TASK_STATUSES, LibraryOverviewService
+from app.services.domain.library.service import MediaLibrarySnapshot
 
 
 def test_library_overview_active_task_statuses_include_migrating():
@@ -39,33 +40,19 @@ async def test_build_snapshot_preserves_passed_media_schedule(monkeypatch):
         schedule=schedule,
     )
 
-    async def fake_present_episodes(requested_media_id, season=None):
-        assert requested_media_id == media_id
-        assert season == 1
-        return [1, 2]
-
     async def fake_tasks_for_overview(status, media_id):
         return []
 
-    async def fake_library_files(requested_media_id, season=None):
-        assert requested_media_id == media_id
-        assert season == 1
-        return []
-
-    monkeypatch.setattr(
-        "app.services.application.views.library.overview.library_service.get_present_episodes",
-        fake_present_episodes,
-    )
     monkeypatch.setattr(
         "app.services.application.views.library.overview.download_service.list_media_tasks_for_overview",
         fake_tasks_for_overview,
     )
-    monkeypatch.setattr(
-        "app.services.application.views.library.overview.library_service.get_files_by_media",
-        fake_library_files,
-    )
 
-    snapshot = await service.build_snapshot(media_id, media)
+    snapshot = await service.build_snapshot(
+        media_id,
+        media,
+        library_snapshot=MediaLibrarySnapshot(files=[], present_episodes={1, 2}),
+    )
 
     assert snapshot.schedule == schedule
     assert snapshot.next_episode_to_air is not None
@@ -97,38 +84,24 @@ async def test_build_snapshot_counts_movie_library_files_and_active_tasks(monkey
     )
     task = type("Task", (), {"id": "task-2", "status": TaskStatus.DOWNLOADING})()
 
-    async def fake_present_episodes(requested_media_id, season=None):
-        assert requested_media_id == media_id
-        assert season is None
-        return set()
-
     async def fake_tasks_for_overview(status, media_id):
         assert TaskStatus.DOWNLOADING in status
         return [task]
 
-    async def fake_library_files(requested_media_id, season=None):
-        assert requested_media_id == media_id
-        assert season is None
-        return [library_file]
-
-    monkeypatch.setattr(
-        "app.services.application.views.library.overview.library_service.get_present_episodes",
-        fake_present_episodes,
-    )
     monkeypatch.setattr(
         "app.services.application.views.library.overview.download_service.list_media_tasks_for_overview",
         fake_tasks_for_overview,
-    )
-    monkeypatch.setattr(
-        "app.services.application.views.library.overview.library_service.get_files_by_media",
-        fake_library_files,
     )
     monkeypatch.setattr(
         "app.services.application.views.library.overview.download_service.resolve_task_episode_coverage_detail",
         lambda task: TaskEpisodeCoverage(),
     )
 
-    snapshot = await service.build_snapshot(media_id, media)
+    snapshot = await service.build_snapshot(
+        media_id,
+        media,
+        library_snapshot=MediaLibrarySnapshot(files=[library_file], present_episodes=set()),
+    )
 
     assert snapshot.library_file_count == 1
     assert snapshot.active_task_count == 1
@@ -176,33 +149,19 @@ async def test_build_snapshot_counts_original_disc_packages_without_episode_cove
         ),
     ]
 
-    async def fake_present_episodes(requested_media_id, season=None):
-        assert requested_media_id == media_id
-        assert season == 1
-        return set()
-
     async def fake_tasks_for_overview(status, media_id):
         return []
 
-    async def fake_library_files(requested_media_id, season=None):
-        assert requested_media_id == media_id
-        assert season == 1
-        return library_files
-
-    monkeypatch.setattr(
-        "app.services.application.views.library.overview.library_service.get_present_episodes",
-        fake_present_episodes,
-    )
     monkeypatch.setattr(
         "app.services.application.views.library.overview.download_service.list_media_tasks_for_overview",
         fake_tasks_for_overview,
     )
-    monkeypatch.setattr(
-        "app.services.application.views.library.overview.library_service.get_files_by_media",
-        fake_library_files,
-    )
 
-    snapshot = await service.build_snapshot(media_id, media)
+    snapshot = await service.build_snapshot(
+        media_id,
+        media,
+        library_snapshot=MediaLibrarySnapshot(files=library_files, present_episodes=set()),
+    )
 
     assert snapshot.library_file_count == 2
     assert snapshot.original_disc_package_count == 1

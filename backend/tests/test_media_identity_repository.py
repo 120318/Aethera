@@ -16,8 +16,8 @@ def test_merge_media_id_retargets_source_external_mapping():
             text(
                 """
                 INSERT INTO media_external_mappings
-                (source, source_id, media_type, media_id, tmdb_id, imdb_id, douban_id, season_number, updated_at)
-                VALUES ('douban', '111', 'movie', :target, 456, null, '111', null, 1)
+                (media_type, media_id, tmdb_id, imdb_id, douban_id, season_number, updated_at)
+                VALUES ('movie', :target, 456, null, '111', 0, 1)
                 """
             ),
             {"target": str(target)},
@@ -32,7 +32,7 @@ def test_merge_media_id_retargets_source_external_mapping():
                     """
                 SELECT media_id, tmdb_id, douban_id
                 FROM media_external_mappings
-                WHERE source = 'douban' AND source_id = '111' AND media_type = 'movie'
+                WHERE douban_id = '111' AND media_type = 'movie'
                 """
                 )
             )

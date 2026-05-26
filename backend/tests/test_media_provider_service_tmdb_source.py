@@ -130,11 +130,11 @@ async def test_tmdb_tv_info_shows_empty_douban_rating_when_douban_detail_rating_
     media = await service.info(MediaID.parse("tmdb:tv:285838"))
 
     assert media is not None
-    assert media.douban_id == "37125831"
-    assert media.vote_average is None
-    assert media.rating_count is None
-    assert media.vote_count is None
-    assert media.rating_source == "douban"
+    assert media.douban_id is None
+    assert media.vote_average == 6.4
+    assert media.rating_count == 88
+    assert media.vote_count == 88
+    assert media.rating_source == "tmdb"
     douban_client.search_movie.assert_not_awaited()
 
 
@@ -186,7 +186,7 @@ async def test_attach_source_tmdb_mapping_keeps_episode_count_override_season_sc
 
     assert str(media_id) == "tmdb:tv:1396"
     assert set_cached.await_args_list[0].args[4:6] == (2, 8)
-    assert set_cached.await_args_list[1].args[4:6] == (2, 8)
+    assert len(set_cached.await_args_list) == 1
 
 
 @pytest.mark.asyncio
@@ -209,4 +209,4 @@ async def test_attach_source_tmdb_mapping_uses_default_tmdb_season(monkeypatch):
 
     assert str(media_id) == "tmdb:tv:1396"
     assert set_cached.await_args_list[0].args[4] == 1
-    assert set_cached.await_args_list[1].args[4] == 1
+    assert len(set_cached.await_args_list) == 1

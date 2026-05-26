@@ -38,7 +38,6 @@ def _insert_profile(session, media_id: str, title: str, year: int, *, media_type
             overview=None,
             genres_json=[],
             imdb_id=None,
-            douban_id=None,
             tmdb_id=None,
             tvdb_id=None,
             actors_json=[],

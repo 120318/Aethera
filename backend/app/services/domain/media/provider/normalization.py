@@ -352,7 +352,11 @@ def build_tmdb_media_info(
     requested_season = season_number
     if requested_season is None and mid.media_type == MediaType.tv and details.selected_season_details:
         requested_season = details.selected_season_details.season_number
-    selected_season = resolve_tmdb_selected_season(seasons, requested_season, None)
+    selected_season = (
+        resolve_tmdb_selected_season(seasons, requested_season, None)
+        if requested_season is not None
+        else None
+    )
     selected_episode_count = resolve_tmdb_selected_episode_count(seasons, selected_season, details.episodes_count)
     season_detail_count = (
         details.selected_season_details.episode_count

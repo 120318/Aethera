@@ -22,19 +22,20 @@ async def fetch_profile_refresh_media(
     existing_profile: ManagedMediaProfile | None,
     *,
     season_number: int | None = None,
+    source_douban_id: str | None = None,
 ) -> MediaFullInfo | None:
     if season_number is not None and season_number > 0:
         return await provider_service.info(media_id, season_number=season_number)
     if media_id.media_type == MediaType.tv:
         return None
-    if not existing_profile or not existing_profile.douban_id:
+    if not source_douban_id:
         return await provider_service.info(media_id)
     try:
         media = await provider_service.info_from_source(
             MediaSourceLookup(
                 source=MediaSourceName.douban,
-                source_id=existing_profile.douban_id,
-                media_type=existing_profile.media_type,
+                source_id=source_douban_id,
+                media_type=existing_profile.media_type if existing_profile else media_id.media_type,
             )
         )
     except (AppException, RuntimeError, ValueError):

@@ -13,7 +13,7 @@ from app.api.middleware import ResponseWrapperASGIMiddleware
 from app.schemas.exception.exceptions import (
     InvalidRequestException,
     SYSTEM_ERROR_CODE,
-    SYSTEM_ERROR_MESSAGE,
+    SYSTEM_ERROR_KEY,
 )
 
 
@@ -31,7 +31,8 @@ def test_response_wrapper_wraps_business_exception() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "code": 10013,
-        "message": "bad request",
+        "message_key": "bad request",
+        "params": {},
         "data": None,
         "is_system_error": False,
     }
@@ -51,7 +52,8 @@ def test_response_wrapper_wraps_unknown_exception_as_uniform_system_error() -> N
     assert response.status_code == 200
     assert response.json() == {
         "code": SYSTEM_ERROR_CODE,
-        "message": SYSTEM_ERROR_MESSAGE,
+        "message_key": SYSTEM_ERROR_KEY,
+        "params": {},
         "data": None,
         "is_system_error": True,
     }
@@ -87,7 +89,8 @@ def test_response_wrapper_normalizes_framework_validation_error() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "code": 10013,
-        "message": "Sample",
+        "message_key": "backendErrors.invalidRequest",
+        "params": {},
         "data": None,
         "is_system_error": False,
     }
@@ -108,7 +111,8 @@ def test_response_wrapper_normalizes_framework_http_exception_via_exception_hand
     assert response.status_code == 200
     assert response.json() == {
         "code": 404,
-        "message": "Sample",
+        "message_key": "backendErrors.http",
+        "params": {},
         "data": None,
         "is_system_error": False,
     }
@@ -132,7 +136,8 @@ def test_auth_middleware_returns_setup_required_with_business_flag(monkeypatch) 
     assert response.status_code == 200
     assert response.json() == {
         "code": 460,
-        "message": "text，text",
+        "message_key": "backendErrors.setupRequired",
+        "params": {},
         "data": None,
         "is_system_error": False,
     }
@@ -157,7 +162,8 @@ def test_auth_middleware_returns_not_logged_in_with_business_flag(monkeypatch) -
     assert response.status_code == 200
     assert response.json() == {
         "code": 401,
-        "message": "Sample",
+        "message_key": "backendErrors.authenticationRequired",
+        "params": {},
         "data": None,
         "is_system_error": False,
     }
@@ -188,7 +194,8 @@ def test_auth_middleware_returns_onboarding_required_with_business_flag(monkeypa
     assert response.status_code == 200
     assert response.json() == {
         "code": 461,
-        "message": "text，text",
+        "message_key": "backendErrors.onboardingRequired",
+        "params": {},
         "data": None,
         "is_system_error": False,
     }

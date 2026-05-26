@@ -38,7 +38,7 @@ def _view() -> MediaSubscriptionStateView:
 
 
 def test_validate_media_snapshot_target_rejects_mismatched_media_id():
-    with pytest.raises(DownloadException, match="Sample"):
+    with pytest.raises(DownloadException, match="backendErrors.subscriptionMediaSnapshotMismatch"):
         SubscriptionCommandService.validate_media_snapshot_target(
             _media_snapshot(media_id="tmdb:tv:2"),
             MediaID.parse("tmdb:tv:1"),
@@ -47,7 +47,7 @@ def test_validate_media_snapshot_target_rejects_mismatched_media_id():
 
 
 def test_validate_media_snapshot_target_rejects_mismatched_season_number():
-    with pytest.raises(DownloadException, match="Sample"):
+    with pytest.raises(DownloadException, match="backendErrors.subscriptionMediaSnapshotSeasonMismatch"):
         SubscriptionCommandService.validate_media_snapshot_target(
             _media_snapshot(season_number=1),
             MediaID.parse("tmdb:tv:1"),

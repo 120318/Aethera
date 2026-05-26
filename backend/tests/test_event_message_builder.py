@@ -59,9 +59,9 @@ def test_build_download_started_message_includes_torrent_and_selection_context()
     message = build_download_started_message(_task(), "qBittorrent")
 
     assert "Example.Show.S01.1080p" in message
-    assert "text mteam" in message
-    assert "text qBittorrent" in message
-    assert "text 2/3 text" in message
+    assert "site mteam" in message
+    assert "downloader qBittorrent" in message
+    assert "2/3 files selected" in message
     assert "hash 12345678" in message
 
 
@@ -73,8 +73,8 @@ def test_build_download_completed_message_prefers_resource_title_over_metadata_n
 
     assert "Example.Show.S01.1080p" in message
     assert "S01E01.mkv" not in message
-    assert "text qBittorrent" in message
-    assert "text 2/3 text" in message
+    assert "downloader qBittorrent" in message
+    assert "2/3 files selected" in message
     assert "hash 12345678" in message
 
 
@@ -101,15 +101,15 @@ def test_build_media_import_completed_message_includes_file_count_episode_and_ta
     )
 
     assert "Sample" not in message
-    assert "text 2 text" in message
-    assert "text 1-2 text" in message
+    assert "2 files imported" in message
+    assert "episodes 1-2 covered" in message
     assert "S01E01.mkv" in message
 
 
 def test_build_subscription_run_completed_message_is_explicit():
     message = build_subscription_run_completed_message(checked=5, added=2)
 
-    assert message == "text（text 5 text，text 2 text）"
+    assert message == "Subscription check completed (5 candidates matched, 2 download tasks created)"
 
 
 def test_build_pilot_episode_queued_message_includes_directory_and_site_count():
@@ -118,8 +118,8 @@ def test_build_pilot_episode_queued_message_includes_directory_and_site_count():
     message = build_pilot_episode_queued_message(media, directory_id="tv-default", sites=["mteam", "pter"])
 
     assert "Sample" not in message
-    assert "text tv-default" in message
-    assert "text 2 text" in message
+    assert "directory tv-default" in message
+    assert "2 sites" in message
 
 
 def test_build_pilot_episode_queued_message_uses_download_wording_for_movie():
@@ -127,5 +127,6 @@ def test_build_pilot_episode_queued_message_uses_download_wording_for_movie():
 
     message = build_pilot_episode_queued_message(media, directory_id="movie-default", sites=None)
 
-    assert "Sample" in message
-    assert "Sample" in message
+    assert "Download task submitted" in message
+    assert "directory movie-default" in message
+    assert "default sites" in message

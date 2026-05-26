@@ -77,7 +77,6 @@ def build_profile_from_media(
     episodes_count: int | None,
 ) -> ManagedMediaProfile:
     now = time.time()
-    profile_douban_id = media.douban_id if media.media_type != MediaType.tv else None
     schedule = media.schedule
     schedule_has_episode_progress = bool(
         schedule
@@ -110,7 +109,6 @@ def build_profile_from_media(
         overview=_localized_text(media.overview, existing.overview if existing else None),
         genres=_localized_text_items(list(media.genres), list(existing.genres) if existing else []),
         imdb_id=media.imdb_id,
-        douban_id=profile_douban_id,
         tmdb_id=media.tmdb_id,
         primary_metadata_source=media.primary_metadata_source,
         metadata_capabilities=media.metadata_capabilities,

@@ -380,6 +380,66 @@ def test_build_scopes_from_media_rejects_unscoped_tv_media():
         build_scopes_from_media(media, [])
 
 
+def test_build_scopes_from_media_uses_selected_tv_season_douban_id():
+    media_id = MediaID.parse("tmdb:tv:312823")
+    media = MediaFullInfo(
+        media_id=media_id,
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=312823,
+        douban_id="wrong-work-id",
+        season_number=3,
+        seasons=[
+            MediaSeasonInfo(season_number=1, episode_count=52, douban_id="30425739"),
+            MediaSeasonInfo(season_number=3, episode_count=59, douban_id="36055705"),
+        ],
+    )
+
+    scopes = build_scopes_from_media(media, [])
+
+    assert len(scopes) == 1
+    assert scopes[0].season_number == 3
+    assert scopes[0].douban_id == "36055705"
+
+
+def test_build_scopes_from_media_preserves_existing_tv_scope_douban_id():
+    media_id = MediaID.parse("tmdb:tv:312823")
+    media = MediaFullInfo(
+        media_id=media_id,
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=312823,
+        douban_id=None,
+        season_number=3,
+        seasons=[MediaSeasonInfo(season_number=3, episode_count=59)],
+    )
+
+    scopes = build_scopes_from_media(media, [_scope(media_id, 3, douban_id="36055705")])
+
+    assert len(scopes) == 1
+    assert scopes[0].douban_id == "36055705"
+
+
+def test_build_scopes_from_media_uses_movie_douban_id():
+    media_id = MediaID.parse("tmdb:movie:100")
+    media = MediaFullInfo(
+        media_id=media_id,
+        title="Sample",
+        year=2026,
+        media_type=MediaType.movie,
+        tmdb_id=100,
+        douban_id="35633767",
+    )
+
+    scopes = build_scopes_from_media(media, [])
+
+    assert len(scopes) == 1
+    assert scopes[0].season_number == 0
+    assert scopes[0].douban_id == "35633767"
+
+
 @pytest.mark.asyncio
 async def test_detail_info_rejects_unscoped_tv_media_without_source_resolution(monkeypatch):
     media_id = MediaID.parse("tmdb:tv:312823")
@@ -753,6 +813,7 @@ async def test_info_from_douban_source_uses_stale_profile_without_refresh(monkey
     monkeypatch.setattr(service.mapping_repo, "find_by_douban_id", Mock(return_value=mapping))
     monkeypatch.setattr(service.mapping_repo, "upsert", Mock())
     monkeypatch.setattr(service.profile_repo, "find_by_media_id", AsyncMock(return_value=stale_profile))
+    monkeypatch.setattr(service.scope_repo, "find_by_media_id", AsyncMock(return_value=[_scope(media_id, 0, douban_id="35633767")]))
     monkeypatch.setattr(service, "refresh_profile", refresh_profile)
 
     media = await service.info_from_source(
@@ -772,6 +833,7 @@ async def test_info_uses_fresh_profile_without_provider_refresh(monkeypatch):
     refresh_profile = AsyncMock(return_value=None)
 
     monkeypatch.setattr(service.profile_repo, "find_by_media_id", AsyncMock(return_value=profile))
+    monkeypatch.setattr(service.scope_repo, "find_by_media_id", AsyncMock(return_value=[_scope(media_id, 0, douban_id="35633767")]))
     monkeypatch.setattr(service, "refresh_profile", refresh_profile)
 
     media = await service.info(media_id)
@@ -801,6 +863,7 @@ async def test_info_uses_stale_profile_without_provider_refresh(monkeypatch):
 
     monkeypatch.setattr(service, "is_managed_media", AsyncMock(return_value=False))
     monkeypatch.setattr(service.profile_repo, "find_by_media_id", AsyncMock(return_value=stale_profile))
+    monkeypatch.setattr(service.scope_repo, "find_by_media_id", AsyncMock(return_value=[_scope(media_id, 0, douban_id="35633767")]))
     monkeypatch.setattr(service.profile_repo, "upsert_profile", AsyncMock(return_value=True))
 
     media = await service.info(media_id)
@@ -830,14 +893,19 @@ async def test_refresh_profile_falls_back_to_tmdb_when_douban_refresh_fails(monk
     )
     schedule_service = SimpleNamespace(build_schedule_bundle=AsyncMock(return_value=(MediaScheduleSummary(media_type=MediaType.movie), [])))
     service = MediaProfileService(provider_service=provider_service, schedule_service=schedule_service)
+    scope = _scope(media_id, 0, douban_id="35633767")
+    saved_scopes = []
 
     monkeypatch.setattr(service, "is_managed_media", AsyncMock(return_value=False))
+    monkeypatch.setattr(service.scope_repo, "find_by_media_id", AsyncMock(return_value=[scope]))
+    monkeypatch.setattr(service.scope_repo, "find_by_media_id_and_season", AsyncMock(return_value=scope))
+    monkeypatch.setattr(service.scope_repo, "upsert_scope", AsyncMock(side_effect=lambda next_scope: saved_scopes.append(next_scope) or True))
     monkeypatch.setattr(service.profile_repo, "upsert_profile", AsyncMock(return_value=True))
 
     profile = await service.refresh_profile(media_id, existing=existing)
 
     assert profile is not None
-    assert profile.douban_id == "35633767"
+    assert saved_scopes[-1].douban_id == "35633767"
     provider_service.info_from_source.assert_awaited_once_with(
         MediaSourceLookup(source=MediaSourceName.douban, source_id="35633767", media_type=MediaType.movie)
     )

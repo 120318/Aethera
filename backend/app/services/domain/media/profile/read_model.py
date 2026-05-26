@@ -1,6 +1,7 @@
 import logging
 from app.schemas.domain.managed_media_profile import ManagedMediaProfile
 from app.schemas.domain.media import EpisodeInfo, MediaFullInfo, MediaSimpleInfo
+from app.schemas.domain.media_profile_scope import MediaProfileScope
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleEpisode
 from app.schemas.exception import MediaNotFoundException
@@ -14,9 +15,17 @@ class MediaProfileReadModel:
     def has_complete_detail(self, profile: ManagedMediaProfile) -> bool:
         return bool(profile.detail_ready and profile.title and profile.year is not None and profile.year > 0)
 
-    def _display_rating(self, profile: ManagedMediaProfile) -> tuple[float | None, int | None, str | None]:
-        if profile.douban_id:
-            return profile.douban_vote_average, profile.douban_rating_count, "douban"
+    def _display_rating(
+        self,
+        profile: ManagedMediaProfile,
+        selected_scope: MediaProfileScope | None = None,
+    ) -> tuple[float | None, int | None, str | None]:
+        if selected_scope and selected_scope.douban_id:
+            return (
+                selected_scope.douban_vote_average or profile.douban_vote_average,
+                selected_scope.douban_rating_count or profile.douban_rating_count,
+                "douban",
+            )
         tmdb_vote_average = profile.tmdb_vote_average
         tmdb_rating_count = profile.tmdb_rating_count
         if tmdb_vote_average is None and profile.rating_source == "tmdb":
@@ -24,7 +33,12 @@ class MediaProfileReadModel:
             tmdb_rating_count = profile.rating_count
         return tmdb_vote_average, tmdb_rating_count, "tmdb" if tmdb_vote_average is not None else profile.rating_source
 
-    def to_simple(self, media_id: MediaID, profile: ManagedMediaProfile) -> MediaSimpleInfo:
+    def to_simple(
+        self,
+        media_id: MediaID,
+        profile: ManagedMediaProfile,
+        selected_scope: MediaProfileScope | None = None,
+    ) -> MediaSimpleInfo:
         if profile.year is None:
             raise MediaNotFoundException()
         return MediaSimpleInfo(
@@ -33,7 +47,7 @@ class MediaProfileReadModel:
             year=profile.year,
             media_type=profile.media_type,
             imdb_id=profile.imdb_id,
-            douban_id=profile.douban_id,
+            douban_id=selected_scope.douban_id if selected_scope else None,
             tmdb_id=profile.tmdb_id,
             primary_metadata_source=profile.primary_metadata_source,
             metadata_capabilities=profile.metadata_capabilities,
@@ -44,10 +58,15 @@ class MediaProfileReadModel:
             aired_episode_count=0,
         )
 
-    def to_full(self, media_id: MediaID, profile: ManagedMediaProfile) -> MediaFullInfo:
+    def to_full(
+        self,
+        media_id: MediaID,
+        profile: ManagedMediaProfile,
+        selected_scope: MediaProfileScope | None = None,
+    ) -> MediaFullInfo:
         if profile.year is None:
             raise MediaNotFoundException()
-        vote_average, rating_count, rating_source = self._display_rating(profile)
+        vote_average, rating_count, rating_source = self._display_rating(profile, selected_scope)
         seasons = [
             season.model_copy(update={"episode_count": int(season.episode_count_override)})
             if season.episode_count_override is not None and season.episode_count_override > 0
@@ -61,7 +80,7 @@ class MediaProfileReadModel:
             year=profile.year,
             media_type=profile.media_type,
             imdb_id=profile.imdb_id,
-            douban_id=profile.douban_id,
+            douban_id=selected_scope.douban_id if selected_scope else None,
             tmdb_id=profile.tmdb_id,
             primary_metadata_source=profile.primary_metadata_source,
             metadata_capabilities=profile.metadata_capabilities,
@@ -109,9 +128,14 @@ class MediaProfileReadModel:
             original_language=profile.original_language,
         )
 
-    def snapshot_to_full(self, media_id: MediaID, profile: ManagedMediaProfile) -> MediaFullInfo | None:
+    def snapshot_to_full(
+        self,
+        media_id: MediaID,
+        profile: ManagedMediaProfile,
+        selected_scope: MediaProfileScope | None = None,
+    ) -> MediaFullInfo | None:
         try:
-            return self.to_full(media_id, profile)
+            return self.to_full(media_id, profile, selected_scope=selected_scope)
         except MediaNotFoundException:
             logger.warning("Managed media profile missing required title/year: %s", media_id)
             return None

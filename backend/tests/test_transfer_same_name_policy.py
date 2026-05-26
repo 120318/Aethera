@@ -145,7 +145,7 @@ async def test_validate_transfer_upgrade_policy_does_not_treat_other_task_collis
         AsyncMock(return_value=_existing_library_file(resolution="1080p", size=1200)),
     )
 
-    with pytest.raises(TransferException, match="text，text"):
+    with pytest.raises(TransferException, match="backendErrors.transferFileUpgradeUnknown"):
         await upgrade.validate_transfer_upgrade_policy(
             _task(),
             [_transfer_result(resolution="1080p", size=1200)],
@@ -159,7 +159,7 @@ async def test_validate_transfer_upgrade_policy_rejects_not_better_file(monkeypa
         AsyncMock(return_value=_existing_library_file(resolution="2160p")),
     )
 
-    with pytest.raises(TransferException, match="text，text"):
+    with pytest.raises(TransferException, match="backendErrors.transferFileNotBetter"):
         await upgrade.validate_transfer_upgrade_policy(
             _task(),
             [_transfer_result(resolution="1080p")],
@@ -173,7 +173,7 @@ async def test_validate_transfer_upgrade_policy_rejects_unknown_file(monkeypatch
         AsyncMock(return_value=_existing_library_file(resolution=None, size=1000)),
     )
 
-    with pytest.raises(TransferException, match="text，text"):
+    with pytest.raises(TransferException, match="backendErrors.transferFileUpgradeUnknown"):
         await upgrade.validate_transfer_upgrade_policy(
             _task(),
             [_transfer_result(resolution=None, size=1000)],

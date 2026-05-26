@@ -314,7 +314,6 @@ class ManagedMediaProfileORM(Base):
     overview: Mapped[str | None] = mapped_column(Text, nullable=True)
     genres_json: Mapped[list] = mapped_column(JSON, nullable=False)
     imdb_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
-    douban_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     tmdb_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     primary_metadata_source: Mapped[str] = mapped_column(Text, nullable=False, default="douban")
     metadata_capabilities_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
