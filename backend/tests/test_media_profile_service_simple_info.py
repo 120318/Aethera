@@ -158,13 +158,8 @@ def test_profile_read_model_keeps_scope_douban_rating_source_without_score():
     service = MediaProfileService(provider_service=None, schedule_service=MediaScheduleService())
     media_id = MediaID.parse("tmdb:tv:233295")
     profile = _ready_profile(media_id)
-    profile.rating_source = "tmdb"
-    profile.vote_average = 7.5
-    profile.rating_count = 100
     profile.tmdb_vote_average = 7.5
     profile.tmdb_rating_count = 100
-    profile.douban_vote_average = 8.8
-    profile.douban_rating_count = 2000
     selected_scope = _scope(media_id, 1, douban_id="36053703")
 
     media = service.read_model.to_full(media_id, profile, selected_scope=selected_scope)
@@ -452,6 +447,8 @@ def test_build_scopes_from_media_uses_movie_douban_id():
         media_type=MediaType.movie,
         tmdb_id=100,
         douban_id="35633767",
+        douban_vote_average=8.8,
+        douban_rating_count=1200,
     )
 
     scopes = build_scopes_from_media(media, [])
@@ -459,6 +456,8 @@ def test_build_scopes_from_media_uses_movie_douban_id():
     assert len(scopes) == 1
     assert scopes[0].season_number == 0
     assert scopes[0].douban_id == "35633767"
+    assert scopes[0].douban_vote_average == 8.8
+    assert scopes[0].douban_rating_count == 1200
 
 
 @pytest.mark.asyncio

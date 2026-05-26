@@ -31,12 +31,6 @@ class ManagedMediaProfile(BaseModel):
     studios: list[str] = Field(default_factory=list)
     vendors: list[Vendor] = Field(default_factory=list)
     duration: Optional[str] = None
-    rating_count: Optional[int] = None
-    vote_average: Optional[float] = None
-    vote_count: Optional[int] = None
-    rating_source: Optional[str] = None
-    douban_vote_average: Optional[float] = None
-    douban_rating_count: Optional[int] = None
     tmdb_vote_average: Optional[float] = None
     tmdb_rating_count: Optional[int] = None
     release_date: Optional[str] = None

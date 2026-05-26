@@ -26,12 +26,7 @@ class MediaProfileReadModel:
                 selected_scope.douban_rating_count,
                 "douban",
             )
-        tmdb_vote_average = profile.tmdb_vote_average
-        tmdb_rating_count = profile.tmdb_rating_count
-        if tmdb_vote_average is None and profile.rating_source == "tmdb":
-            tmdb_vote_average = profile.vote_average
-            tmdb_rating_count = profile.rating_count
-        return tmdb_vote_average, tmdb_rating_count, "tmdb" if tmdb_vote_average is not None else profile.rating_source
+        return profile.tmdb_vote_average, profile.tmdb_rating_count, "tmdb" if profile.tmdb_vote_average is not None else None
 
     def to_simple(
         self,
@@ -67,6 +62,7 @@ class MediaProfileReadModel:
         if profile.year is None:
             raise MediaNotFoundException()
         vote_average, rating_count, rating_source = self._display_rating(profile, selected_scope)
+        scope_has_douban = bool(selected_scope and selected_scope.douban_id)
         seasons = [
             season.model_copy(update={"episode_count": int(season.episode_count_override)})
             if season.episode_count_override is not None and season.episode_count_override > 0
@@ -99,8 +95,8 @@ class MediaProfileReadModel:
             vote_average=vote_average,
             vote_count=rating_count,
             rating_source=rating_source,
-            douban_vote_average=profile.douban_vote_average,
-            douban_rating_count=profile.douban_rating_count,
+            douban_vote_average=selected_scope.douban_vote_average if scope_has_douban and selected_scope else None,
+            douban_rating_count=selected_scope.douban_rating_count if scope_has_douban and selected_scope else None,
             tmdb_vote_average=profile.tmdb_vote_average,
             tmdb_rating_count=profile.tmdb_rating_count,
             release_date=profile.release_date,

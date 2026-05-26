@@ -171,6 +171,30 @@ def _scope_douban_id(
     return media.douban_id or (existing.douban_id if existing else None)
 
 
+def _scope_douban_vote_average(
+    media: MediaFullInfo,
+    selected_season,
+    existing: MediaProfileScope | None,
+) -> float | None:
+    if media.media_type == MediaType.tv:
+        selected_rating = selected_season.douban_vote_average if selected_season else None
+    else:
+        selected_rating = media.douban_vote_average
+    return selected_rating if selected_rating is not None else existing.douban_vote_average if existing else None
+
+
+def _scope_douban_rating_count(
+    media: MediaFullInfo,
+    selected_season,
+    existing: MediaProfileScope | None,
+) -> int | None:
+    if media.media_type == MediaType.tv:
+        selected_count = selected_season.douban_rating_count if selected_season else None
+    else:
+        selected_count = media.douban_rating_count
+    return selected_count if selected_count is not None else existing.douban_rating_count if existing else None
+
+
 def build_scope_from_media(media: MediaFullInfo, existing: MediaProfileScope | None = None) -> MediaProfileScope | None:
     scope_number = scope_number_for_media(media)
     now = time.time()
@@ -216,10 +240,8 @@ def build_scope_from_media(media: MediaFullInfo, existing: MediaProfileScope | N
         episode_count_override=media.episode_count_override or (selected_season.episode_count_override if selected_season else None),
         poster_path=selected_season.poster_path if selected_season else existing.poster_path if existing else media.poster_path,
         douban_id=_scope_douban_id(media, selected_season, existing),
-        douban_vote_average=(selected_season.douban_vote_average if selected_season else None)
-        or (existing.douban_vote_average if existing else None),
-        douban_rating_count=(selected_season.douban_rating_count if selected_season else None)
-        or (existing.douban_rating_count if existing else None),
+        douban_vote_average=_scope_douban_vote_average(media, selected_season, existing),
+        douban_rating_count=_scope_douban_rating_count(media, selected_season, existing),
         first_air_date=media.first_air_date or (schedule.first_air_date if schedule else None) or (existing.first_air_date if existing else None),
         status_label=(schedule.status_label if schedule else None) or (existing.status_label if existing else None),
         aired_episode_count=(schedule.aired_episode_count if schedule else 0) or (existing.aired_episode_count if existing else 0),
