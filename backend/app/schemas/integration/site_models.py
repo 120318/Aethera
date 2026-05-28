@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.domain.media_types import MediaType
 
@@ -13,6 +13,12 @@ class SiteInfo(BaseModel):
 
 
 class SiteSearchCapabilities(BaseModel):
+    supports_search: bool = True
+    supports_movie_search: bool = True
+    supports_tv_search: bool = True
+    search_params: set[str] = Field(default_factory=set)
+    movie_search_params: set[str] = Field(default_factory=set)
+    tv_search_params: set[str] = Field(default_factory=set)
     supports_doubanid: bool = False
     supports_imdbid: bool = False
     supports_q: bool = True

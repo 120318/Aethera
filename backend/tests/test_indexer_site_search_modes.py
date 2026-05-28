@@ -83,6 +83,8 @@ class RecordingIndexerClient(IndexerClient):
         query: str,
         category: str | None = None,
         search_param: str = "auto",
+        season_number: int | None = None,
+        capabilities: SiteSearchCapabilities | None = None,
     ) -> list[ResourceSearchResult]:
         self.calls.append((indexer, search_param))
         return [
@@ -186,6 +188,8 @@ class ExternalDoubanIdClient(RecordingIndexerClient):
         query: str,
         category: str | None = None,
         search_param: str = "auto",
+        season_number: int | None = None,
+        capabilities: SiteSearchCapabilities | None = None,
     ) -> list[ResourceSearchResult]:
         self.calls.append((indexer, search_param))
         self.queries.append((indexer, search_param, query))
@@ -312,6 +316,8 @@ class ConcurrentModeClient(IndexerClient):
         query: str,
         category: str | None = None,
         search_param: str = "auto",
+        season_number: int | None = None,
+        capabilities: SiteSearchCapabilities | None = None,
     ) -> list[ResourceSearchResult]:
         self.calls.append((indexer, search_param))
         self.in_flight += 1
@@ -321,6 +327,34 @@ class ConcurrentModeClient(IndexerClient):
             return []
         finally:
             self.in_flight -= 1
+
+
+class CapabilityRecordingClient(RecordingIndexerClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.config.site_settings = []
+        self.capability_calls = 0
+        self.seen_capabilities: list[SiteSearchCapabilities | None] = []
+
+    async def get_indexers(self) -> list[SiteInfo]:
+        return [SiteInfo(id="site-a", name="Site A", description="A", language="", type="private")]
+
+    async def get_indexer_caps(self, indexer: str) -> SiteSearchCapabilities:
+        self.capability_calls += 1
+        return SiteSearchCapabilities(supports_q=True, supports_imdbid=True, supports_doubanid=True)
+
+    async def search_indexer_torznab(
+        self,
+        indexer: str,
+        query: str,
+        category: str | None = None,
+        search_param: str = "auto",
+        season_number: int | None = None,
+        capabilities: SiteSearchCapabilities | None = None,
+    ) -> list[ResourceSearchResult]:
+        self.calls.append((indexer, search_param))
+        self.seen_capabilities.append(capabilities)
+        return []
 
 
 @pytest.mark.asyncio
@@ -345,6 +379,26 @@ async def test_search_media_runs_sites_concurrently_and_modes_sequentially_per_s
             "imdbid",
             "q",
         ]
+
+
+@pytest.mark.asyncio
+async def test_search_media_reuses_resolved_site_capabilities_for_each_mode():
+    runtime_cache.clear()
+    client = CapabilityRecordingClient()
+    service = ResourceSearchService(indexer_gateway=IndexerGateway(client=client))
+    query = _query(
+        "tmdb:tv:789",
+        title="Example Show",
+        imdb_id="tt7654321",
+        douban_id="36513446",
+        season_number=1,
+    )
+
+    await service.search_media(query)
+
+    assert client.capability_calls == 1
+    assert client.calls == [("site-a", "doubanid"), ("site-a", "imdbid"), ("site-a", "q")]
+    assert all(capability is not None for capability in client.seen_capabilities)
 
 
 class SingleSiteClient(RecordingIndexerClient):

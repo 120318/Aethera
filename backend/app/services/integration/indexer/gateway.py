@@ -63,20 +63,41 @@ class IndexerGateway:
         sites: list[SiteInfo],
         query: str,
         search_param: str,
+        media_type: MediaType | None = None,
+        season_number: int | None = None,
     ) -> IndexerSiteSearchResult:
-        return await self._site_searcher.search_sites_by_query(client, sites, query, search_param)
+        category = media_type.value if media_type else None
+        return await self._site_searcher.search_sites_by_query(
+            client,
+            sites,
+            query,
+            search_param,
+            category=category,
+            season_number=season_number,
+        )
 
     async def search_context(
         self,
         context: IndexerSearchContext,
         query: str,
         search_param: str,
+        media_type: MediaType | None = None,
+        season_number: int | None = None,
     ) -> IndexerSiteSearchResult:
         client = self._client_by_id(context.indexer_id)
         if client is None:
             logger.warning("Indexer search skipped because client is unavailable: indexer=%s", context.indexer_id)
             return IndexerSiteSearchResult(results=[], failed=True, searched=False, outcomes=[])
-        return await self._site_searcher.search_sites_by_query(client, [context.site], query, search_param)
+        category = media_type.value if media_type else None
+        return await self._site_searcher.search_sites_by_query(
+            client,
+            [context.site],
+            query,
+            search_param,
+            category=category,
+            season_number=season_number,
+            capabilities_by_site={context.site.id: context.capabilities},
+        )
 
     async def list_search_contexts(
         self,

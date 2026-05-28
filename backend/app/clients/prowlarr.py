@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from datetime import datetime
 from types import TracebackType
@@ -16,7 +15,12 @@ from app.schemas.constants.indexer import SITE_SEARCH_TIMEOUT_SECONDS
 from app.schemas.domain.resource_search import ResourceSearchResult
 from app.schemas.integration.site_models import SiteInfo, SiteSearchCapabilities
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
-from app.clients.torznab import parse_torznab_caps_xml, parse_torznab_xml
+from app.clients.torznab import (
+    build_torznab_search_params,
+    parse_torznab_caps_xml,
+    parse_torznab_xml,
+    resolve_torznab_search_param,
+)
 
 logger = logging.getLogger("app.clients.prowlarr")
 
@@ -110,6 +114,10 @@ class ProwlarrClient(IndexerClient):
             supports_tv = True
         supports = item.get("supportsSearch")
         return SiteSearchCapabilities(
+            supports_search=bool(supports) if supports is not None else True,
+            supports_movie_search=False,
+            supports_tv_search=False,
+            search_params={"q"} if supports is not False else set(),
             supports_q=bool(supports) if supports is not None else True,
             supports_imdbid=False,
             supports_doubanid=False,
@@ -292,20 +300,21 @@ class ProwlarrClient(IndexerClient):
         query: str,
         category: str | None = None,
         search_param: str = "auto",
+        season_number: int | None = None,
+        capabilities: SiteSearchCapabilities | None = None,
     ) -> list[ResourceSearchResult]:
         self._ensure_session()
-        params: dict[str, str] = {"apikey": self.api_key, "t": "search"}
-        if search_param == "doubanid":
-            params["doubanid"] = query
-        elif search_param == "imdbid" or (search_param == "auto" and re.match(r"^tt\d{7,8}$", query)):
-            params["imdbid"] = query
-        else:
-            params["q"] = query
-
-        if category:
-            category_map = {"movie": "2000", "tv": "5000", "anime": "5070"}
-            if category in category_map:
-                params["cat"] = category_map[category]
+        resolved_capabilities = capabilities or await self.get_indexer_caps(indexer)
+        params = self._build_torznab_search_params(query, category, search_param, season_number, resolved_capabilities)
+        if params is None:
+            logger.debug(
+                "Prowlarr torznab single indexer skipped unsupported search mode: indexer=%s query=%s category=%s search_param=%s",
+                indexer,
+                query,
+                category,
+                search_param,
+            )
+            return []
 
         url = f"{self.base_url}/{indexer}/api"
         try:
@@ -345,3 +354,97 @@ class ProwlarrClient(IndexerClient):
                 exc,
             )
             raise RuntimeError(message) from exc
+
+    def _torznab_search_type(
+        self,
+        category: str | None,
+        search_param: str,
+        capabilities: SiteSearchCapabilities,
+    ) -> str | None:
+        if category == "tv":
+            if capabilities.supports_tv_search and self._search_type_supports_param(
+                "tvsearch",
+                search_param,
+                capabilities,
+            ):
+                return "tvsearch"
+            if (
+                search_param == "q"
+                and capabilities.supports_search
+                and self._search_type_supports_param("search", search_param, capabilities)
+            ):
+                return "search"
+            return None
+        if category == "movie":
+            if capabilities.supports_movie_search and self._search_type_supports_param(
+                "movie",
+                search_param,
+                capabilities,
+            ):
+                return "movie"
+            if (
+                search_param == "q"
+                and capabilities.supports_search
+                and self._search_type_supports_param("search", search_param, capabilities)
+            ):
+                return "search"
+            return None
+        if capabilities.supports_search and self._search_type_supports_param("search", search_param, capabilities):
+            return "search"
+        return None
+
+    def _search_type_supports_param(
+        self,
+        search_type: str,
+        search_param: str,
+        capabilities: SiteSearchCapabilities,
+    ) -> bool:
+        param_map = {
+            "search": capabilities.search_params,
+            "movie": capabilities.movie_search_params,
+            "tvsearch": capabilities.tv_search_params,
+        }
+        declared_params = param_map.get(search_type, set())
+        if declared_params:
+            return search_param in declared_params
+        if search_param == "q":
+            return capabilities.supports_q
+        if search_param == "imdbid":
+            return capabilities.supports_imdbid
+        if search_param == "doubanid":
+            return capabilities.supports_doubanid
+        return False
+
+    def _torznab_season_param(
+        self,
+        search_type: str,
+        season_number: int | None,
+        capabilities: SiteSearchCapabilities,
+    ) -> int | None:
+        if search_type != "tvsearch" or season_number is None or season_number <= 0:
+            return None
+        if capabilities.tv_search_params and "season" not in capabilities.tv_search_params:
+            return None
+        return season_number
+
+    def _build_torznab_search_params(
+        self,
+        query: str,
+        category: str | None,
+        search_param: str,
+        season_number: int | None,
+        capabilities: SiteSearchCapabilities | None = None,
+    ) -> dict[str, str] | None:
+        resolved_capabilities = capabilities or SiteSearchCapabilities()
+        resolved_search_param = resolve_torznab_search_param(query, search_param)
+        search_type = self._torznab_search_type(category, resolved_search_param, resolved_capabilities)
+        if search_type is None:
+            return None
+        return build_torznab_search_params(
+            api_key=self.api_key,
+            query=query,
+            search_param=resolved_search_param,
+            category=category,
+            search_type=search_type,
+            season_number=self._torznab_season_param(search_type, season_number, resolved_capabilities),
+        )

@@ -45,7 +45,10 @@ export function useResourceSearchLifecycle({
   watch(
     () => props.initialResults,
     (results) => {
-      if (!Array.isArray(results)) return
+      if (!Array.isArray(results)) {
+        clearSearchResults({ keepHasSearched: props.hasSearched || props.alwaysShowResults })
+        return
+      }
       setSearchResults(results)
     },
   )

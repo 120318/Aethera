@@ -1,4 +1,5 @@
-fastapi
+fastapi==0.136.1
+starlette==1.0.0
 uvicorn[standard]
 httpx
 aiohttp
