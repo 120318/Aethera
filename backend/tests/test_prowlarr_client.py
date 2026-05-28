@@ -52,6 +52,8 @@ def test_prowlarr_capabilities_are_derived_from_categories():
     assert caps.supports_imdbid is False
     assert caps.supports_doubanid is False
     assert caps.supports_search is True
+    assert caps.supports_movie_search is False
+    assert caps.supports_tv_search is False
     assert caps.supports_movie is True
     assert caps.supports_tv is True
 
@@ -162,6 +164,28 @@ def test_prowlarr_torznab_movie_id_search_skips_generic_id_search_even_when_caps
     assert params is None
 
 
+def test_prowlarr_torznab_tv_id_search_skips_param_not_supported_by_tvsearch():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params(
+        "36513446",
+        "tv",
+        "doubanid",
+        1,
+        SiteSearchCapabilities(
+            supports_search=True,
+            supports_tv_search=True,
+            search_params={"q", "doubanid"},
+            tv_search_params={"q", "season", "imdbid"},
+            supports_doubanid=True,
+        ),
+    )
+
+    assert params is None
+
+
 def test_prowlarr_torznab_tv_title_fallback_omits_season_without_tvsearch():
     client = ProwlarrClient(
         ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
@@ -258,6 +282,9 @@ def test_shared_torznab_caps_parser_maps_available_search_types():
     assert caps.supports_tv_search is True
     assert caps.supports_movie_search is False
     assert caps.supports_imdbid is True
+    assert caps.search_params == {"q"}
+    assert caps.tv_search_params == {"q", "season", "ep", "imdbid"}
+    assert caps.movie_search_params == set()
 
 
 def test_shared_torznab_parser_maps_prowlarr_feed_result():

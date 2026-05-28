@@ -162,7 +162,7 @@ def parse_torznab_caps_xml(xml_text: str) -> SiteSearchCapabilities:
         logger.warning("Failed to parse Torznab caps XML: %s", exc)
         return SiteSearchCapabilities()
 
-    params: set[str] = set()
+    params_by_search_type: dict[str, set[str]] = {}
     available_search_types: set[str] = set()
     declared_search_types: set[str] = set()
     searching = root.find(".//searching")
@@ -174,11 +174,14 @@ def parse_torznab_caps_xml(xml_text: str) -> SiteSearchCapabilities:
             if available in {"no", "false", "0"}:
                 continue
             available_search_types.add(search_type)
+            search_type_params: set[str] = set()
             supported = child.attrib.get("supportedParams", "") or ""
             for param in supported.split(","):
                 normalized = param.strip().lower()
                 if normalized:
-                    params.add(normalized)
+                    search_type_params.add(normalized)
+            params_by_search_type[search_type] = search_type_params
+    params = set().union(*params_by_search_type.values()) if params_by_search_type else set()
 
     category_ids: set[str] = set()
     for category in root.findall(".//categories//category"):
@@ -195,6 +198,9 @@ def parse_torznab_caps_xml(xml_text: str) -> SiteSearchCapabilities:
         supports_search="search" in available_search_types if declared_search_types else True,
         supports_movie_search="movie-search" in available_search_types if declared_search_types else True,
         supports_tv_search="tv-search" in available_search_types if declared_search_types else True,
+        search_params=params_by_search_type.get("search", set()),
+        movie_search_params=params_by_search_type.get("movie-search", set()),
+        tv_search_params=params_by_search_type.get("tv-search", set()),
         supports_doubanid="doubanid" in params,
         supports_imdbid="imdbid" in params,
         supports_q="q" in params if params else True,

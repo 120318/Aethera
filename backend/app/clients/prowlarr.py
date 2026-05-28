@@ -110,8 +110,9 @@ class ProwlarrClient(IndexerClient):
         supports = item.get("supportsSearch")
         return SiteSearchCapabilities(
             supports_search=bool(supports) if supports is not None else True,
-            supports_movie_search=bool(supports) if supports is not None else True,
-            supports_tv_search=bool(supports) if supports is not None else True,
+            supports_movie_search=False,
+            supports_tv_search=False,
+            search_params={"q"} if supports is not False else set(),
             supports_q=bool(supports) if supports is not None else True,
             supports_imdbid=False,
             supports_doubanid=False,
@@ -370,6 +371,28 @@ class ProwlarrClient(IndexerClient):
             return "search"
         return None
 
+    def _search_type_supports_param(
+        self,
+        search_type: str,
+        search_param: str,
+        capabilities: SiteSearchCapabilities,
+    ) -> bool:
+        param_map = {
+            "search": capabilities.search_params,
+            "movie": capabilities.movie_search_params,
+            "tvsearch": capabilities.tv_search_params,
+        }
+        declared_params = param_map.get(search_type, set())
+        if declared_params:
+            return search_param in declared_params or (search_param == "auto" and "q" in declared_params)
+        if search_param == "q":
+            return capabilities.supports_q
+        if search_param == "imdbid":
+            return capabilities.supports_imdbid
+        if search_param == "doubanid":
+            return capabilities.supports_doubanid
+        return search_param == "auto" and capabilities.supports_q
+
     def _build_torznab_search_params(
         self,
         query: str,
@@ -378,9 +401,16 @@ class ProwlarrClient(IndexerClient):
         season_number: int | None,
         capabilities: SiteSearchCapabilities | None = None,
     ) -> dict[str, str] | None:
+        has_explicit_capabilities = capabilities is not None
         resolved_capabilities = capabilities or SiteSearchCapabilities()
         search_type = self._torznab_search_type(category, search_param, resolved_capabilities)
         if search_type is None:
+            return None
+        if has_explicit_capabilities and not self._search_type_supports_param(
+            search_type,
+            search_param,
+            resolved_capabilities,
+        ):
             return None
         return build_torznab_search_params(
             api_key=self.api_key,
