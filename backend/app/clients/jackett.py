@@ -9,7 +9,6 @@ import logging
 import re
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime
 from types import TracebackType
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
@@ -19,7 +18,7 @@ from app.schemas.config import IndexerProviderConfig
 from app.schemas.constants.indexer import SITE_SEARCH_TIMEOUT_SECONDS
 from app.schemas.domain.resource_search import JackettSearchResponse, JackettSearchResult, ResourceSearchResult
 from app.schemas.integration.site_models import SiteInfo, SiteSearchCapabilities
-from app.clients.torznab import format_size, parse_torznab_caps_xml, parse_torznab_xml, truncate_text
+from app.clients.torznab import build_torznab_search_params, format_size, parse_torznab_caps_xml, parse_torznab_xml, truncate_text
 
 logger = logging.getLogger("app.clients.jackett")
 
@@ -302,7 +301,8 @@ class JackettClient(IndexerClient):
         url = f"{self.base_url}/api/v2.0/indexers/all/results"
         try:
             async with self.session.get(url, params=params, timeout=self.search_timeout) as resp:
-                if resp.status != 200: return []
+                if resp.status != 200:
+                    return []
                 data_json = await resp.json()
                 data = JackettSearchResponse.model_validate(data_json)
                 return data.Results
@@ -328,7 +328,8 @@ class JackettClient(IndexerClient):
         url = f"{self.base_url}/api/v2.0/indexers/all/results/torznab"
         try:
             async with self.session.get(url, params=params, timeout=self.search_timeout) as resp:
-                if resp.status != 200: return []
+                if resp.status != 200:
+                    return []
                 text = await resp.text()
                 return self._parse_torznab_xml(text)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
@@ -348,20 +349,16 @@ class JackettClient(IndexerClient):
         query: str,
         category: str | None = None,
         search_param: str = "auto",
+        season_number: int | None = None,
     ) -> list[ResourceSearchResult]:
         self._ensure_session()
-        params: dict[str, str] = {"apikey": self.api_key, "t": "search"}
-        if search_param == "doubanid":
-            params["doubanid"] = query
-        elif search_param == "imdbid" or (search_param == "auto" and re.match(r"^tt\d{7,8}$", query)):
-            params["imdbid"] = query
-        else:
-            params["q"] = query
-
-        if category:
-            category_map = {"movie": "2000", "tv": "5000", "anime": "5070"}
-            if category in category_map:
-                params["cat"] = category_map[category]
+        params = build_torznab_search_params(
+            api_key=self.api_key,
+            query=query,
+            search_param=search_param,
+            category=category,
+            search_type="search",
+        )
 
         url = f"{self.base_url}/api/v2.0/indexers/{indexer}/results/torznab"
         try:
@@ -410,7 +407,8 @@ class JackettClient(IndexerClient):
         url = f"{self.base_url}/api/v2.0/indexers/{indexer}/results"
         try:
             async with self.session.get(url, params=params, timeout=self.search_timeout) as resp:
-                if resp.status != 200: return []
+                if resp.status != 200:
+                    return []
                 data_json = await resp.json()
                 data = JackettSearchResponse.model_validate(data_json)
                 return data.Results

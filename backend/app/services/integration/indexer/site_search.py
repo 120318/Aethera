@@ -30,12 +30,14 @@ class IndexerSiteSearcher:
         sites: list[SiteInfo],
         query: str,
         search_param: str,
+        category: str | None = None,
+        season_number: int | None = None,
     ) -> IndexerSiteSearchResult:
         if not sites:
             return IndexerSiteSearchResult(results=[], failed=False, searched=False, outcomes=[])
         semaphore = asyncio.Semaphore(self._concurrency)
         outcomes = await asyncio.gather(*(
-            self.search_site_by_query(client, site, query, search_param, semaphore)
+            self.search_site_by_query(client, site, query, search_param, semaphore, category, season_number)
             for site in sites
         ))
 
@@ -64,11 +66,13 @@ class IndexerSiteSearcher:
         query: str,
         search_param: str,
         semaphore: asyncio.Semaphore,
+        category: str | None = None,
+        season_number: int | None = None,
     ) -> IndexerSiteSearchOutcome:
         async with semaphore:
             try:
                 results = await asyncio.wait_for(
-                    client.search_site(site.id, query, search_param=search_param),
+                    client.search_site(site.id, query, category=category, search_param=search_param, season_number=season_number),
                     timeout=self._timeout,
                 )
                 initial_matched_by_id = search_param in {"doubanid", "imdbid"}

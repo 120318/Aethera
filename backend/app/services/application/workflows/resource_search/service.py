@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 
 from app.schemas.domain.resource_search import MediaSearchQuery, ResourceSearchResult
+from app.schemas.domain.media_types import MediaType
 from app.schemas.media_id import MediaID
 from app.schemas.runtime.indexer_runtime import IndexerSiteSearchOutcome
 from app.schemas.runtime.indexer_runtime import IndexerSearchContext
@@ -21,6 +22,8 @@ class _SiteSearchPlan:
     context: IndexerSearchContext
     modes: list[tuple[str, str]]
     query_scope: str
+    media_type: MediaType | None
+    season_number: int | None
 
 
 class ResourceSearchService:
@@ -115,7 +118,15 @@ class ResourceSearchService:
                     continue
                 scheduled_site_count += 1
                 mode_request_count += len(modes)
-                scheduled_plans.append(_SiteSearchPlan(context=context, modes=modes, query_scope=query_scope))
+                scheduled_plans.append(
+                    _SiteSearchPlan(
+                        context=context,
+                        modes=modes,
+                        query_scope=query_scope,
+                        media_type=query.media_type,
+                        season_number=query.season_number,
+                    )
+                )
                 ordered_entries.append(("scheduled", None))
 
         scheduled_results = await self._search_site_plans(scheduled_plans)
@@ -212,7 +223,12 @@ class ResourceSearchService:
 
     async def _search_site_plan(self, plan: _SiteSearchPlan) -> tuple[_SiteSearchPlan, IndexerSiteSearchResult]:
         try:
-            result = await self._search_site_modes(plan.context, plan.modes)
+            result = await self._search_site_modes(
+                plan.context,
+                plan.modes,
+                media_type=plan.media_type,
+                season_number=plan.season_number,
+            )
         except Exception:
             logger.exception(
                 "Resource media search site task failed: client=%s site=%s",
@@ -370,6 +386,8 @@ class ResourceSearchService:
         self,
         context: IndexerSearchContext,
         modes: list[tuple[str, str]],
+        media_type: MediaType | None = None,
+        season_number: int | None = None,
     ) -> IndexerSiteSearchResult:
         site_results: list[ResourceSearchResult] = []
         outcomes: list[IndexerSiteSearchOutcome] = []
@@ -383,7 +401,13 @@ class ResourceSearchService:
                 search_param,
                 query_text,
             )
-            result = await self.indexer_gateway.search_context(context, query_text, search_param)
+            result = await self.indexer_gateway.search_context(
+                context,
+                query_text,
+                search_param,
+                media_type=media_type,
+                season_number=season_number,
+            )
             outcomes.extend(result.outcomes)
             site_results.extend(result.results)
             site_failed = site_failed or result.failed

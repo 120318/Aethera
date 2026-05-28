@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -30,6 +31,31 @@ def truncate_text(value: str | None, limit: int = 300) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit].rstrip()}..."
+
+
+def build_torznab_search_params(
+    *,
+    api_key: str,
+    query: str,
+    search_param: str,
+    category: str | None = None,
+    search_type: str = "search",
+    season_number: int | None = None,
+) -> dict[str, str]:
+    params: dict[str, str] = {"apikey": api_key, "t": search_type}
+    if search_param == "doubanid":
+        params["doubanid"] = query
+    elif search_param == "imdbid" or (search_param == "auto" and re.match(r"^tt\d{7,8}$", query)):
+        params["imdbid"] = query
+    else:
+        params["q"] = query
+
+    category_map = {"movie": "2000", "tv": "5000", "anime": "5070"}
+    if category in category_map:
+        params["cat"] = category_map[category]
+    if season_number is not None and season_number > 0:
+        params["season"] = str(season_number)
+    return params
 
 
 def parse_torznab_xml(xml_text: str, *, default_site: str = "unknown") -> list[ResourceSearchResult]:
@@ -137,12 +163,17 @@ def parse_torznab_caps_xml(xml_text: str) -> SiteSearchCapabilities:
         return SiteSearchCapabilities()
 
     params: set[str] = set()
+    available_search_types: set[str] = set()
+    declared_search_types: set[str] = set()
     searching = root.find(".//searching")
     if searching is not None:
         for child in list(searching):
+            search_type = child.tag.rsplit("}", 1)[-1].lower()
+            declared_search_types.add(search_type)
             available = str(child.attrib.get("available", "")).strip().lower()
             if available in {"no", "false", "0"}:
                 continue
+            available_search_types.add(search_type)
             supported = child.attrib.get("supportedParams", "") or ""
             for param in supported.split(","):
                 normalized = param.strip().lower()
@@ -161,6 +192,9 @@ def parse_torznab_caps_xml(xml_text: str) -> SiteSearchCapabilities:
         supports_tv = True
 
     return SiteSearchCapabilities(
+        supports_search="search" in available_search_types if declared_search_types else True,
+        supports_movie_search="movie-search" in available_search_types if declared_search_types else True,
+        supports_tv_search="tv-search" in available_search_types if declared_search_types else True,
         supports_doubanid="doubanid" in params,
         supports_imdbid="imdbid" in params,
         supports_q="q" in params if params else True,

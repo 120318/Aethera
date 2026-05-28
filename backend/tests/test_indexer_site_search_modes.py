@@ -83,6 +83,7 @@ class RecordingIndexerClient(IndexerClient):
         query: str,
         category: str | None = None,
         search_param: str = "auto",
+        season_number: int | None = None,
     ) -> list[ResourceSearchResult]:
         self.calls.append((indexer, search_param))
         return [
@@ -186,6 +187,7 @@ class ExternalDoubanIdClient(RecordingIndexerClient):
         query: str,
         category: str | None = None,
         search_param: str = "auto",
+        season_number: int | None = None,
     ) -> list[ResourceSearchResult]:
         self.calls.append((indexer, search_param))
         self.queries.append((indexer, search_param, query))
@@ -312,6 +314,7 @@ class ConcurrentModeClient(IndexerClient):
         query: str,
         category: str | None = None,
         search_param: str = "auto",
+        season_number: int | None = None,
     ) -> list[ResourceSearchResult]:
         self.calls.append((indexer, search_param))
         self.in_flight += 1

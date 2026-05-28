@@ -13,6 +13,9 @@ class SiteInfo(BaseModel):
 
 
 class SiteSearchCapabilities(BaseModel):
+    supports_search: bool = True
+    supports_movie_search: bool = True
+    supports_tv_search: bool = True
     supports_doubanid: bool = False
     supports_imdbid: bool = False
     supports_q: bool = True

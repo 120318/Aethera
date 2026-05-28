@@ -2,7 +2,8 @@ from datetime import datetime
 
 from app.clients.prowlarr import ProwlarrClient
 from app.schemas.config import ProwlarrConfig
-from app.clients.torznab import parse_torznab_xml
+from app.clients.torznab import build_torznab_search_params, parse_torznab_xml
+from app.schemas.integration.site_models import SiteSearchCapabilities
 
 
 def test_prowlarr_client_maps_enabled_torrent_indexer_to_site():
@@ -50,8 +51,165 @@ def test_prowlarr_capabilities_are_derived_from_categories():
     assert caps.supports_q is True
     assert caps.supports_imdbid is False
     assert caps.supports_doubanid is False
+    assert caps.supports_search is True
     assert caps.supports_movie is True
     assert caps.supports_tv is True
+
+
+def test_prowlarr_torznab_tv_id_search_uses_tvsearch_mode_and_season():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params("tt36982480", "tv", "imdbid", 1)
+
+    assert params == {
+        "apikey": "key",
+        "t": "tvsearch",
+        "imdbid": "tt36982480",
+        "cat": "5000",
+        "season": "1",
+    }
+
+
+def test_prowlarr_torznab_tv_title_search_uses_tvsearch_mode_and_season():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params("耀眼", "tv", "q", 1)
+
+    assert params == {
+        "apikey": "key",
+        "t": "tvsearch",
+        "q": "耀眼",
+        "cat": "5000",
+        "season": "1",
+    }
+
+
+def test_shared_torznab_search_params_map_search_modes():
+    params = build_torznab_search_params(
+        api_key="key",
+        query="36513446",
+        search_param="doubanid",
+        category="tv",
+        search_type="search",
+    )
+
+    assert params == {
+        "apikey": "key",
+        "t": "search",
+        "doubanid": "36513446",
+        "cat": "5000",
+    }
+
+
+def test_prowlarr_torznab_movie_title_search_falls_back_to_generic_search_when_movie_mode_unavailable():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params(
+        "The Shawshank Redemption",
+        "movie",
+        "q",
+        None,
+        SiteSearchCapabilities(supports_search=True, supports_movie_search=False),
+    )
+
+    assert params == {
+        "apikey": "key",
+        "t": "search",
+        "q": "The Shawshank Redemption",
+        "cat": "2000",
+    }
+
+
+def test_prowlarr_torznab_movie_id_search_does_not_fall_back_to_generic_search():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params(
+        "tt0111161",
+        "movie",
+        "imdbid",
+        None,
+        SiteSearchCapabilities(supports_search=True, supports_movie_search=False),
+    )
+
+    assert params is None
+
+
+def test_prowlarr_torznab_movie_id_search_skips_generic_id_search_even_when_caps_advertise_id_param():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params(
+        "tt0111161",
+        "movie",
+        "imdbid",
+        None,
+        SiteSearchCapabilities(
+            supports_search=True,
+            supports_movie_search=False,
+            supports_imdbid=True,
+        ),
+    )
+
+    assert params is None
+
+
+def test_prowlarr_torznab_tv_title_fallback_omits_season_without_tvsearch():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params(
+        "Game of Thrones S01",
+        "tv",
+        "q",
+        1,
+        SiteSearchCapabilities(supports_search=True, supports_tv_search=False),
+    )
+
+    assert params == {
+        "apikey": "key",
+        "t": "search",
+        "q": "Game of Thrones S01",
+        "cat": "5000",
+    }
+
+
+def test_prowlarr_torznab_movie_id_search_uses_movie_mode():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params("tt1234567", "movie", "imdbid", None)
+
+    assert params == {
+        "apikey": "key",
+        "t": "movie",
+        "imdbid": "tt1234567",
+        "cat": "2000",
+    }
+
+
+def test_prowlarr_plain_search_only_uses_search_mode_without_media_category():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params("耀眼", None, "q", None)
+
+    assert params == {
+        "apikey": "key",
+        "t": "search",
+        "q": "耀眼",
+    }
 
 
 def test_shared_torznab_caps_parser_maps_search_params():
@@ -74,8 +232,32 @@ def test_shared_torznab_caps_parser_maps_search_params():
     assert caps.supports_q is True
     assert caps.supports_imdbid is True
     assert caps.supports_doubanid is True
+    assert caps.supports_search is True
+    assert caps.supports_movie_search is False
+    assert caps.supports_tv_search is False
     assert caps.supports_movie is True
     assert caps.supports_tv is True
+
+
+def test_shared_torznab_caps_parser_maps_available_search_types():
+    from app.clients.torznab import parse_torznab_caps_xml
+
+    caps = parse_torznab_caps_xml(
+        """
+        <caps>
+          <searching>
+            <search available="yes" supportedParams="q" />
+            <tv-search available="yes" supportedParams="q,season,ep,imdbid" />
+            <movie-search available="no" supportedParams="q,imdbid" />
+          </searching>
+        </caps>
+        """
+    )
+
+    assert caps.supports_search is True
+    assert caps.supports_tv_search is True
+    assert caps.supports_movie_search is False
+    assert caps.supports_imdbid is True
 
 
 def test_shared_torznab_parser_maps_prowlarr_feed_result():

@@ -42,6 +42,7 @@ class FakeIndexerClient(IndexerClient):
         query: str,
         category: str | None = None,
         search_param: str = "auto",
+        season_number: int | None = None,
     ) -> list[ResourceSearchResult]:
         self.calls.append((indexer, search_param, query))
         return [

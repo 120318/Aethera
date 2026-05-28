@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from datetime import datetime
 from types import TracebackType
@@ -16,7 +15,7 @@ from app.schemas.constants.indexer import SITE_SEARCH_TIMEOUT_SECONDS
 from app.schemas.domain.resource_search import ResourceSearchResult
 from app.schemas.integration.site_models import SiteInfo, SiteSearchCapabilities
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
-from app.clients.torznab import parse_torznab_caps_xml, parse_torznab_xml
+from app.clients.torznab import build_torznab_search_params, parse_torznab_caps_xml, parse_torznab_xml
 
 logger = logging.getLogger("app.clients.prowlarr")
 
@@ -110,6 +109,9 @@ class ProwlarrClient(IndexerClient):
             supports_tv = True
         supports = item.get("supportsSearch")
         return SiteSearchCapabilities(
+            supports_search=bool(supports) if supports is not None else True,
+            supports_movie_search=bool(supports) if supports is not None else True,
+            supports_tv_search=bool(supports) if supports is not None else True,
             supports_q=bool(supports) if supports is not None else True,
             supports_imdbid=False,
             supports_doubanid=False,
@@ -292,20 +294,20 @@ class ProwlarrClient(IndexerClient):
         query: str,
         category: str | None = None,
         search_param: str = "auto",
+        season_number: int | None = None,
     ) -> list[ResourceSearchResult]:
         self._ensure_session()
-        params: dict[str, str] = {"apikey": self.api_key, "t": "search"}
-        if search_param == "doubanid":
-            params["doubanid"] = query
-        elif search_param == "imdbid" or (search_param == "auto" and re.match(r"^tt\d{7,8}$", query)):
-            params["imdbid"] = query
-        else:
-            params["q"] = query
-
-        if category:
-            category_map = {"movie": "2000", "tv": "5000", "anime": "5070"}
-            if category in category_map:
-                params["cat"] = category_map[category]
+        capabilities = await self.get_indexer_caps(indexer)
+        params = self._build_torznab_search_params(query, category, search_param, season_number, capabilities)
+        if params is None:
+            logger.debug(
+                "Prowlarr torznab single indexer skipped unsupported search mode: indexer=%s query=%s category=%s search_param=%s",
+                indexer,
+                query,
+                category,
+                search_param,
+            )
+            return []
 
         url = f"{self.base_url}/{indexer}/api"
         try:
@@ -345,3 +347,46 @@ class ProwlarrClient(IndexerClient):
                 exc,
             )
             raise RuntimeError(message) from exc
+
+    def _torznab_search_type(
+        self,
+        category: str | None,
+        search_param: str,
+        capabilities: SiteSearchCapabilities,
+    ) -> str | None:
+        if category == "tv":
+            if capabilities.supports_tv_search:
+                return "tvsearch"
+            if search_param == "q" and capabilities.supports_search:
+                return "search"
+            return None
+        if category == "movie":
+            if capabilities.supports_movie_search:
+                return "movie"
+            if search_param == "q" and capabilities.supports_search:
+                return "search"
+            return None
+        if capabilities.supports_search:
+            return "search"
+        return None
+
+    def _build_torznab_search_params(
+        self,
+        query: str,
+        category: str | None,
+        search_param: str,
+        season_number: int | None,
+        capabilities: SiteSearchCapabilities | None = None,
+    ) -> dict[str, str] | None:
+        resolved_capabilities = capabilities or SiteSearchCapabilities()
+        search_type = self._torznab_search_type(category, search_param, resolved_capabilities)
+        if search_type is None:
+            return None
+        return build_torznab_search_params(
+            api_key=self.api_key,
+            query=query,
+            search_param=search_param,
+            category=category,
+            search_type=search_type,
+            season_number=season_number if search_type == "tvsearch" else None,
+        )
