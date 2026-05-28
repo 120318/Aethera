@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from app.clients.base import IndexerClient
 from app.schemas.domain.resource_search import ResourceSearchResult
-from app.schemas.integration.site_models import SiteInfo
+from app.schemas.integration.site_models import SiteInfo, SiteSearchCapabilities
 from app.schemas.runtime.indexer_runtime import IndexerSiteSearchOutcome
 from app.services.integration.indexer.site_scope import scoped_site_id
 
@@ -32,12 +32,22 @@ class IndexerSiteSearcher:
         search_param: str,
         category: str | None = None,
         season_number: int | None = None,
+        capabilities_by_site: dict[str, SiteSearchCapabilities] | None = None,
     ) -> IndexerSiteSearchResult:
         if not sites:
             return IndexerSiteSearchResult(results=[], failed=False, searched=False, outcomes=[])
         semaphore = asyncio.Semaphore(self._concurrency)
         outcomes = await asyncio.gather(*(
-            self.search_site_by_query(client, site, query, search_param, semaphore, category, season_number)
+            self.search_site_by_query(
+                client,
+                site,
+                query,
+                search_param,
+                semaphore,
+                category,
+                season_number,
+                capabilities_by_site.get(site.id) if capabilities_by_site else None,
+            )
             for site in sites
         ))
 
@@ -68,11 +78,19 @@ class IndexerSiteSearcher:
         semaphore: asyncio.Semaphore,
         category: str | None = None,
         season_number: int | None = None,
+        capabilities: SiteSearchCapabilities | None = None,
     ) -> IndexerSiteSearchOutcome:
         async with semaphore:
             try:
                 results = await asyncio.wait_for(
-                    client.search_site(site.id, query, category=category, search_param=search_param, season_number=season_number),
+                    client.search_site(
+                        site.id,
+                        query,
+                        category=category,
+                        search_param=search_param,
+                        season_number=season_number,
+                        capabilities=capabilities,
+                    ),
                     timeout=self._timeout,
                 )
                 initial_matched_by_id = search_param in {"doubanid", "imdbid"}

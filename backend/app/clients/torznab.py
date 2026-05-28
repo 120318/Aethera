@@ -43,9 +43,10 @@ def build_torznab_search_params(
     season_number: int | None = None,
 ) -> dict[str, str]:
     params: dict[str, str] = {"apikey": api_key, "t": search_type}
-    if search_param == "doubanid":
+    resolved_search_param = resolve_torznab_search_param(query, search_param)
+    if resolved_search_param == "doubanid":
         params["doubanid"] = query
-    elif search_param == "imdbid" or (search_param == "auto" and re.match(r"^tt\d{7,8}$", query)):
+    elif resolved_search_param == "imdbid":
         params["imdbid"] = query
     else:
         params["q"] = query
@@ -56,6 +57,14 @@ def build_torznab_search_params(
     if season_number is not None and season_number > 0:
         params["season"] = str(season_number)
     return params
+
+
+def resolve_torznab_search_param(query: str, search_param: str) -> str:
+    if search_param != "auto":
+        return search_param
+    if re.match(r"^tt\d{7,8}$", query):
+        return "imdbid"
+    return "q"
 
 
 def parse_torznab_xml(xml_text: str, *, default_site: str = "unknown") -> list[ResourceSearchResult]:

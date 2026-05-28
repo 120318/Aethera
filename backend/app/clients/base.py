@@ -81,6 +81,7 @@ class IndexerClient(BaseClient):
         category: str | None = None,
         search_param: str = "auto",
         season_number: int | None = None,
+        capabilities: SiteSearchCapabilities | None = None,
     ) -> list[ResourceSearchResult]:
         """Internal helper."""
         pass
@@ -98,6 +99,7 @@ class IndexerClient(BaseClient):
         category: str | None = None,
         search_param: str = "auto",
         season_number: int | None = None,
+        capabilities: SiteSearchCapabilities | None = None,
     ) -> list[ResourceSearchResult]:
         return await self.search_indexer_torznab(
             site_id,
@@ -105,6 +107,7 @@ class IndexerClient(BaseClient):
             category=category,
             search_param=search_param,
             season_number=season_number,
+            capabilities=capabilities,
         )
 
     async def get_site_health(self) -> list[IndexerSiteHealthStatus]:

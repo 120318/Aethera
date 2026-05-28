@@ -63,7 +63,16 @@ def test_prowlarr_torznab_tv_id_search_uses_tvsearch_mode_and_season():
         ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
     )
 
-    params = client._build_torznab_search_params("tt36982480", "tv", "imdbid", 1)
+    params = client._build_torznab_search_params(
+        "tt36982480",
+        "tv",
+        "imdbid",
+        1,
+        SiteSearchCapabilities(
+            supports_tv_search=True,
+            supports_imdbid=True,
+        ),
+    )
 
     assert params == {
         "apikey": "key",
@@ -237,6 +246,81 @@ def test_prowlarr_torznab_tv_id_search_skips_param_not_supported_by_tvsearch():
     assert params is None
 
 
+def test_prowlarr_torznab_auto_search_checks_resolved_imdb_param_support():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params(
+        "tt1234567",
+        "tv",
+        "auto",
+        1,
+        SiteSearchCapabilities(
+            supports_tv_search=True,
+            tv_search_params={"q", "season"},
+            supports_imdbid=True,
+            supports_q=True,
+        ),
+    )
+
+    assert params is None
+
+
+def test_prowlarr_torznab_tv_title_search_falls_back_when_tvsearch_does_not_support_q():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params(
+        "Game of Thrones S01",
+        "tv",
+        "q",
+        1,
+        SiteSearchCapabilities(
+            supports_search=True,
+            supports_tv_search=True,
+            search_params={"q"},
+            tv_search_params={"imdbid", "season"},
+            supports_q=True,
+        ),
+    )
+
+    assert params == {
+        "apikey": "key",
+        "t": "search",
+        "q": "Game of Thrones S01",
+        "cat": "5000",
+    }
+
+
+def test_prowlarr_torznab_movie_title_search_falls_back_when_movie_search_does_not_support_q():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params(
+        "The Shawshank Redemption",
+        "movie",
+        "q",
+        None,
+        SiteSearchCapabilities(
+            supports_search=True,
+            supports_movie_search=True,
+            search_params={"q"},
+            movie_search_params={"imdbid"},
+            supports_q=True,
+        ),
+    )
+
+    assert params == {
+        "apikey": "key",
+        "t": "search",
+        "q": "The Shawshank Redemption",
+        "cat": "2000",
+    }
+
+
 def test_prowlarr_torznab_tv_title_fallback_omits_season_without_tvsearch():
     client = ProwlarrClient(
         ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
@@ -263,7 +347,16 @@ def test_prowlarr_torznab_movie_id_search_uses_movie_mode():
         ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
     )
 
-    params = client._build_torznab_search_params("tt1234567", "movie", "imdbid", None)
+    params = client._build_torznab_search_params(
+        "tt1234567",
+        "movie",
+        "imdbid",
+        None,
+        SiteSearchCapabilities(
+            supports_movie_search=True,
+            supports_imdbid=True,
+        ),
+    )
 
     assert params == {
         "apikey": "key",

@@ -350,6 +350,7 @@ class JackettClient(IndexerClient):
         category: str | None = None,
         search_param: str = "auto",
         season_number: int | None = None,
+        capabilities: SiteSearchCapabilities | None = None,
     ) -> list[ResourceSearchResult]:
         self._ensure_session()
         params = build_torznab_search_params(

@@ -96,6 +96,7 @@ class IndexerGateway:
             search_param,
             category=category,
             season_number=season_number,
+            capabilities_by_site={context.site.id: context.capabilities},
         )
 
     async def list_search_contexts(
