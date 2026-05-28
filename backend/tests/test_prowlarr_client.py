@@ -90,6 +90,57 @@ def test_prowlarr_torznab_tv_title_search_uses_tvsearch_mode_and_season():
     }
 
 
+def test_prowlarr_torznab_tv_search_keeps_season_when_tvsearch_declares_season():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params(
+        "耀眼",
+        "tv",
+        "q",
+        1,
+        SiteSearchCapabilities(
+            supports_tv_search=True,
+            tv_search_params={"q", "season"},
+            supports_q=True,
+        ),
+    )
+
+    assert params == {
+        "apikey": "key",
+        "t": "tvsearch",
+        "q": "耀眼",
+        "cat": "5000",
+        "season": "1",
+    }
+
+
+def test_prowlarr_torznab_tv_search_omits_season_when_tvsearch_does_not_declare_season():
+    client = ProwlarrClient(
+        ProwlarrConfig(id="prowlarr-1", name="Prowlarr", url="http://prowlarr:9696", api_key="key")
+    )
+
+    params = client._build_torznab_search_params(
+        "耀眼",
+        "tv",
+        "q",
+        1,
+        SiteSearchCapabilities(
+            supports_tv_search=True,
+            tv_search_params={"q", "imdbid"},
+            supports_q=True,
+        ),
+    )
+
+    assert params == {
+        "apikey": "key",
+        "t": "tvsearch",
+        "q": "耀眼",
+        "cat": "5000",
+    }
+
+
 def test_shared_torznab_search_params_map_search_modes():
     params = build_torznab_search_params(
         api_key="key",

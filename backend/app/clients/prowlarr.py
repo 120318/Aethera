@@ -393,6 +393,18 @@ class ProwlarrClient(IndexerClient):
             return capabilities.supports_doubanid
         return search_param == "auto" and capabilities.supports_q
 
+    def _torznab_season_param(
+        self,
+        search_type: str,
+        season_number: int | None,
+        capabilities: SiteSearchCapabilities,
+    ) -> int | None:
+        if search_type != "tvsearch" or season_number is None or season_number <= 0:
+            return None
+        if capabilities.tv_search_params and "season" not in capabilities.tv_search_params:
+            return None
+        return season_number
+
     def _build_torznab_search_params(
         self,
         query: str,
@@ -418,5 +430,5 @@ class ProwlarrClient(IndexerClient):
             search_param=search_param,
             category=category,
             search_type=search_type,
-            season_number=season_number if search_type == "tvsearch" else None,
+            season_number=self._torznab_season_param(search_type, season_number, resolved_capabilities),
         )
