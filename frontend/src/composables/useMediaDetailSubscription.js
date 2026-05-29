@@ -44,14 +44,6 @@ export function useMediaDetailSubscription(options = {}) {
   }))
 
   const effectiveFilters = computed(() => resolveEffectiveFilters(downloadConfig.value, defaultFilterPreset.value))
-  const effectiveQualityProfileId = computed(() => (
-    detailOverview?.value?.summary?.download_config?.quality_profile?.id
-    || downloadConfig.value?.quality_profile_id
-    || defaultFilterPreset.value?.quality_profile_id
-    || catalogs.value?.quality_profiles?.find?.((item) => item.active_default)?.id
-    || null
-  ))
-
   const filterPresetName = computed(() => resolveFilterPresetName(downloadConfig.value, defaultFilterPreset.value))
   const currentMediaType = computed(() => detail.value?.media_type || detail.value?.type)
   const activeSeasonNumber = computed(() => {
@@ -175,26 +167,12 @@ export function useMediaDetailSubscription(options = {}) {
     if (!requireSeasonContext(currentMediaType.value === 'movie' ? t('mediaDetail.downloadAction') : t('mediaDetail.pilotAction'))) return null
     const canContinue = await ensureSubscriptionReady(currentMediaType.value)
     if (!canContinue) return null
-    const directoryId = downloadConfig.value?.directory_id || defaultDirectoryId.value
-    if (!directoryId) {
-      notification.error(currentMediaType.value === 'movie' ? t('mediaDetail.noDefaultDirectoryForDownload') : t('mediaDetail.noDefaultDirectoryForPilot'))
-      return null
-    }
     try {
       const response = await downloadPilotEpisode({
         target: buildMediaTarget({
           media_id: mediaId.value,
           seasonNumber: currentMediaType.value === 'tv' ? activeSeasonNumber.value : null,
         }),
-        directory_id: directoryId,
-        sites: Array.isArray(downloadConfig.value?.sites) && downloadConfig.value.sites.length > 0
-          ? downloadConfig.value.sites
-          : undefined,
-        filters: effectiveFilters.value || undefined,
-        quality_profile_id: effectiveQualityProfileId.value || undefined,
-        unmatched_rules: Array.isArray(downloadConfig.value?.unmatched_rules) && downloadConfig.value.unmatched_rules.length > 0
-          ? downloadConfig.value.unmatched_rules
-          : undefined,
       })
       return response?.command || response || null
     } catch {

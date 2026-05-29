@@ -291,6 +291,7 @@ export default {
     quickDownloadNoResource: '未找到可下载的匹配资源',
     pilotNoMatchedResource: '未找到符合条件的试播资源',
     quickDownloadNoMatchedResource: '未找到符合条件的下载资源',
+    downloadDirectoryMissing: '未配置下载目录，无法创建下载任务',
     pilotEpisodesAlreadyCovered: '前 1-3 集已入库或正在下载，无需试播',
     movieAlreadyInLibrary: '电影已入库，无需下载',
     movieAlreadyDownloading: '电影已在下载中，无需重复下载',

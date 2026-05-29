@@ -12,7 +12,6 @@ from app.schemas.domain.media import MediaExecutionSnapshot, MediaTarget
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_search import MediaSearchQuery
 from app.schemas.domain.subscription import SubscriptionUnmatchedRule
-from app.schemas.domain.subscription_filters import SubscriptionFilters
 from app.schemas.exception import DownloadException
 from app.schemas.exception.base import AppException
 from app.services.domain.resource.pilot_selection import select_pilot_resources
@@ -27,6 +26,7 @@ from app.services.config.settings_service import settings_service
 from app.services.domain.download import download_service
 from app.services.domain.library.service import library_service
 from app.services.domain.media import media_service
+from app.services.domain.subscription.download_config_service import subscription_download_config_service
 from app.services.application.workflows.resource_search import resource_search_service
 from app.services.platform.domain_lock_service import domain_lock_service
 
@@ -42,11 +42,6 @@ class PilotDownloadApplicationService:
         self,
         *,
         target: MediaTarget,
-        directory_id: str,
-        filters: SubscriptionFilters | None = None,
-        quality_profile_id: str | None = None,
-        sites: list[str] | None = None,
-        unmatched_rules: list[SubscriptionUnmatchedRule] | None = None,
     ):
         command = await command_service.create_command(
             CommandCreateRequest(
@@ -54,22 +49,25 @@ class PilotDownloadApplicationService:
                 initiator=CommandInitiator.MANUAL,
                 payload=PilotEpisodeCommandRequestPayload(
                     target=target,
-                    directory_id=directory_id,
-                    site_ids=list(sites or []),
-                    filters=filters,
-                    quality_profile_id=quality_profile_id,
-                    unmatched_rules=list(unmatched_rules or []),
                 ),
             )
         )
         media = command.payload.media
         if media is None:
             raise DownloadException("backendErrors.mediaExecutionSnapshotRequired")
+        effective_config = await subscription_download_config_service.resolve_effective_config(
+            media.media_id,
+            media.media_type,
+            season_number=media.season_number if media.media_type == MediaType.tv else None,
+        )
         event_service.emit_media(
             MediaEventCreate(
                 type=EventTypes.PILOT_EPISODE_QUEUED,
                 level=EventLevel.info,
-                message_params={"directory_id": directory_id, "site_count": str(len(sites or []))},
+                message_params={
+                    "directory_id": effective_config.directory_id or "",
+                    "site_count": str(len(effective_config.sites or [])),
+                },
                 media=media,
                 actor=EventActor.user,
                 source=EventSource.base,
@@ -84,11 +82,6 @@ class PilotDownloadApplicationService:
         self,
         *,
         media: MediaExecutionSnapshot,
-        directory_id: str,
-        filters: SubscriptionFilters | None = None,
-        quality_profile_id: str | None = None,
-        sites: list[str] | None = None,
-        unmatched_rules: list[SubscriptionUnmatchedRule] | None = None,
         season_number: int | None = None,
     ) -> int:
         async with self._acquire_media_execution_flow(media.media_id, reason="pilot") as acquired:
@@ -97,10 +90,24 @@ class PilotDownloadApplicationService:
             if not acquired:
                 raise DownloadException("backendErrors.mediaResourceFlowBusy")
 
-            quality_profile = (
-                settings_service.get_quality_profile(quality_profile_id)
-                if quality_profile_id else settings_service.get_default_quality_profile()
+            effective_config = await subscription_download_config_service.resolve_effective_config(
+                active_media.media_id,
+                active_media.media_type,
+                season_number=active_media.season_number if active_media.media_type == MediaType.tv else None,
             )
+            directory_id = effective_config.directory_id
+            if not directory_id:
+                raise DownloadException("backendErrors.downloadDirectoryMissing")
+            resolved_filters = effective_config.filters
+            resolved_quality_profile_id = effective_config.quality_profile_id
+            quality_profile = (
+                settings_service.get_quality_profile(resolved_quality_profile_id)
+                if resolved_quality_profile_id else (effective_config.quality_profile or settings_service.get_default_quality_profile())
+            )
+            if quality_profile is None:
+                quality_profile = effective_config.quality_profile or settings_service.get_default_quality_profile()
+            resolved_sites = effective_config.sites
+            resolved_unmatched_rules = list(effective_config.unmatched_rules)
             episode_mode = active_media.media_type == MediaType.tv
             if episode_mode:
                 if not active_media.episodes_count or active_media.season_number is None:
@@ -113,9 +120,9 @@ class PilotDownloadApplicationService:
                     active_media.media_id,
                     active_media.season_number,
                     sorted(target_episodes),
-                    sites or [],
-                    "configured" if filters else "none",
-                    len(unmatched_rules or []),
+                    resolved_sites or [],
+                    "configured" if resolved_filters else "none",
+                    len(resolved_unmatched_rules),
                 )
                 target_episodes = await self._available_pilot_target_episodes(
                     media_id=active_media.media_id,
@@ -127,9 +134,9 @@ class PilotDownloadApplicationService:
                 logger.info(
                     "Configured download started: media=%s sites=%s filters=%s unmatched_rules=%d",
                     active_media.media_id,
-                    sites or [],
-                    "configured" if filters else "none",
-                    len(unmatched_rules or []),
+                    resolved_sites or [],
+                    "configured" if resolved_filters else "none",
+                    len(resolved_unmatched_rules),
                 )
                 await self._ensure_movie_quick_download_available(active_media.media_id)
 
@@ -137,15 +144,15 @@ class PilotDownloadApplicationService:
                 media_id=active_media.media_id,
                 season_number=active_media.season_number if episode_mode else None,
                 episode_mode=episode_mode,
-                filters=filters,
+                filters=resolved_filters,
                 quality_profile=quality_profile,
                 target_episodes=target_episodes,
                 required_scores={},
             )
             selected = await self._search_and_select_resources(
                 media=active_media,
-                sites=sites,
-                unmatched_rules=unmatched_rules,
+                sites=resolved_sites,
+                unmatched_rules=resolved_unmatched_rules,
                 selection_plan=selection_plan,
                 episode_mode=episode_mode,
                 action_label=action_label,

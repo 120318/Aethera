@@ -8,8 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.domain.download import DownloadTaskCreateInput
 from app.schemas.domain.media import MediaExecutionSnapshot, MediaTarget
-from app.schemas.domain.subscription import SubscriptionUnmatchedRule
-from app.schemas.domain.subscription_filters import SubscriptionFilters
 from app.schemas.media_id import MediaID
 
 
@@ -75,11 +73,6 @@ class TaskCreateCommandRequestPayload(DownloadTaskCreateInput):
 
 class PilotEpisodeCommandRequestPayload(PayloadBase):
     target: MediaTarget
-    directory_id: str
-    site_ids: list[str] = Field(default_factory=list)
-    filters: SubscriptionFilters | None = None
-    quality_profile_id: str | None = None
-    unmatched_rules: list[SubscriptionUnmatchedRule] = Field(default_factory=list)
 
 
 class TaskTransferCommandRequestPayload(PayloadBase):
@@ -202,11 +195,6 @@ class TaskCreateCommandRecordPayload(DownloadTaskCreateInput):
 
 class PilotEpisodeCommandRecordPayload(PayloadBase):
     media: MediaExecutionSnapshot
-    directory_id: str
-    site_ids: list[str] = Field(default_factory=list)
-    filters: SubscriptionFilters | None = None
-    quality_profile_id: str | None = None
-    unmatched_rules: list[SubscriptionUnmatchedRule] = Field(default_factory=list)
 
 
 class TaskTransferCommandRecordPayload(PayloadBase):
