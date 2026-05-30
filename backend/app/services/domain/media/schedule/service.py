@@ -139,8 +139,9 @@ class MediaScheduleService:
         return self.platforms.dedupe(platforms)
 
     def _merged_online_platforms(self, media: MediaFullInfo) -> list[SchedulePlatform]:
+        schedule_platforms = list(media.schedule.platforms) if media.schedule else []
         platforms = self.platforms.dedupe([
-            *list(media.online_platforms or []),
+            *schedule_platforms,
             *self._online_platforms_from_vendors(list(media.vendors or [])),
         ])
         return self.platforms.dedupe(
@@ -269,7 +270,11 @@ class MediaScheduleService:
         )
 
     def _tv_networks(self, media: MediaFullInfo) -> list[SchedulePlatform]:
-        networks = [self.platforms.normalize(platform) for platform in list(media.networks or [])]
+        networks = [
+            self.platforms.normalize(platform)
+            for airing in list(media.airings or [])
+            for platform in list(airing.platforms or [])
+        ]
         return self.platforms.dedupe(self.platforms.apply_vendor_links(networks, list(media.vendors or [])))
 
     def _tv_online_platforms(self, media: MediaFullInfo, networks: list[SchedulePlatform]) -> list[SchedulePlatform]:
@@ -277,7 +282,12 @@ class MediaScheduleService:
         return self.platforms.exclude_matching(online_platforms, networks)
 
     def _tv_platforms(self, media: MediaFullInfo, networks: list[SchedulePlatform]) -> list[SchedulePlatform]:
-        return self.platforms.merge(networks, self._merged_online_platforms(media))
+        schedule_platforms = list(media.schedule.platforms) if media.schedule else []
+        platforms = self.platforms.merge(schedule_platforms, self._merged_online_platforms(media))
+        platforms = self.platforms.dedupe(
+            self.platforms.apply_vendor_links(platforms, list(media.vendors or []))
+        )
+        return self.platforms.merge(networks, platforms)
 
     async def _build_tv_schedule_inputs(
         self,
@@ -300,7 +310,9 @@ class MediaScheduleService:
             if context.metadata_capabilities.has_movie_release_window and tmdb_id
             else None
         )
-        online_platforms = self._online_platforms_from_vendors(list(media.vendors or []))
+        online_platforms = list(media.schedule.platforms) if media.schedule else []
+        if not online_platforms:
+            online_platforms = self._online_platforms_from_vendors(list(media.vendors or []))
         online_platforms_task = (
             self._get_online_platforms(tmdb_id, MediaType.movie)
             if not online_platforms and context.metadata_capabilities.has_watch_providers and tmdb_id

@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.schemas.media_id import MediaID, MediaIDModel
 from app.schemas.domain.media_context import MediaCapabilities, MediaPrimarySource
 from app.schemas.domain.media_types import MediaType
-from app.schemas.domain.schedule import MediaScheduleSummary, MovieReleaseDateDetail, ScheduleAiring, SchedulePlatform
+from app.schemas.domain.schedule import MediaScheduleSummary, MovieReleaseDateDetail, ScheduleAiring
 from app.schemas.domain.vendor import Vendor
 
 
@@ -181,8 +181,6 @@ class MediaFullInfo(MediaIdentity):
     physical_release_date: Optional[str] = None
     tv_release_date: Optional[str] = None
     release_dates: List[MovieReleaseDateDetail] = Field(default_factory=list)
-    networks: List[SchedulePlatform] = Field(default_factory=list)
-    online_platforms: List[SchedulePlatform] = Field(default_factory=list)
     schedule: Optional[MediaScheduleSummary] = None
     airings: List[ScheduleAiring] = Field(default_factory=list)
     status: Optional[str] = None

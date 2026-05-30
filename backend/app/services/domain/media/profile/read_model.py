@@ -117,8 +117,6 @@ class MediaProfileReadModel:
             physical_release_date=model_field_value(profile, "physical_release_date"),
             tv_release_date=model_field_value(profile, "tv_release_date"),
             release_dates=model_field_list(profile, "release_dates"),
-            networks=list(profile.networks),
-            online_platforms=list(profile.online_platforms),
             schedule=self._profile_schedule(profile),
             airings=list(profile.airings),
             status=profile.status,

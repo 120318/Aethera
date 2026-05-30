@@ -199,6 +199,7 @@ def build_scope_from_media(media: MediaFullInfo, existing: MediaProfileScope | N
     scope_number = scope_number_for_media(media)
     now = time.time()
     platforms: dict[str, MediaProfilePlatform] = {}
+    airing_platform_keys: set[str] = set()
     for existing_platform in existing.platforms if existing else []:
         key = _platform_key(existing_platform.id, existing_platform.name, existing_platform.key)
         if not key:
@@ -208,17 +209,21 @@ def build_scope_from_media(media: MediaFullInfo, existing: MediaProfileScope | N
         platform = platform_from_vendor(vendor)
         if platform:
             _merge_platform(platforms, platform)
-    for network in media.networks:
-        platform = platform_from_schedule(network, role="network", source="tmdb")
-        if platform:
-            _merge_platform(platforms, platform)
-    for online in media.online_platforms:
-        platform = platform_from_schedule(online, role="online", source="tmdb")
-        if platform:
-            _merge_platform(platforms, platform)
-    if media.media_type == MediaType.movie and media.schedule:
+    for airing in media.airings:
+        for airing_platform in airing.platforms:
+            platform = platform_from_schedule(airing_platform, role="network", source="schedule")
+            if platform:
+                airing_platform_keys.add(platform.key)
+                _merge_platform(platforms, platform)
+    if media.schedule:
         for schedule_platform in media.schedule.platforms:
-            platform = platform_from_schedule(schedule_platform, role="online", source="schedule")
+            platform = platform_from_schedule(
+                schedule_platform,
+                role="online",
+                source="schedule",
+            )
+            if media.media_type == MediaType.tv and platform and platform.key in airing_platform_keys:
+                continue
             if platform:
                 _merge_platform(platforms, platform)
     scope_airings = [

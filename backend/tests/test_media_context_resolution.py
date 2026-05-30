@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from app.schemas.domain.media import EpisodeInfo, MediaFullInfo
 from app.schemas.domain.media_context import MediaCapabilities
 from app.schemas.domain.media_types import MediaType
-from app.schemas.domain.schedule import MediaScheduleSummary, SchedulePlatform
+from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleAiring, SchedulePlatform
 from app.schemas.domain.vendor import Vendor
 from app.schemas.media_id import MediaID
 from app.services.domain.media.schedule import service as schedule_module
@@ -120,7 +120,10 @@ async def test_schedule_service_uses_douban_vendor_web_url_for_tv_network():
         media_type=MediaType.tv,
         douban_id="35805716",
         first_air_date="2026-03-23",
-        networks=[SchedulePlatform(id="iqiyi", name="iQIYI", url="https://www.iqiyi.com/")],
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[SchedulePlatform(id="iqiyi", name="iQIYI", url="https://www.iqiyi.com/")],
+        ),
         vendors=[
             Vendor(
                 id="iqiyi",
@@ -146,7 +149,10 @@ async def test_schedule_service_converts_tencent_douban_deeplink_to_web_play_url
         media_type=MediaType.tv,
         douban_id="36939912",
         first_air_date="2026-04-01",
-        networks=[SchedulePlatform(id="tencent", name="Tencent Video", url="https://v.qq.com/")],
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[SchedulePlatform(id="tencent", name="Tencent Video", url="https://v.qq.com/")],
+        ),
         vendors=[
             Vendor(
                 id="qq",
@@ -172,11 +178,14 @@ async def test_schedule_service_dedupes_tencent_platform_aliases():
         media_type=MediaType.tv,
         douban_id="36939912",
         first_air_date="2026-04-01",
-        online_platforms=[
-            SchedulePlatform(id="tencent", name="腾讯视频", url="https://v.qq.com/"),
-            SchedulePlatform(id="2008", name="Tencent Video", url="https://www.themoviedb.org/tv/1/watch"),
-            SchedulePlatform(id=None, name="腾讯视频平台", url="https://v.qq.com/channel/tv"),
-        ],
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[
+                SchedulePlatform(id="tencent", name="腾讯视频", url="https://v.qq.com/"),
+                SchedulePlatform(id="2008", name="Tencent Video", url="https://www.themoviedb.org/tv/1/watch"),
+                SchedulePlatform(id=None, name="腾讯视频平台", url="https://v.qq.com/channel/tv"),
+            ],
+        ),
         vendors=[
             Vendor(
                 id="qq",
@@ -201,14 +210,15 @@ async def test_schedule_service_dedupes_prime_video_platform_aliases():
         media_type=MediaType.tv,
         tmdb_id=287641,
         first_air_date="2026-05-13",
-        networks=[
-            SchedulePlatform(id=None, name="Prime Video", url="https://www.primevideo.com/"),
-        ],
-        online_platforms=[
-            SchedulePlatform(id="9", name="Amazon Prime Video", url="https://www.themoviedb.org/tv/287641/watch", region="US"),
-            SchedulePlatform(id="119", name="Amazon Prime Video with Ads", url="https://www.themoviedb.org/tv/287641/watch", region="US"),
-            SchedulePlatform(id=None, name="Amazon Prime Video Free with Ads", url="https://www.themoviedb.org/tv/287641/watch", region="US"),
-        ],
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[
+                SchedulePlatform(id=None, name="Prime Video", url="https://www.primevideo.com/"),
+                SchedulePlatform(id="9", name="Amazon Prime Video", url="https://www.themoviedb.org/tv/287641/watch", region="US"),
+                SchedulePlatform(id="119", name="Amazon Prime Video with Ads", url="https://www.themoviedb.org/tv/287641/watch", region="US"),
+                SchedulePlatform(id=None, name="Amazon Prime Video Free with Ads", url="https://www.themoviedb.org/tv/287641/watch", region="US"),
+            ],
+        ),
     )
 
     summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
@@ -229,12 +239,13 @@ async def test_schedule_service_keeps_amazon_video_separate_from_prime_video():
         year=2026,
         media_type=MediaType.tv,
         tmdb_id=1,
-        networks=[
-            SchedulePlatform(id="9", name="Amazon Prime Video", url="https://www.themoviedb.org/tv/1/watch", region="US"),
-        ],
-        online_platforms=[
-            SchedulePlatform(id=None, name="Amazon Video", url="https://www.amazon.com/video", region="US"),
-        ],
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[
+                SchedulePlatform(id="9", name="Amazon Prime Video", url="https://www.themoviedb.org/tv/1/watch", region="US"),
+                SchedulePlatform(id=None, name="Amazon Video", url="https://www.amazon.com/video", region="US"),
+            ],
+        ),
     )
 
     summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
@@ -276,11 +287,21 @@ async def test_tv_schedule_bundle_keeps_online_platforms_off_episode_airings(mon
         season_number=1,
         first_air_date="2026-05-13",
         episodes_count=1,
-        networks=[
-            SchedulePlatform(id=None, name="Prime Video", url="https://www.primevideo.com/"),
-        ],
-        online_platforms=[
-            SchedulePlatform(id=None, name="Amazon Video", url="https://www.amazon.com/video", region="US"),
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[
+                SchedulePlatform(id=None, name="Prime Video", url="https://www.primevideo.com/"),
+                SchedulePlatform(id=None, name="Amazon Video", url="https://www.amazon.com/video", region="US"),
+            ],
+        ),
+        airings=[
+            ScheduleAiring(
+                date="2026-05-13",
+                kind="tv_episode_air",
+                season_number=1,
+                episode_number=1,
+                platforms=[SchedulePlatform(id=None, name="Prime Video", url="https://www.primevideo.com/")],
+            )
         ],
     )
     episodes = [
@@ -308,7 +329,10 @@ async def test_schedule_service_converts_youku_douban_deeplink_to_web_show_url()
         media_type=MediaType.tv,
         douban_id="35922594",
         first_air_date="2025-01-01",
-        networks=[SchedulePlatform(id="1419", name="Youku", url="https://www.youku.com/")],
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[SchedulePlatform(id="1419", name="Youku", url="https://www.youku.com/")],
+        ),
         vendors=[
             Vendor(
                 id="youku",
@@ -334,7 +358,10 @@ async def test_schedule_service_ignores_unresolved_non_web_vendor_deeplink():
         media_type=MediaType.tv,
         douban_id="1",
         first_air_date="2026-04-01",
-        networks=[SchedulePlatform(id="mgtv", name="Mango TV", url="https://www.mgtv.com/")],
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[SchedulePlatform(id="mgtv", name="Mango TV", url="https://www.mgtv.com/")],
+        ),
         vendors=[Vendor(id="mgtv", name="textTV", url="mgtv://video/123")],
     )
 
