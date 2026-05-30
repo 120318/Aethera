@@ -37,7 +37,17 @@
             {{ $t('settings.metadata.tmdbApplyApiKey') }}
           </p>
         </div>
-        <Button :label="$t('common.save')" icon="pi pi-save" :loading="savingTMDB" @click="saveTMDB" />
+        <div class="flex flex-wrap justify-end gap-item">
+          <Button
+            :label="$t('settings.metadata.testConnection')"
+            icon="pi pi-wifi"
+            severity="secondary"
+            outlined
+            :loading="testingTMDB"
+            @click="testTMDBConnection"
+          />
+          <Button :label="$t('common.save')" icon="pi pi-save" :loading="savingTMDB" @click="saveTMDB" />
+        </div>
       </div>
       <div class="ui-settings-card-body">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-item items-center">
@@ -90,7 +100,17 @@
           <h4 class="m-none text-subtitle font-semibold text-color">{{ $t('settings.metadata.doubanTitle') }}</h4>
           <p class="m-none text-caption text-muted">{{ $t('settings.metadata.doubanDescription') }}</p>
         </div>
-        <Button :label="$t('common.save')" icon="pi pi-save" :loading="savingDouban" @click="saveDouban" />
+        <div class="flex flex-wrap justify-end gap-item">
+          <Button
+            :label="$t('settings.metadata.testConnection')"
+            icon="pi pi-wifi"
+            severity="secondary"
+            outlined
+            :loading="testingDouban"
+            @click="testDoubanConnection"
+          />
+          <Button :label="$t('common.save')" icon="pi pi-save" :loading="savingDouban" @click="saveDouban" />
+        </div>
       </div>
       <div class="ui-settings-card-body">
         <div class="ui-dialog-section">
@@ -139,7 +159,7 @@ import Select from 'primevue/select'
 import { useI18n } from 'vue-i18n'
 import { useNotificationStore } from '@/stores/notification'
 import { useMediaImageSettingsStore } from '@/stores/media-image-settings'
-import { saveDoubanConfig, saveServicesConfig, saveTMDBConfig } from '@/api/config'
+import { saveDoubanConfig, saveServicesConfig, saveTMDBConfig, testServiceConnection } from '@/api/config'
 import { getDiscoverListMetas } from '@/api/discover'
 import SecretInput from '@/components/common/SecretInput.vue'
 
@@ -160,6 +180,8 @@ const { t } = useI18n()
 const savingTMDB = ref(false)
 const savingDouban = ref(false)
 const savingSource = ref(false)
+const testingTMDB = ref(false)
+const testingDouban = ref(false)
 const loadingDoubanOptions = ref(false)
 const loadingTMDBOptions = ref(false)
 const browseSource = ref('douban')
@@ -305,6 +327,29 @@ const saveTMDB = async () => {
   }
 }
 
+const testTMDBConnection = async () => {
+  const apiKey = tmdb.api_key.trim()
+  if (!apiKey) {
+    notification.warn(t('settings.metadata.tmdbApiKeyRequired'))
+    return
+  }
+
+  testingTMDB.value = true
+  try {
+    await testServiceConnection({
+      type: 'themoviedb',
+      config: {
+        api_key: apiKey,
+      },
+    })
+    notification.success(t('common.connectionSuccess'))
+  } catch (error) {
+    console.error(t('settings.metadata.connectionTestFailed'), error)
+  } finally {
+    testingTMDB.value = false
+  }
+}
+
 const saveDouban = async () => {
   savingDouban.value = true
   try {
@@ -325,6 +370,21 @@ const saveDouban = async () => {
     notification.error(t('settings.system.saveFailed', { message: error.message || error }))
   } finally {
     savingDouban.value = false
+  }
+}
+
+const testDoubanConnection = async () => {
+  testingDouban.value = true
+  try {
+    await testServiceConnection({
+      type: 'douban',
+      config: {},
+    })
+    notification.success(t('common.connectionSuccess'))
+  } catch (error) {
+    console.error(t('settings.metadata.connectionTestFailed'), error)
+  } finally {
+    testingDouban.value = false
   }
 }
 </script>
