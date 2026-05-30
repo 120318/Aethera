@@ -216,6 +216,11 @@ def build_scope_from_media(media: MediaFullInfo, existing: MediaProfileScope | N
         platform = platform_from_schedule(online, role="online", source="tmdb")
         if platform:
             _merge_platform(platforms, platform)
+    if media.schedule:
+        for schedule_platform in media.schedule.platforms:
+            platform = platform_from_schedule(schedule_platform, role="online", source="schedule")
+            if platform:
+                _merge_platform(platforms, platform)
     scope_airings = [
         scope_airing_from_schedule(airing, platforms)
         for airing in media.airings

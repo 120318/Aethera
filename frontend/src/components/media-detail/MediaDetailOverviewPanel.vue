@@ -224,7 +224,7 @@ import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import Skeleton from 'primevue/skeleton'
 import { useI18n } from 'vue-i18n'
-import { dedupePlatforms } from '@/utils/mediaPlatforms'
+import { dedupePlatforms, platformDisplayName } from '@/utils/mediaPlatforms'
 
 const props = defineProps({
   cards: { type: Object, required: true },
@@ -273,10 +273,7 @@ const releaseDetails = computed(() => {
 const airingDetails = computed(() => {
   const schedule = props.cards?.localResources?.schedule || {}
   const rows = []
-  const platformText = formatSchedulePlatforms([
-    ...(Array.isArray(schedule.online_platforms) ? schedule.online_platforms : []),
-    ...(Array.isArray(schedule.networks) ? schedule.networks : []),
-  ])
+  const platformText = formatSchedulePlatforms(resolveSchedulePlatforms(schedule))
   if (schedule.first_air_date) {
     rows.push({
       region: platformText,
@@ -328,9 +325,14 @@ function formatSchedulePlatforms(platforms) {
   return formatDetailPlatforms(platforms).join(' / ')
 }
 
+function resolveSchedulePlatforms(schedule) {
+  if (!schedule) return []
+  return Array.isArray(schedule.platforms) ? schedule.platforms : []
+}
+
 function formatDetailPlatforms(platforms) {
   if (!Array.isArray(platforms)) return []
-  return dedupePlatforms(platforms, 4).map((platform) => platform?.name).filter(Boolean)
+  return dedupePlatforms(platforms, 4).map((platform) => platformDisplayName(platform)).filter(Boolean)
 }
 
 function episodeNote(episode) {

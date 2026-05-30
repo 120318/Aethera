@@ -16,6 +16,16 @@ const platformAliases = new Map([
   ['mgtv', 'mgtv'],
   ['mango tv', 'mgtv'],
   ['芒果tv', 'mgtv'],
+  ['9', 'amazon_prime_video'],
+  ['119', 'amazon_prime_video'],
+  ['amazon prime video', 'amazon_prime_video'],
+  ['amazon prime video with ads', 'amazon_prime_video'],
+  ['amazon prime video free with ads', 'amazon_prime_video'],
+  ['prime video', 'amazon_prime_video'],
+])
+
+const platformDisplayNames = new Map([
+  ['amazon_prime_video', 'Prime Video'],
 ])
 
 function normalizePlatformToken(value) {
@@ -55,4 +65,9 @@ export function dedupePlatforms(platforms, limit = Infinity) {
     if (deduped.length >= limit) break
   }
   return deduped
+}
+
+export function platformDisplayName(platform) {
+  const key = platformCanonicalKey(platform)
+  return platformDisplayNames.get(key) || platform?.name || ''
 }

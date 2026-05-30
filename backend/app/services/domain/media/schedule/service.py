@@ -272,6 +272,13 @@ class MediaScheduleService:
         networks = [self.platforms.normalize(platform) for platform in list(media.networks or [])]
         return self.platforms.dedupe(self.platforms.apply_vendor_links(networks, list(media.vendors or [])))
 
+    def _tv_online_platforms(self, media: MediaFullInfo, networks: list[SchedulePlatform]) -> list[SchedulePlatform]:
+        online_platforms = self._merged_online_platforms(media)
+        return self.platforms.exclude_matching(online_platforms, networks)
+
+    def _tv_platforms(self, media: MediaFullInfo, networks: list[SchedulePlatform]) -> list[SchedulePlatform]:
+        return self.platforms.merge(networks, self._merged_online_platforms(media))
+
     async def _build_tv_schedule_inputs(
         self,
         context: ResolvedMediaContext,
@@ -324,7 +331,7 @@ class MediaScheduleService:
             physical_release_date=physical_release_date,
             tv_release_date=tv_release_date,
             release_dates=self._flatten_release_dates(release_dates_result),
-            online_platforms=online_platforms,
+            platforms=online_platforms,
         )
 
     async def _empty_release_dates(self) -> list[ProviderReleaseRegion]:
@@ -336,11 +343,12 @@ class MediaScheduleService:
     async def build_tv_schedule_summary(self, media: MediaFullInfo, season_number: int | None) -> MediaScheduleSummary:
         context = media_profile_context_service.resolve_context_from_media(media)
         if not context.metadata_capabilities.has_schedule or not season_number:
+            networks = self._tv_networks(media)
+            platforms = self._tv_platforms(media, networks)
             return MediaScheduleSummary(
                 media_type=MediaType.tv,
                 first_air_date=media.first_air_date or media.release_date,
-                networks=self._tv_networks(media),
-                online_platforms=self._merged_online_platforms(media),
+                platforms=platforms,
             )
         season_episodes, aired_episodes, season_air_date = await self._build_tv_schedule_inputs(context, season_number)
         next_episode = self._to_schedule_episode(media.next_episode_to_air)
@@ -352,12 +360,13 @@ class MediaScheduleService:
             next_episode = None
         if not self._is_next_episode_valid(next_episode, latest_aired_episode, media.episodes_count):
             next_episode = None
+        networks = self._tv_networks(media)
+        platforms = self._tv_platforms(media, networks)
         return MediaScheduleSummary(
             media_type=MediaType.tv,
             status_label=self._tv_status_label(media, len(aired_episodes), media.episodes_count, next_episode),
             first_air_date=self._tv_season_first_air_date(season_air_date, season_episodes, media),
-            networks=self._tv_networks(media),
-            online_platforms=self._merged_online_platforms(media),
+            platforms=platforms,
             aired_episode_count=len(aired_episodes),
             latest_aired_episode=latest_aired_episode,
             next_episode_to_air=next_episode,
@@ -380,7 +389,7 @@ class MediaScheduleService:
 
         season_episodes, _, _ = await self._build_tv_schedule_inputs(context, media.season_number)
         networks = self._tv_networks(media)
-        return self.airings.build_tv_airings(season_episodes, platforms=networks, date_part=self._date_part)
+        return self.airings.build_tv_airings(season_episodes, platforms=self._tv_platforms(media, networks), date_part=self._date_part)
 
     async def build_schedule_bundle(self, media: MediaFullInfo) -> tuple[MediaScheduleSummary, list[ScheduleAiring]]:
         if media.media_type == MediaType.tv:
@@ -389,6 +398,6 @@ class MediaScheduleService:
             if not context.metadata_capabilities.has_schedule or not media.season_number:
                 return summary, []
             season_episodes, _, _ = await self._build_tv_schedule_inputs(context, media.season_number)
-            airings = self.airings.build_tv_airings(season_episodes, platforms=summary.networks, date_part=self._date_part)
+            airings = self.airings.build_tv_airings(season_episodes, platforms=summary.platforms, date_part=self._date_part)
             return summary, airings
         return await self.build_schedule_summary_for_media(media), await self.build_airings_for_media(media)

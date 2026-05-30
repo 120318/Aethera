@@ -1,6 +1,6 @@
 import { formatAbsoluteDateTime, formatRelativeTime } from '@/utils/formatters'
 import { t } from '@/i18n'
-import { dedupePlatforms, platformCanonicalKey } from '@/utils/mediaPlatforms'
+import { dedupePlatforms, platformDisplayName } from '@/utils/mediaPlatforms'
 
 export function buildMediaDetailOverviewCards({
   detailOverviewSummary,
@@ -134,28 +134,15 @@ function buildResourcePrimaryParts(local, detail) {
       })
     }
 
-    const networks = formatPlatforms(local?.schedule?.networks)
-    if (networks.length > 0) {
+    const platforms = formatPlatforms(resolveSchedulePlatforms(local?.schedule))
+    if (platforms.length > 0) {
       const segments = [{ text: t('mediaDetail.overviewText.onPlatformPrefix'), accent: false }]
-      networks.forEach((platform, index) => {
+      platforms.forEach((platform, index) => {
         if (index > 0) segments.push({ text: t('mediaDetail.overviewText.platformSeparator'), accent: false })
         segments.push({ text: platform.name, accent: true, url: platform.url || '', key: platform.key })
       })
       segments.push({ text: t('mediaDetail.overviewText.platformSuffix'), accent: false })
-      parts.push({ key: 'networks', segments })
-    }
-
-    const networkKeys = new Set(networks.map((platform) => platform.canonicalKey).filter(Boolean))
-    const onlinePlatforms = formatPlatforms(local?.schedule?.online_platforms)
-      .filter((platform) => !networkKeys.has(platform.canonicalKey))
-    if (onlinePlatforms.length > 0) {
-      const segments = [{ text: t('mediaDetail.overviewText.onPlatformPrefix'), accent: false }]
-      onlinePlatforms.forEach((platform, index) => {
-        if (index > 0) segments.push({ text: t('mediaDetail.overviewText.platformSeparator'), accent: false })
-        segments.push({ text: platform.name, accent: true, url: platform.url || '', key: platform.key })
-      })
-      segments.push({ text: t('mediaDetail.overviewText.platformSuffix'), accent: false })
-      parts.push({ key: 'online-platforms', segments })
+      parts.push({ key: 'platforms', segments })
     }
 
     if (isEndedScheduleStatus(local?.schedule?.status_label)) {
@@ -199,15 +186,15 @@ function buildResourcePrimaryParts(local, detail) {
   if (local?.schedule?.digital_release_date) {
     parts.push({ key: 'digital', segments: [{ text: t('mediaDetail.overviewText.digitalReleasedAt'), accent: false }, { text: formatDate(local.schedule.digital_release_date), accent: false }] })
   }
-  const onlinePlatforms = formatPlatforms(local?.schedule?.online_platforms)
-  if (onlinePlatforms.length > 0) {
+  const platforms = formatPlatforms(resolveSchedulePlatforms(local?.schedule))
+  if (platforms.length > 0) {
     const segments = [{ text: t('mediaDetail.overviewText.onPlatformPrefix'), accent: false }]
-    onlinePlatforms.forEach((platform, index) => {
+    platforms.forEach((platform, index) => {
       if (index > 0) segments.push({ text: t('mediaDetail.overviewText.platformSeparator'), accent: false })
       segments.push({ text: platform.name, accent: true, url: platform.url || '', key: platform.key })
     })
     segments.push({ text: t('mediaDetail.overviewText.platformSuffix'), accent: false })
-    parts.push({ key: 'online-platforms', segments })
+    parts.push({ key: 'platforms', segments })
   }
   if (local?.schedule?.physical_release_date) {
     parts.push({ key: 'physical', segments: [{ text: t('mediaDetail.overviewText.physicalReleasedAt'), accent: false }, { text: formatDate(local.schedule.physical_release_date), accent: false }] })
@@ -284,10 +271,14 @@ function formatPlatforms(platforms) {
   return dedupePlatforms(platforms, 3)
     .map((platform) => ({
       key: `${platform?.id || platform?.name || 'platform'}-${platform?.region || ''}`,
-      canonicalKey: platformCanonicalKey(platform),
-      name: platform?.name || '',
+      name: platformDisplayName(platform),
       url: isTmdbWatchUrl(platform?.url) ? '' : (platform?.url || ''),
     }))
     .filter((platform) => platform.name)
     .slice(0, 3)
+}
+
+function resolveSchedulePlatforms(schedule) {
+  if (!schedule) return []
+  return Array.isArray(schedule.platforms) ? schedule.platforms : []
 }

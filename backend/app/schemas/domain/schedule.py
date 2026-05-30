@@ -33,7 +33,7 @@ class MediaScheduleSummary(BaseModel):
     media_type: MediaType
     status_label: Optional[str] = None
     first_air_date: Optional[str] = None
-    networks: list[SchedulePlatform] = Field(default_factory=list)
+    platforms: list[SchedulePlatform] = Field(default_factory=list)
     aired_episode_count: int = 0
     latest_aired_episode: Optional[ScheduleEpisode] = None
     next_episode_to_air: Optional[ScheduleEpisode] = None
@@ -44,7 +44,6 @@ class MediaScheduleSummary(BaseModel):
     physical_release_date: Optional[str] = None
     tv_release_date: Optional[str] = None
     release_dates: list[MovieReleaseDateDetail] = Field(default_factory=list)
-    online_platforms: list[SchedulePlatform] = Field(default_factory=list)
 
 
 class ScheduleAiring(BaseModel):

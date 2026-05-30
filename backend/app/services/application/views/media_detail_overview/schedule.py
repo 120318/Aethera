@@ -15,15 +15,15 @@ class MediaDetailOverviewScheduleMixin:
             if season_schedule:
                 return season_schedule
             if media.schedule and self._schedule_matches_season(media.schedule, media.season_number):
-                return self._with_resolved_online_platforms(media.schedule, media)
+                return self._with_resolved_platforms(media.schedule, media)
+            networks = list(media.networks)
             return MediaScheduleSummary(
                 media_type=media.media_type,
                 first_air_date=self._season_first_air_date(media),
-                networks=list(media.schedule.networks if media.schedule else media.networks),
-                online_platforms=self._resolve_online_platforms(media),
+                platforms=self._resolve_platforms(media, networks),
             )
         if media.schedule:
-            return self._with_resolved_online_platforms(media.schedule, media)
+            return self._with_resolved_platforms(media.schedule, media)
         return MediaScheduleSummary(media_type=media.media_type)
 
     def _resolve_tv_season_schedule_from_cache(self, media: MediaFullInfo) -> MediaScheduleSummary | None:
@@ -59,29 +59,36 @@ class MediaDetailOverviewScheduleMixin:
         elif not next_episode and str(media.status or "").strip().lower() == "ended":
             status_label = "Ended"
 
+        networks = list(media.networks)
         return MediaScheduleSummary(
             media_type=media.media_type,
             status_label=status_label,
             first_air_date=self._season_first_air_date(media) or season_airings[0].date,
-            networks=list(media.schedule.networks if media.schedule else media.networks),
-            online_platforms=self._resolve_online_platforms(media),
+            platforms=self._resolve_platforms(media, networks),
             aired_episode_count=len(aired),
             latest_aired_episode=self._airing_to_schedule_episode(latest_aired),
             next_episode_to_air=self._airing_to_schedule_episode(next_episode),
         )
 
     def _resolve_online_platforms(self, media: MediaFullInfo) -> list[SchedulePlatform]:
-        base_media = media
-        if media.schedule:
-            base_media = media.model_copy(update={"online_platforms": list(media.schedule.online_platforms)})
-        return media_service.resolve_schedule_online_platforms(base_media)
+        online_platforms = media_service.resolve_schedule_online_platforms(media)
+        networks = list(media.networks)
+        return media_service.schedule_service.platforms.exclude_matching(online_platforms, networks)
 
-    def _with_resolved_online_platforms(
+    def _resolve_platforms(self, media: MediaFullInfo, networks: list[SchedulePlatform]) -> list[SchedulePlatform]:
+        if media.schedule and media.schedule.platforms:
+            return list(media.schedule.platforms)
+        return media_service.schedule_service.platforms.merge(networks, self._resolve_online_platforms(media))
+
+    def _with_resolved_platforms(
         self,
         schedule: MediaScheduleSummary,
         media: MediaFullInfo,
     ) -> MediaScheduleSummary:
-        return schedule.model_copy(update={"online_platforms": self._resolve_online_platforms(media)})
+        networks = list(media.networks)
+        return schedule.model_copy(update={
+            "platforms": self._resolve_platforms(media, networks),
+        })
 
     def _schedule_matches_season(self, schedule: MediaScheduleSummary, season_number: int) -> bool:
         schedule_episodes: list[EpisodeInfo | None] = [

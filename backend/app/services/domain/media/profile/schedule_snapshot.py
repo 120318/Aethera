@@ -54,8 +54,6 @@ class MediaProfileScheduleSnapshot:
                 "season_number": season_number if profile.media_type == MediaType.tv else None,
                 "schedule": summary,
                 "airings": list(airings),
-                "networks": list(summary.networks),
-                "online_platforms": list(summary.online_platforms),
             }),
             existing=scope,
         )

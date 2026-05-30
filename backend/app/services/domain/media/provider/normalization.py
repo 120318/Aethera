@@ -13,6 +13,7 @@ from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleAiring, Sc
 from app.schemas.integration.media.provider import ProviderMediaBundle, ProviderSearchItem, ProviderWatchProviders
 from app.schemas.domain.vendor import Vendor
 from app.services.domain.media.profile.access import model_field_list, model_field_value
+from app.services.domain.media.schedule.platforms import SchedulePlatformService
 
 
 def normalize_title(value: str) -> str:
@@ -251,7 +252,7 @@ def _build_tv_schedule_summary(
         media_type=MediaType.tv,
         status_label=_tv_status_label(details.status, len(aired), selected_episode_count, next_episode),
         first_air_date=first_air_date or details.first_air_date or details.release_date,
-        networks=networks,
+        platforms=networks,
         aired_episode_count=len(aired),
         latest_aired_episode=latest_aired_episode,
         next_episode_to_air=next_episode,
@@ -290,7 +291,7 @@ def _build_movie_airings(schedule: MediaScheduleSummary) -> list[ScheduleAiring]
             ScheduleAiring(
                 date=schedule.digital_release_date,
                 kind="movie_digital_release",
-                platforms=list(schedule.online_platforms),
+                platforms=list(schedule.platforms),
             )
         )
     if schedule.physical_release_date:
@@ -388,16 +389,17 @@ def build_tmdb_media_info(
             else season
             for season in seasons
         ]
-    online_platforms = [
+    platform_service = SchedulePlatformService()
+    online_platforms = platform_service.dedupe([
         SchedulePlatform(id=vendor.id, name=vendor.name, logo=vendor.logo, url=vendor.url)
         for vendor in vendors
         if vendor.name
-    ]
-    networks = [
+    ])
+    networks = platform_service.dedupe([
         SchedulePlatform(id=network.id, name=network.name, logo=network.logo)
         for network in details.networks
         if network.name
-    ]
+    ])
     schedule = None
     premiere_release_date = model_field_value(details, "premiere_release_date")
     theatrical_limited_release_date = model_field_value(details, "theatrical_limited_release_date")
@@ -415,7 +417,7 @@ def build_tmdb_media_info(
             physical_release_date=physical_release_date,
             tv_release_date=tv_release_date,
             release_dates=model_field_list(details, "release_dates"),
-            online_platforms=online_platforms,
+            platforms=online_platforms,
         )
     elif mid.media_type == MediaType.tv:
         schedule = _build_tv_schedule_summary(
@@ -425,7 +427,9 @@ def build_tmdb_media_info(
             networks=networks,
         )
         if schedule:
-            schedule = schedule.model_copy(update={"online_platforms": online_platforms})
+            schedule = schedule.model_copy(update={
+                "platforms": platform_service.merge(networks, online_platforms),
+            })
     latest_aired_episode = _to_episode_info(schedule.latest_aired_episode) if schedule else None
     next_episode_to_air = _to_episode_info(schedule.next_episode_to_air) if schedule else details.next_episode_to_air
     year = _resolve_media_year(
