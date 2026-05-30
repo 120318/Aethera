@@ -10,7 +10,7 @@ from app.schemas.domain.media import EpisodeInfo, MediaExecutionSnapshot, MediaF
 from app.schemas.domain.media_context import ResolvedMediaContext
 from app.schemas.domain.media_source import MediaSourceLookup
 from app.schemas.domain.media_types import MediaType
-from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleAiring, SchedulePlatform
+from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleAiring
 from app.schemas.integration.media.provider import ProviderSearchItem
 from app.schemas.domain.search_models import MediaSearchResult
 from app.schemas.runtime.media_management import MediaManagementRowsPage, MediaManagementSummary
@@ -93,9 +93,6 @@ class MediaService:
 
     async def build_schedule_bundle(self, media: MediaFullInfo) -> tuple[MediaScheduleSummary, list[ScheduleAiring]]:
         return await self.schedule_service.build_schedule_bundle(media)
-
-    def resolve_schedule_online_platforms(self, media: MediaFullInfo) -> list[SchedulePlatform]:
-        return self.schedule_service.merged_online_platforms(media)
 
     async def resolve_execution_snapshot(
         self,
