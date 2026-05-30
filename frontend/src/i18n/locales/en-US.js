@@ -291,6 +291,7 @@ export default {
     quickDownloadNoResource: 'No downloadable matching resource found',
     pilotNoMatchedResource: 'No matching pilot resource found',
     quickDownloadNoMatchedResource: 'No matching download resource found',
+    downloadDirectoryMissing: 'No download directory is configured',
     pilotEpisodesAlreadyCovered: 'Episodes 1-3 are already in library or downloading',
     movieAlreadyInLibrary: 'Movie is already in library',
     movieAlreadyDownloading: 'Movie is already downloading',

@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.schemas.exception.exceptions import DownloadException
-from app.schemas.domain.media import MediaExecutionSnapshot, MediaFullInfo, MediaSeasonInfo
+from app.schemas.domain.media import MediaExecutionSnapshot, MediaFullInfo, MediaSeasonInfo, MediaTarget
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.quality_profile import QualityProfile
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.resource_search import Resource, ResourceSearchResult
-from app.schemas.domain.subscription import Subscription
+from app.schemas.domain.subscription import Subscription, SubscriptionUnmatchedRule
 from app.schemas.domain.subscription_filters import SubscriptionFilters, UpgradePolicy
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata, TorrentPayload
 from app.schemas.media_id import MediaID
@@ -19,6 +19,25 @@ from app.services.domain.resource.selection import ResourceSelectionPlan, partit
 from app.services.application.workflows.subscription.pilot import pilot_download_application_service
 from app.services.domain.subscription.resource_run_plan_service import resource_run_plan_service
 from app.services.application.workflows.subscription.run import SubscriptionRunApplicationService
+
+
+@pytest.fixture(autouse=True)
+def _default_effective_pilot_config(monkeypatch):
+    async def fake_resolve_effective_config(_media_id, _media_type, *, season_number=None):
+        _ = season_number
+        return SimpleNamespace(
+            directory_id="dir-default",
+            filters=None,
+            quality_profile_id=None,
+            quality_profile=None,
+            sites=None,
+            unmatched_rules=[],
+        )
+
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.subscription_download_config_service.resolve_effective_config",
+        fake_resolve_effective_config,
+    )
 
 
 @pytest.mark.asyncio
@@ -69,6 +88,51 @@ async def test_pilot_is_rejected_only_when_full_prefix_is_occupied(monkeypatch):
             target_episodes={1, 2, 3},
         )
     assert exc_info.value.message_key == "backendErrors.pilotEpisodesAlreadyCovered"
+
+
+@pytest.mark.asyncio
+async def test_queue_pilot_episode_rejects_missing_effective_directory_before_creating_command(monkeypatch):
+    media = MediaExecutionSnapshot(
+        media_id=MediaID.parse("tmdb:tv:287641"),
+        title="Dazzling",
+        year=2026,
+        media_type=MediaType.tv,
+        season_number=1,
+        episodes_count=30,
+    )
+
+    async def fake_resolve_effective_config(_media_id, _media_type, *, season_number=None):
+        _ = season_number
+        return SimpleNamespace(
+            directory_id=None,
+            filters=None,
+            quality_profile_id=None,
+            quality_profile=None,
+            sites=None,
+            unmatched_rules=[],
+        )
+
+    create_command = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.media_service.resolve_execution_snapshot",
+        AsyncMock(return_value=media),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.subscription_download_config_service.resolve_effective_config",
+        fake_resolve_effective_config,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.command_service.create_command",
+        create_command,
+    )
+
+    with pytest.raises(DownloadException) as exc_info:
+        await pilot_download_application_service.queue(
+            target=MediaTarget(media_id=media.media_id, season_number=1),
+        )
+
+    assert exc_info.value.message_key == "backendErrors.downloadDirectoryMissing"
+    create_command.assert_not_awaited()
 
 
 def _build_resource(
@@ -725,11 +789,6 @@ async def test_execute_pilot_episode_fills_missing_tv_episode_count(monkeypatch)
 
     created = await pilot_download_application_service.execute(
         media=media,
-        directory_id="tv-default",
-        filters=None,
-        quality_profile_id=None,
-        sites=None,
-        unmatched_rules=None,
         season_number=1,
     )
 
@@ -798,16 +857,109 @@ async def test_execute_pilot_episode_targets_only_missing_prefix_episodes(monkey
 
     created = await pilot_download_application_service.execute(
         media=media,
-        directory_id="tv-default",
-        filters=None,
-        quality_profile_id=None,
-        sites=None,
-        unmatched_rules=None,
         season_number=1,
     )
 
     assert created == 1
     assert select_pilot.await_args.kwargs["target_episodes"] == {1}
+
+
+@pytest.mark.asyncio
+async def test_execute_pilot_episode_uses_effective_download_config(monkeypatch):
+    media = MediaExecutionSnapshot(
+        media_id=MediaID.parse("tmdb:tv:287641"),
+        title="Dazzling",
+        year=2026,
+        media_type=MediaType.tv,
+        season_number=1,
+        episodes_count=30,
+    )
+    resource = _build_resource("Dazzling S01E01-E03 2160p WEB-DL", [1, 2, 3])
+    payload = SimpleNamespace(metadata=SimpleNamespace(files=[], get_episodes=lambda: {1, 2, 3}, size=1))
+    effective_filters = SubscriptionFilters(resolution=["2160p"], exclude_keywords=["去头尾"])
+    effective_quality = QualityProfile(id="qp-effective", name="Effective")
+    effective_rule = SubscriptionUnmatchedRule(sites=["site-effective"], pattern="Dazzling S01")
+
+    class _Lock:
+        async def __aenter__(self):
+            return True
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_resolve_effective_config(media_id, media_type, *, season_number=None):
+        assert media_id == media.media_id
+        assert media_type == MediaType.tv
+        assert season_number == 1
+        return SimpleNamespace(
+            directory_id="tv-default",
+            filters=effective_filters,
+            quality_profile_id=effective_quality.id,
+            quality_profile=effective_quality,
+            sites=["site-effective"],
+            unmatched_rules=[effective_rule],
+        )
+
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.subscription_download_config_service.resolve_effective_config",
+        fake_resolve_effective_config,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.domain_lock_service.acquire_media_acquire",
+        lambda _media_id: _Lock(),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.settings_service.get_quality_profile",
+        lambda profile_id: effective_quality if profile_id == effective_quality.id else None,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.library_service.get_present_episodes",
+        AsyncMock(return_value=set()),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.download_service.list_active_episodes_by_media",
+        AsyncMock(return_value=set()),
+    )
+    search_media = AsyncMock(return_value=[resource.resources])
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.resource_search_service.search_media",
+        search_media,
+    )
+
+    captured = {}
+
+    def fake_partition(plan, search_results, unmatched_rules=None):
+        captured["plan"] = plan
+        captured["unmatched_rules"] = unmatched_rules
+        return [resource], [], True
+
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.partition_search_results",
+        fake_partition,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.select_pilot_resources",
+        AsyncMock(return_value=[(payload, [], resource)]),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.download_service.create_download",
+        AsyncMock(return_value=SimpleNamespace(id="task-1")),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.media_service.upsert_active_profile_from_identity",
+        AsyncMock(),
+    )
+
+    created = await pilot_download_application_service.execute(
+        media=media,
+        season_number=1,
+    )
+
+    assert created == 1
+    assert search_media.await_args.args[0].indexers == ["site-effective"]
+    assert captured["plan"].filters is effective_filters
+    assert captured["plan"].quality_profile is effective_quality
+    assert captured["unmatched_rules"] == [effective_rule]
 
 
 @pytest.mark.asyncio
@@ -886,11 +1038,6 @@ async def test_execute_pilot_episode_supports_movie_quick_download(monkeypatch):
 
     created = await pilot_download_application_service.execute(
         media=media,
-        directory_id="movie-default",
-        filters=None,
-        quality_profile_id=None,
-        sites=None,
-        unmatched_rules=None,
     )
 
     assert created == 1
@@ -931,11 +1078,6 @@ async def test_execute_pilot_episode_rejects_movie_when_already_in_library(monke
     with pytest.raises(DownloadException) as exc_info:
         await pilot_download_application_service.execute(
             media=media,
-            directory_id="movie-default",
-            filters=None,
-            quality_profile_id=None,
-            sites=None,
-            unmatched_rules=None,
         )
     assert exc_info.value.message_key == "backendErrors.movieAlreadyInLibrary"
 
@@ -978,11 +1120,6 @@ async def test_execute_pilot_episode_rejects_movie_when_already_downloading(monk
     with pytest.raises(DownloadException) as exc_info:
         await pilot_download_application_service.execute(
             media=media,
-            directory_id="movie-default",
-            filters=None,
-            quality_profile_id=None,
-            sites=None,
-            unmatched_rules=None,
         )
     assert exc_info.value.message_key == "backendErrors.movieAlreadyDownloading"
 

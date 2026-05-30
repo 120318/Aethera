@@ -182,11 +182,6 @@ class PilotEpisodeCommandHandler:
         season_number = media.season_number
         payload = PilotEpisodeCommandRecordPayload(
             media=media,
-            directory_id=request.directory_id,
-            site_ids=request.site_ids,
-            filters=request.filters,
-            quality_profile_id=request.quality_profile_id or "",
-            unmatched_rules=request.unmatched_rules,
         )
         return CommandRecord(
             id=str(uuid.uuid4()),
@@ -205,11 +200,6 @@ class PilotEpisodeCommandHandler:
         payload = command.payload
         task_count = await pilot_download_application_service.execute(
             media=payload.media,
-            directory_id=payload.directory_id,
-            filters=payload.filters,
-            quality_profile_id=payload.quality_profile_id or None,
-            sites=payload.site_ids,
-            unmatched_rules=payload.unmatched_rules,
             season_number=payload.media.season_number,
         )
         return CommandResult(result_count=task_count)
