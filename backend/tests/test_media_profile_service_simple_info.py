@@ -9,7 +9,7 @@ from app.schemas.domain.media_context import MediaCapabilities
 from app.schemas.domain.media_profile_scope import MediaProfileScope, MediaProfileScopeAiring
 from app.schemas.domain.media_source import MediaSourceLookup, MediaSourceName
 from app.schemas.domain.media_types import MediaType
-from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleAiring, ScheduleEpisode
+from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleAiring, ScheduleEpisode, SchedulePlatform
 from app.schemas.exception import MediaNotFoundException, SearchMissingSeasonInfoException
 from app.schemas.media_id import MediaID
 from app.schemas.persistence.media_external_mapping import MediaExternalMappingRecord
@@ -1203,7 +1203,7 @@ async def test_refresh_profile_without_season_returns_none(monkeypatch):
     )
     schedule_calls = []
 
-    async def fake_build_schedule_bundle(requested_media):
+    async def fake_build_schedule_bundle(requested_media, **kwargs):
         schedule_calls.append(requested_media.season_number)
         if requested_media.season_number == 1:
             summary = MediaScheduleSummary(
@@ -1264,7 +1264,7 @@ async def test_refresh_profile_keeps_single_season_status_summary(monkeypatch):
     )
     schedule_calls = []
 
-    async def fake_build_schedule_bundle(requested_media):
+    async def fake_build_schedule_bundle(requested_media, **kwargs):
         schedule_calls.append(requested_media.season_number)
         return (
             MediaScheduleSummary(
@@ -1304,6 +1304,7 @@ async def test_refresh_profile_with_season_refreshes_only_target_season_schedule
         MediaSeasonInfo(season_number=1, episode_count=22),
         MediaSeasonInfo(season_number=2, episode_count=6),
     ]
+    existing.networks = [SchedulePlatform(id="network-1", name="Network One")]
     old_season_one = ScheduleAiring(date="2026-04-14", kind="tv_episode_air", season_number=1, episode_number=1)
     old_season_two = ScheduleAiring(date="2026-06-01", kind="tv_episode_air", season_number=2, episode_number=1)
     existing.airings = [old_season_one, old_season_two]
@@ -1319,10 +1320,12 @@ async def test_refresh_profile_with_season_refreshes_only_target_season_schedule
         primary_metadata_source="tmdb",
     )
     schedule_calls = []
+    schedule_kwargs = []
     new_season_two = ScheduleAiring(date="2026-06-08", kind="tv_episode_air", season_number=2, episode_number=2)
 
-    async def fake_build_schedule_bundle(requested_media):
+    async def fake_build_schedule_bundle(requested_media, **kwargs):
         schedule_calls.append(requested_media.season_number)
+        schedule_kwargs.append(kwargs)
         return (
             MediaScheduleSummary(
                 media_type=MediaType.tv,
@@ -1347,6 +1350,7 @@ async def test_refresh_profile_with_season_refreshes_only_target_season_schedule
 
     provider_service.info.assert_awaited_once_with(media_id, season_number=2)
     assert schedule_calls == [2]
+    assert schedule_kwargs == [{"network_platforms": [SchedulePlatform(id="network-1", name="Network One")]}]
     assert profile is not None
     assert profile.airings == [new_season_two]
     assert profile.next_episode_to_air == ScheduleEpisode(season_number=2, episode_number=2, air_date="2026-06-08")

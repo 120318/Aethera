@@ -375,6 +375,47 @@ async def test_tv_schedule_bundle_keeps_online_platforms_off_episode_airings(mon
 
 
 @pytest.mark.asyncio
+async def test_tv_schedule_bundle_uses_profile_networks_when_airings_are_empty(monkeypatch):
+    service = MediaScheduleService()
+    media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:tv:1"),
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=1,
+        primary_metadata_source="tmdb",
+        metadata_capabilities=MediaCapabilities(has_schedule=True),
+        season_number=1,
+        first_air_date="2026-05-13",
+        episodes_count=1,
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[
+                SchedulePlatform(id="network-1", name="Network One"),
+                SchedulePlatform(id="stream-1", name="Stream One"),
+            ],
+        ),
+    )
+    episodes = [
+        EpisodeInfo(season_number=1, episode_number=1, air_date="2026-05-13", title="Pilot"),
+    ]
+
+    async def _inputs(context, season_number):
+        return list(episodes), list(episodes), "2026-05-13"
+
+    monkeypatch.setattr(service, "_build_tv_schedule_inputs", _inputs)
+
+    summary, airings = await service.build_schedule_bundle(
+        media,
+        network_platforms=[SchedulePlatform(id="network-1", name="Network One")],
+    )
+
+    assert [platform.name for platform in summary.platforms] == ["Network One", "Stream One"]
+    assert len(airings) == 1
+    assert [platform.name for platform in airings[0].platforms] == ["Network One"]
+
+
+@pytest.mark.asyncio
 async def test_schedule_service_converts_youku_douban_deeplink_to_web_show_url():
     media = MediaFullInfo(
         media_id=MediaID.parse("douban:tv:35922594"),
