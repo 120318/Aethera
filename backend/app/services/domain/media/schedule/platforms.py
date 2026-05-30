@@ -29,8 +29,6 @@ class SchedulePlatformService:
         "mango tv": "mgtv",
         "芒果tv": "mgtv",
         "芒果TV": "mgtv",
-        "9": "amazon_prime_video",
-        "119": "amazon_prime_video",
         "amazon prime video": "amazon_prime_video",
         "amazon prime video with ads": "amazon_prime_video",
         "amazon prime video free with ads": "amazon_prime_video",

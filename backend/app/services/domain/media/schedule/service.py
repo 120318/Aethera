@@ -389,7 +389,7 @@ class MediaScheduleService:
 
         season_episodes, _, _ = await self._build_tv_schedule_inputs(context, media.season_number)
         networks = self._tv_networks(media)
-        return self.airings.build_tv_airings(season_episodes, platforms=self._tv_platforms(media, networks), date_part=self._date_part)
+        return self.airings.build_tv_airings(season_episodes, platforms=networks, date_part=self._date_part)
 
     async def build_schedule_bundle(self, media: MediaFullInfo) -> tuple[MediaScheduleSummary, list[ScheduleAiring]]:
         if media.media_type == MediaType.tv:
@@ -398,6 +398,6 @@ class MediaScheduleService:
             if not context.metadata_capabilities.has_schedule or not media.season_number:
                 return summary, []
             season_episodes, _, _ = await self._build_tv_schedule_inputs(context, media.season_number)
-            airings = self.airings.build_tv_airings(season_episodes, platforms=summary.platforms, date_part=self._date_part)
+            airings = self.airings.build_tv_airings(season_episodes, platforms=self._tv_networks(media), date_part=self._date_part)
             return summary, airings
         return await self.build_schedule_summary_for_media(media), await self.build_airings_for_media(media)

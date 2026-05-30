@@ -263,6 +263,43 @@ def test_scope_projection_persists_schedule_summary_platforms_without_airings():
 
 
 @pytest.mark.asyncio
+async def test_tv_schedule_bundle_keeps_online_platforms_off_episode_airings(monkeypatch):
+    service = MediaScheduleService()
+    media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:tv:1"),
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=1,
+        primary_metadata_source="tmdb",
+        metadata_capabilities=MediaCapabilities(has_schedule=True),
+        season_number=1,
+        first_air_date="2026-05-13",
+        episodes_count=1,
+        networks=[
+            SchedulePlatform(id=None, name="Prime Video", url="https://www.primevideo.com/"),
+        ],
+        online_platforms=[
+            SchedulePlatform(id=None, name="Amazon Video", url="https://www.amazon.com/video", region="US"),
+        ],
+    )
+    episodes = [
+        EpisodeInfo(season_number=1, episode_number=1, air_date="2026-05-13", title="Pilot"),
+    ]
+
+    async def _inputs(context, season_number):
+        return list(episodes), list(episodes), "2026-05-13"
+
+    monkeypatch.setattr(service, "_build_tv_schedule_inputs", _inputs)
+
+    summary, airings = await service.build_schedule_bundle(media)
+
+    assert [platform.name for platform in summary.platforms] == ["Prime Video", "Amazon Video"]
+    assert len(airings) == 1
+    assert [platform.name for platform in airings[0].platforms] == ["Prime Video"]
+
+
+@pytest.mark.asyncio
 async def test_schedule_service_converts_youku_douban_deeplink_to_web_show_url():
     media = MediaFullInfo(
         media_id=MediaID.parse("douban:tv:35922594"),
