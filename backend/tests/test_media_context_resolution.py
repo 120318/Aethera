@@ -273,6 +273,60 @@ def test_scope_projection_persists_schedule_summary_platforms_without_airings():
     assert scope.platforms[0].source == "schedule"
 
 
+def test_scope_projection_does_not_infer_tv_online_platforms_without_airings():
+    media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:tv:1"),
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        season_number=1,
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[SchedulePlatform(id="network-1", name="Network One")],
+        ),
+    )
+
+    scope = build_scope_from_media(media)
+
+    assert scope is not None
+    assert scope.platforms == []
+
+
+def test_scope_projection_keeps_tv_schedule_online_platforms_when_airings_identify_networks():
+    media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:tv:1"),
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        season_number=1,
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[
+                SchedulePlatform(id="network-1", name="Network One"),
+                SchedulePlatform(id="stream-1", name="Stream One"),
+            ],
+        ),
+        airings=[
+            ScheduleAiring(
+                date="2026-05-13",
+                kind="tv_episode_air",
+                season_number=1,
+                episode_number=1,
+                platforms=[SchedulePlatform(id="network-1", name="Network One")],
+            )
+        ],
+    )
+
+    scope = build_scope_from_media(media)
+
+    assert scope is not None
+    roles_by_name = {platform.name: platform.roles for platform in scope.platforms}
+    assert {name: set(roles) for name, roles in roles_by_name.items()} == {
+        "Network One": {"network", "airing"},
+        "Stream One": {"online"},
+    }
+
+
 @pytest.mark.asyncio
 async def test_tv_schedule_bundle_keeps_online_platforms_off_episode_airings(monkeypatch):
     service = MediaScheduleService()

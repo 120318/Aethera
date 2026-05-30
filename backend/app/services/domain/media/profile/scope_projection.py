@@ -215,7 +215,7 @@ def build_scope_from_media(media: MediaFullInfo, existing: MediaProfileScope | N
             if platform:
                 airing_platform_keys.add(platform.key)
                 _merge_platform(platforms, platform)
-    if media.schedule:
+    if media.schedule and (media.media_type != MediaType.tv or airing_platform_keys):
         for schedule_platform in media.schedule.platforms:
             platform = platform_from_schedule(
                 schedule_platform,
