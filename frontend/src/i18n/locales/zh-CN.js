@@ -1844,6 +1844,9 @@ export default {
       browseSourceSaved: '浏览与搜索源已保存',
       tmdbSaved: 'TMDB 配置已保存',
       doubanSaved: '豆瓣配置已保存',
+      testConnection: '测试连接',
+      tmdbApiKeyRequired: '请先填写 TMDB API Key',
+      connectionTestFailed: '数据源连接测试失败:',
     },
     system: {
       loadConfigFailed: '获取系统配置失败:',

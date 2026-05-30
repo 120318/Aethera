@@ -1843,6 +1843,9 @@ export default {
       browseSourceSaved: 'Browse and search source saved',
       tmdbSaved: 'TMDB configuration saved',
       doubanSaved: 'Douban configuration saved',
+      testConnection: 'Test connection',
+      tmdbApiKeyRequired: 'Enter the TMDB API key first',
+      connectionTestFailed: 'Data source connection test failed:',
     },
     system: {
       loadConfigFailed: 'Failed to fetch system config:',
