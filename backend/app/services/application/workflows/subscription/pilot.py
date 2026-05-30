@@ -43,6 +43,19 @@ class PilotDownloadApplicationService:
         *,
         target: MediaTarget,
     ):
+        media = await media_service.resolve_execution_snapshot(
+            target.media_id,
+            season_number=target.season_number,
+            require_tv_season=True,
+            require_episode_count=True,
+        )
+        effective_config = await subscription_download_config_service.resolve_effective_config(
+            media.media_id,
+            media.media_type,
+            season_number=media.season_number if media.media_type == MediaType.tv else None,
+        )
+        if not effective_config.directory_id:
+            raise DownloadException("backendErrors.downloadDirectoryMissing")
         command = await command_service.create_command(
             CommandCreateRequest(
                 type=CommandType.PILOT_EPISODE,
@@ -55,11 +68,6 @@ class PilotDownloadApplicationService:
         media = command.payload.media
         if media is None:
             raise DownloadException("backendErrors.mediaExecutionSnapshotRequired")
-        effective_config = await subscription_download_config_service.resolve_effective_config(
-            media.media_id,
-            media.media_type,
-            season_number=media.season_number if media.media_type == MediaType.tv else None,
-        )
         event_service.emit_media(
             MediaEventCreate(
                 type=EventTypes.PILOT_EPISODE_QUEUED,

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.schemas.exception.exceptions import DownloadException
-from app.schemas.domain.media import MediaExecutionSnapshot, MediaFullInfo, MediaSeasonInfo
+from app.schemas.domain.media import MediaExecutionSnapshot, MediaFullInfo, MediaSeasonInfo, MediaTarget
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.quality_profile import QualityProfile
 from app.schemas.domain.resource_attributes import ResourceAttributes
@@ -88,6 +88,51 @@ async def test_pilot_is_rejected_only_when_full_prefix_is_occupied(monkeypatch):
             target_episodes={1, 2, 3},
         )
     assert exc_info.value.message_key == "backendErrors.pilotEpisodesAlreadyCovered"
+
+
+@pytest.mark.asyncio
+async def test_queue_pilot_episode_rejects_missing_effective_directory_before_creating_command(monkeypatch):
+    media = MediaExecutionSnapshot(
+        media_id=MediaID.parse("tmdb:tv:287641"),
+        title="Dazzling",
+        year=2026,
+        media_type=MediaType.tv,
+        season_number=1,
+        episodes_count=30,
+    )
+
+    async def fake_resolve_effective_config(_media_id, _media_type, *, season_number=None):
+        _ = season_number
+        return SimpleNamespace(
+            directory_id=None,
+            filters=None,
+            quality_profile_id=None,
+            quality_profile=None,
+            sites=None,
+            unmatched_rules=[],
+        )
+
+    create_command = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.media_service.resolve_execution_snapshot",
+        AsyncMock(return_value=media),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.subscription_download_config_service.resolve_effective_config",
+        fake_resolve_effective_config,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.command_service.create_command",
+        create_command,
+    )
+
+    with pytest.raises(DownloadException) as exc_info:
+        await pilot_download_application_service.queue(
+            target=MediaTarget(media_id=media.media_id, season_number=1),
+        )
+
+    assert exc_info.value.message_key == "backendErrors.downloadDirectoryMissing"
+    create_command.assert_not_awaited()
 
 
 def _build_resource(
