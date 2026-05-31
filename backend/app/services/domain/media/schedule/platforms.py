@@ -29,6 +29,10 @@ class SchedulePlatformService:
         "mango tv": "mgtv",
         "芒果tv": "mgtv",
         "芒果TV": "mgtv",
+        "amazon prime video": "amazon_prime_video",
+        "amazon prime video with ads": "amazon_prime_video",
+        "amazon prime video free with ads": "amazon_prime_video",
+        "prime video": "amazon_prime_video",
     }
     platform_overrides: dict[str, SchedulePlatform] = {
         "iqiyi": SchedulePlatform(name="爱奇艺", url="https://www.iqiyi.com/"),
@@ -47,8 +51,9 @@ class SchedulePlatformService:
         "apple tv+": SchedulePlatform(name="Apple TV+", url="https://tv.apple.com/"),
         "apple tv store": SchedulePlatform(name="Apple TV", url="https://tv.apple.com/"),
         "amazon prime video": SchedulePlatform(name="Prime Video", url="https://www.primevideo.com/"),
+        "amazon prime video with ads": SchedulePlatform(name="Prime Video", url="https://www.primevideo.com/"),
+        "amazon prime video free with ads": SchedulePlatform(name="Prime Video", url="https://www.primevideo.com/"),
         "prime video": SchedulePlatform(name="Prime Video", url="https://www.primevideo.com/"),
-        "amazon video": SchedulePlatform(name="Prime Video", url="https://www.primevideo.com/"),
         "google play movies": SchedulePlatform(name="Google Play Movies", url="https://play.google.com/store/movies"),
         "youtube": SchedulePlatform(name="YouTube", url="https://www.youtube.com/"),
         "tving": SchedulePlatform(name="TVING", url="https://www.tving.com/"),
@@ -129,13 +134,39 @@ class SchedulePlatformService:
     def dedupe(self, platforms: list[SchedulePlatform]) -> list[SchedulePlatform]:
         seen: set[str] = set()
         deduped: list[SchedulePlatform] = []
-        for platform in platforms:
+        for raw_platform in platforms:
+            platform = self.normalize(raw_platform)
             key = self.canonical_key(platform.id, platform.name) or str(platform.id or platform.name or "").strip().lower()
             if not key or key in seen:
                 continue
             seen.add(key)
             deduped.append(platform)
         return deduped
+
+    def merge(
+        self,
+        primary_platforms: list[SchedulePlatform],
+        secondary_platforms: list[SchedulePlatform],
+    ) -> list[SchedulePlatform]:
+        return self.dedupe([*primary_platforms, *secondary_platforms])
+
+    def exclude_matching(
+        self,
+        platforms: list[SchedulePlatform],
+        excluded_platforms: list[SchedulePlatform],
+    ) -> list[SchedulePlatform]:
+        excluded_keys = {
+            key
+            for platform in excluded_platforms
+            if (key := self.canonical_key(platform.id, platform.name))
+        }
+        if not excluded_keys:
+            return platforms
+        return [
+            platform
+            for platform in platforms
+            if self.canonical_key(platform.id, platform.name) not in excluded_keys
+        ]
 
     def apply_vendor_links(self, platforms: list[SchedulePlatform], vendors: list[Vendor]) -> list[SchedulePlatform]:
         vendor_urls = self._vendor_playback_urls_by_platform(vendors)

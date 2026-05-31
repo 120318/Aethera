@@ -54,8 +54,6 @@ class MediaProfileScheduleSnapshot:
                 "season_number": season_number if profile.media_type == MediaType.tv else None,
                 "schedule": summary,
                 "airings": list(airings),
-                "networks": list(summary.networks),
-                "online_platforms": list(summary.online_platforms),
             }),
             existing=scope,
         )
@@ -90,7 +88,10 @@ class MediaProfileScheduleSnapshot:
             raise SearchMissingSeasonInfoException()
 
         season_media = media.model_copy(update={"season_number": season_number})
-        return await self.schedule_service.build_schedule_bundle(season_media)
+        return await self.schedule_service.build_schedule_bundle(
+            season_media,
+            network_platforms=list(profile.networks),
+        )
 
     async def refresh_schedule_snapshot(
         self,

@@ -5,11 +5,12 @@ from datetime import date, timedelta
 from app.schemas.domain.media import EpisodeInfo, MediaFullInfo
 from app.schemas.domain.media_context import MediaCapabilities
 from app.schemas.domain.media_types import MediaType
-from app.schemas.domain.schedule import SchedulePlatform
+from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleAiring, SchedulePlatform
 from app.schemas.domain.vendor import Vendor
 from app.schemas.media_id import MediaID
 from app.services.domain.media.schedule import service as schedule_module
 from app.services.domain.media.profile.context import media_profile_context_service
+from app.services.domain.media.profile.scope_projection import build_scope_from_media
 from app.services.domain.media.schedule.service import MediaScheduleService
 
 
@@ -106,7 +107,7 @@ async def test_schedule_service_degrades_cleanly_without_tmdb():
 
     assert summary.first_air_date == "2024-01-01"
     assert summary.status_label is None
-    assert summary.networks == []
+    assert summary.platforms == []
     assert summary.next_episode_to_air is None
 
 
@@ -119,7 +120,10 @@ async def test_schedule_service_uses_douban_vendor_web_url_for_tv_network():
         media_type=MediaType.tv,
         douban_id="35805716",
         first_air_date="2026-03-23",
-        networks=[SchedulePlatform(id="iqiyi", name="iQIYI", url="https://www.iqiyi.com/")],
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[SchedulePlatform(id="iqiyi", name="iQIYI", url="https://www.iqiyi.com/")],
+        ),
         vendors=[
             Vendor(
                 id="iqiyi",
@@ -131,9 +135,9 @@ async def test_schedule_service_uses_douban_vendor_web_url_for_tv_network():
 
     summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
 
-    assert len(summary.networks) == 1
-    assert summary.networks[0].name == "爱奇艺"
-    assert summary.networks[0].url == "http://www.iqiyi.com/v_1lr0jb5ixi8.html?vfm=m_331_dbdy"
+    assert len(summary.platforms) == 1
+    assert summary.platforms[0].name == "爱奇艺"
+    assert summary.platforms[0].url == "http://www.iqiyi.com/v_1lr0jb5ixi8.html?vfm=m_331_dbdy"
 
 
 @pytest.mark.asyncio
@@ -145,7 +149,10 @@ async def test_schedule_service_converts_tencent_douban_deeplink_to_web_play_url
         media_type=MediaType.tv,
         douban_id="36939912",
         first_air_date="2026-04-01",
-        networks=[SchedulePlatform(id="tencent", name="Tencent Video", url="https://v.qq.com/")],
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[SchedulePlatform(id="tencent", name="Tencent Video", url="https://v.qq.com/")],
+        ),
         vendors=[
             Vendor(
                 id="qq",
@@ -157,9 +164,9 @@ async def test_schedule_service_converts_tencent_douban_deeplink_to_web_play_url
 
     summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
 
-    assert len(summary.networks) == 1
-    assert summary.networks[0].name == "腾讯视频"
-    assert summary.networks[0].url == "https://v.qq.com/x/cover/mzc002007tp60ap/w41025my54z.html"
+    assert len(summary.platforms) == 1
+    assert summary.platforms[0].name == "腾讯视频"
+    assert summary.platforms[0].url == "https://v.qq.com/x/cover/mzc002007tp60ap/w41025my54z.html"
 
 
 @pytest.mark.asyncio
@@ -171,11 +178,14 @@ async def test_schedule_service_dedupes_tencent_platform_aliases():
         media_type=MediaType.tv,
         douban_id="36939912",
         first_air_date="2026-04-01",
-        online_platforms=[
-            SchedulePlatform(id="tencent", name="腾讯视频", url="https://v.qq.com/"),
-            SchedulePlatform(id="2008", name="Tencent Video", url="https://www.themoviedb.org/tv/1/watch"),
-            SchedulePlatform(id=None, name="腾讯视频平台", url="https://v.qq.com/channel/tv"),
-        ],
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[
+                SchedulePlatform(id="tencent", name="腾讯视频", url="https://v.qq.com/"),
+                SchedulePlatform(id="2008", name="Tencent Video", url="https://www.themoviedb.org/tv/1/watch"),
+                SchedulePlatform(id=None, name="腾讯视频平台", url="https://v.qq.com/channel/tv"),
+            ],
+        ),
         vendors=[
             Vendor(
                 id="qq",
@@ -187,8 +197,222 @@ async def test_schedule_service_dedupes_tencent_platform_aliases():
 
     summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
 
-    assert len(summary.online_platforms) == 1
-    assert summary.online_platforms[0].name == "腾讯视频"
+    assert len(summary.platforms) == 1
+    assert summary.platforms[0].name == "腾讯视频"
+
+
+@pytest.mark.asyncio
+async def test_schedule_service_dedupes_prime_video_platform_aliases():
+    media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:tv:287641"),
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=287641,
+        first_air_date="2026-05-13",
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[
+                SchedulePlatform(id=None, name="Prime Video", url="https://www.primevideo.com/"),
+                SchedulePlatform(id="9", name="Amazon Prime Video", url="https://www.themoviedb.org/tv/287641/watch", region="US"),
+                SchedulePlatform(id="119", name="Amazon Prime Video with Ads", url="https://www.themoviedb.org/tv/287641/watch", region="US"),
+                SchedulePlatform(id=None, name="Amazon Prime Video Free with Ads", url="https://www.themoviedb.org/tv/287641/watch", region="US"),
+            ],
+        ),
+    )
+
+    summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
+
+    assert len(summary.platforms) == 1
+    assert summary.platforms[0].name == "Prime Video"
+    payload = summary.model_dump(mode="json")
+    assert [platform["name"] for platform in payload["platforms"]] == ["Prime Video"]
+    assert "networks" not in payload
+    assert "online_platforms" not in payload
+
+
+@pytest.mark.asyncio
+async def test_schedule_service_keeps_amazon_video_separate_from_prime_video():
+    media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:tv:1"),
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=1,
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[
+                SchedulePlatform(id="9", name="Amazon Prime Video", url="https://www.themoviedb.org/tv/1/watch", region="US"),
+                SchedulePlatform(id=None, name="Amazon Video", url="https://www.amazon.com/video", region="US"),
+            ],
+        ),
+    )
+
+    summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
+
+    assert [platform.name for platform in summary.platforms] == ["Prime Video", "Amazon Video"]
+
+
+def test_scope_projection_persists_schedule_summary_platforms_without_airings():
+    media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:movie:1"),
+        title="Sample",
+        year=2026,
+        media_type=MediaType.movie,
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.movie,
+            platforms=[SchedulePlatform(id="9", name="Prime Video", url="https://www.primevideo.com/")],
+        ),
+    )
+
+    scope = build_scope_from_media(media)
+
+    assert scope is not None
+    assert [platform.name for platform in scope.platforms] == ["Prime Video"]
+    assert scope.platforms[0].roles == ["online"]
+    assert scope.platforms[0].source == "schedule"
+
+
+def test_scope_projection_does_not_infer_tv_online_platforms_without_airings():
+    media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:tv:1"),
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        season_number=1,
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[SchedulePlatform(id="network-1", name="Network One")],
+        ),
+    )
+
+    scope = build_scope_from_media(media)
+
+    assert scope is not None
+    assert scope.platforms == []
+
+
+def test_scope_projection_keeps_tv_schedule_online_platforms_when_airings_identify_networks():
+    media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:tv:1"),
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        season_number=1,
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[
+                SchedulePlatform(id="network-1", name="Network One"),
+                SchedulePlatform(id="stream-1", name="Stream One"),
+            ],
+        ),
+        airings=[
+            ScheduleAiring(
+                date="2026-05-13",
+                kind="tv_episode_air",
+                season_number=1,
+                episode_number=1,
+                platforms=[SchedulePlatform(id="network-1", name="Network One")],
+            )
+        ],
+    )
+
+    scope = build_scope_from_media(media)
+
+    assert scope is not None
+    roles_by_name = {platform.name: platform.roles for platform in scope.platforms}
+    assert {name: set(roles) for name, roles in roles_by_name.items()} == {
+        "Network One": {"network", "airing"},
+        "Stream One": {"online"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_tv_schedule_bundle_keeps_online_platforms_off_episode_airings(monkeypatch):
+    service = MediaScheduleService()
+    media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:tv:1"),
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=1,
+        primary_metadata_source="tmdb",
+        metadata_capabilities=MediaCapabilities(has_schedule=True),
+        season_number=1,
+        first_air_date="2026-05-13",
+        episodes_count=1,
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[
+                SchedulePlatform(id=None, name="Prime Video", url="https://www.primevideo.com/"),
+                SchedulePlatform(id=None, name="Amazon Video", url="https://www.amazon.com/video", region="US"),
+            ],
+        ),
+        airings=[
+            ScheduleAiring(
+                date="2026-05-13",
+                kind="tv_episode_air",
+                season_number=1,
+                episode_number=1,
+                platforms=[SchedulePlatform(id=None, name="Prime Video", url="https://www.primevideo.com/")],
+            )
+        ],
+    )
+    episodes = [
+        EpisodeInfo(season_number=1, episode_number=1, air_date="2026-05-13", title="Pilot"),
+    ]
+
+    async def _inputs(context, season_number):
+        return list(episodes), list(episodes), "2026-05-13"
+
+    monkeypatch.setattr(service, "_build_tv_schedule_inputs", _inputs)
+
+    summary, airings = await service.build_schedule_bundle(media)
+
+    assert [platform.name for platform in summary.platforms] == ["Prime Video", "Amazon Video"]
+    assert len(airings) == 1
+    assert [platform.name for platform in airings[0].platforms] == ["Prime Video"]
+
+
+@pytest.mark.asyncio
+async def test_tv_schedule_bundle_uses_profile_networks_when_airings_are_empty(monkeypatch):
+    service = MediaScheduleService()
+    media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:tv:1"),
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=1,
+        primary_metadata_source="tmdb",
+        metadata_capabilities=MediaCapabilities(has_schedule=True),
+        season_number=1,
+        first_air_date="2026-05-13",
+        episodes_count=1,
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[
+                SchedulePlatform(id="network-1", name="Network One"),
+                SchedulePlatform(id="stream-1", name="Stream One"),
+            ],
+        ),
+    )
+    episodes = [
+        EpisodeInfo(season_number=1, episode_number=1, air_date="2026-05-13", title="Pilot"),
+    ]
+
+    async def _inputs(context, season_number):
+        return list(episodes), list(episodes), "2026-05-13"
+
+    monkeypatch.setattr(service, "_build_tv_schedule_inputs", _inputs)
+
+    summary, airings = await service.build_schedule_bundle(
+        media,
+        network_platforms=[SchedulePlatform(id="network-1", name="Network One")],
+    )
+
+    assert [platform.name for platform in summary.platforms] == ["Network One", "Stream One"]
+    assert len(airings) == 1
+    assert [platform.name for platform in airings[0].platforms] == ["Network One"]
 
 
 @pytest.mark.asyncio
@@ -200,7 +424,10 @@ async def test_schedule_service_converts_youku_douban_deeplink_to_web_show_url()
         media_type=MediaType.tv,
         douban_id="35922594",
         first_air_date="2025-01-01",
-        networks=[SchedulePlatform(id="1419", name="Youku", url="https://www.youku.com/")],
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[SchedulePlatform(id="1419", name="Youku", url="https://www.youku.com/")],
+        ),
         vendors=[
             Vendor(
                 id="youku",
@@ -212,9 +439,9 @@ async def test_schedule_service_converts_youku_douban_deeplink_to_web_show_url()
 
     summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
 
-    assert len(summary.networks) == 1
-    assert summary.networks[0].name == "优酷"
-    assert summary.networks[0].url == "https://v.youku.com/v_nextstage/id_dccc1a382ea3456eaa77.html"
+    assert len(summary.platforms) == 1
+    assert summary.platforms[0].name == "优酷"
+    assert summary.platforms[0].url == "https://v.youku.com/v_nextstage/id_dccc1a382ea3456eaa77.html"
 
 
 @pytest.mark.asyncio
@@ -226,15 +453,18 @@ async def test_schedule_service_ignores_unresolved_non_web_vendor_deeplink():
         media_type=MediaType.tv,
         douban_id="1",
         first_air_date="2026-04-01",
-        networks=[SchedulePlatform(id="mgtv", name="Mango TV", url="https://www.mgtv.com/")],
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[SchedulePlatform(id="mgtv", name="Mango TV", url="https://www.mgtv.com/")],
+        ),
         vendors=[Vendor(id="mgtv", name="textTV", url="mgtv://video/123")],
     )
 
     summary = await MediaScheduleService().build_tv_schedule_summary(media, season_number=None)
 
-    assert len(summary.networks) == 1
-    assert summary.networks[0].name == "芒果TV"
-    assert summary.networks[0].url == "https://www.mgtv.com/"
+    assert len(summary.platforms) == 1
+    assert summary.platforms[0].name == "芒果TV"
+    assert summary.platforms[0].url == "https://www.mgtv.com/"
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,9 @@ import time
 from app.schemas.domain.managed_media_profile import ManagedMediaProfile
 from app.schemas.domain.media import MediaFullInfo, PersonInfo
 from app.schemas.domain.media_types import MediaType
+from app.schemas.domain.schedule import SchedulePlatform
 from app.services.domain.media.profile.access import model_field_list, model_field_value
+from app.services.domain.media.schedule.platforms import SchedulePlatformService
 
 
 def _contains_cjk(text: str | None) -> bool:
@@ -47,8 +49,43 @@ def _merge_airings(media: MediaFullInfo, existing: ManagedMediaProfile | None):
     return list(media.airings or [])
 
 
-def _merge_networks(media: MediaFullInfo, existing: ManagedMediaProfile | None):
-    return list(media.networks or [])
+def _schedule_platforms(media: MediaFullInfo) -> list[SchedulePlatform]:
+    return list(media.schedule.platforms) if media.schedule else []
+
+
+def _platform_key(platform: SchedulePlatform) -> str:
+    return f"{(platform.id or '').strip().lower()}|{(platform.name or '').strip().lower()}"
+
+
+def _airing_networks(media: MediaFullInfo) -> list[SchedulePlatform]:
+    platforms: list[SchedulePlatform] = []
+    for airing in media.airings or []:
+        platforms.extend(list(airing.platforms or []))
+    return SchedulePlatformService().dedupe(platforms)
+
+
+def _source_networks(media: MediaFullInfo) -> list[SchedulePlatform]:
+    return list(media._source_networks or [])
+
+
+def _merge_networks(media: MediaFullInfo, existing: ManagedMediaProfile | None) -> list[SchedulePlatform]:
+    if media.media_type != MediaType.tv:
+        return []
+    networks = _airing_networks(media)
+    return networks or _source_networks(media) or (list(existing.networks) if existing else [])
+
+
+def _merge_online_platforms(media: MediaFullInfo, existing: ManagedMediaProfile | None) -> list[SchedulePlatform]:
+    schedule_platforms = _schedule_platforms(media)
+    if media.media_type == MediaType.movie:
+        return schedule_platforms or (list(existing.online_platforms) if existing else [])
+    network_keys = {_platform_key(platform) for platform in _merge_networks(media, existing)}
+    online_platforms = [
+        platform
+        for platform in schedule_platforms
+        if _platform_key(platform) not in network_keys
+    ]
+    return SchedulePlatformService().dedupe(online_platforms) or (list(existing.online_platforms) if existing else [])
 
 
 def _merge_seasons(media: MediaFullInfo, existing: ManagedMediaProfile | None) -> list:
@@ -139,7 +176,7 @@ def build_profile_from_media(
         tv_release_date=media.tv_release_date or model_field_value(existing, "tv_release_date"),
         release_dates=list(media.release_dates or []) or model_field_list(existing, "release_dates"),
         networks=_merge_networks(media, existing),
-        online_platforms=list(media.online_platforms or []) or (list(existing.online_platforms) if existing else []),
+        online_platforms=_merge_online_platforms(media, existing),
         airings=_merge_airings(media, existing),
         is_active=is_active,
         last_seen_at=now,

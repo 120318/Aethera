@@ -16,7 +16,7 @@ class ScheduleAiringService:
                 ScheduleAiring(
                     date=summary.digital_release_date,
                     kind="movie_digital_release",
-                    platforms=summary.online_platforms,
+                    platforms=summary.platforms,
                 )
             )
         if summary.physical_release_date:

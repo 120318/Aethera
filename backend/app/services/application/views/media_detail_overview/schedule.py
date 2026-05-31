@@ -9,24 +9,33 @@ from app.services.domain.media import media_service
 
 
 class MediaDetailOverviewScheduleMixin:
+    def _schedule_with_vendor_links(self, schedule: MediaScheduleSummary, media: MediaFullInfo) -> MediaScheduleSummary:
+        return media_service.apply_schedule_vendor_links(schedule, media)
+
     async def _resolve_schedule_summary(self, media: MediaFullInfo) -> MediaScheduleSummary:
         if media.media_type == MediaType.tv and media.season_number:
-            season_schedule = self._resolve_tv_season_schedule_from_cache(media)
+            schedule = self._schedule_with_vendor_links(media.schedule, media) if media.schedule else None
+            platforms = list(schedule.platforms) if schedule else []
+            season_schedule = self._resolve_tv_season_schedule_from_cache(media, platforms)
             if season_schedule:
                 return season_schedule
-            if media.schedule and self._schedule_matches_season(media.schedule, media.season_number):
-                return self._with_resolved_online_platforms(media.schedule, media)
+            if schedule and self._schedule_matches_season(schedule, media.season_number):
+                return schedule
             return MediaScheduleSummary(
                 media_type=media.media_type,
                 first_air_date=self._season_first_air_date(media),
-                networks=list(media.schedule.networks if media.schedule else media.networks),
-                online_platforms=self._resolve_online_platforms(media),
+                platforms=platforms,
             )
         if media.schedule:
-            return self._with_resolved_online_platforms(media.schedule, media)
-        return MediaScheduleSummary(media_type=media.media_type)
+            return self._schedule_with_vendor_links(media.schedule, media)
+        schedule = await media_service.build_schedule_summary_for_media(media)
+        return schedule
 
-    def _resolve_tv_season_schedule_from_cache(self, media: MediaFullInfo) -> MediaScheduleSummary | None:
+    def _resolve_tv_season_schedule_from_cache(
+        self,
+        media: MediaFullInfo,
+        platforms: list[SchedulePlatform],
+    ) -> MediaScheduleSummary | None:
         season_number = media.season_number
         if not season_number:
             return None
@@ -63,25 +72,11 @@ class MediaDetailOverviewScheduleMixin:
             media_type=media.media_type,
             status_label=status_label,
             first_air_date=self._season_first_air_date(media) or season_airings[0].date,
-            networks=list(media.schedule.networks if media.schedule else media.networks),
-            online_platforms=self._resolve_online_platforms(media),
+            platforms=list(platforms),
             aired_episode_count=len(aired),
             latest_aired_episode=self._airing_to_schedule_episode(latest_aired),
             next_episode_to_air=self._airing_to_schedule_episode(next_episode),
         )
-
-    def _resolve_online_platforms(self, media: MediaFullInfo) -> list[SchedulePlatform]:
-        base_media = media
-        if media.schedule:
-            base_media = media.model_copy(update={"online_platforms": list(media.schedule.online_platforms)})
-        return media_service.resolve_schedule_online_platforms(base_media)
-
-    def _with_resolved_online_platforms(
-        self,
-        schedule: MediaScheduleSummary,
-        media: MediaFullInfo,
-    ) -> MediaScheduleSummary:
-        return schedule.model_copy(update={"online_platforms": self._resolve_online_platforms(media)})
 
     def _schedule_matches_season(self, schedule: MediaScheduleSummary, season_number: int) -> bool:
         schedule_episodes: list[EpisodeInfo | None] = [

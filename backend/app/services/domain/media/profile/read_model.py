@@ -7,6 +7,7 @@ from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleEpisode
 from app.schemas.exception import MediaNotFoundException
 from app.schemas.media_id import MediaID
 from app.services.domain.media.profile.access import model_field_list, model_field_value
+from app.services.domain.media.schedule.platforms import SchedulePlatformService
 
 logger = logging.getLogger("app.services.media")
 
@@ -116,8 +117,6 @@ class MediaProfileReadModel:
             physical_release_date=model_field_value(profile, "physical_release_date"),
             tv_release_date=model_field_value(profile, "tv_release_date"),
             release_dates=model_field_list(profile, "release_dates"),
-            networks=list(profile.networks),
-            online_platforms=list(profile.online_platforms),
             schedule=self._profile_schedule(profile),
             airings=list(profile.airings),
             status=profile.status,
@@ -151,6 +150,7 @@ class MediaProfileReadModel:
         )
 
     def _profile_schedule(self, profile: ManagedMediaProfile) -> MediaScheduleSummary | None:
+        platform_service = SchedulePlatformService()
         if profile.media_type == MediaType.movie:
             if (
                 not profile.theatrical_release_date
@@ -168,7 +168,7 @@ class MediaProfileReadModel:
                 physical_release_date=model_field_value(profile, "physical_release_date"),
                 tv_release_date=model_field_value(profile, "tv_release_date"),
                 release_dates=model_field_list(profile, "release_dates"),
-                online_platforms=list(profile.online_platforms),
+                platforms=platform_service.dedupe(list(profile.online_platforms)),
             )
         if profile.media_type == MediaType.tv:
             if (
@@ -184,8 +184,7 @@ class MediaProfileReadModel:
                 media_type=MediaType.tv,
                 status_label=profile.status_label,
                 first_air_date=profile.first_air_date or profile.release_date,
-                networks=list(profile.networks),
-                online_platforms=list(profile.online_platforms),
+                platforms=platform_service.merge(list(profile.networks), list(profile.online_platforms)),
                 aired_episode_count=profile.aired_episode_count,
                 latest_aired_episode=profile.latest_aired_episode,
                 next_episode_to_air=profile.next_episode_to_air,

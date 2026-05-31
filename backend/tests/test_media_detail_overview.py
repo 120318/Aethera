@@ -14,8 +14,9 @@ from app.schemas.domain.media_download_config import MediaDownloadConfig
 from app.schemas.domain.media import MediaFullInfo, MediaSeasonInfo
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.quality_profile import QualityProfile
-from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleAiring, ScheduleEpisode
+from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleAiring, ScheduleEpisode, SchedulePlatform
 from app.schemas.domain.subscription_filters import SubscriptionFilters, UpgradePolicy
+from app.schemas.domain.vendor import Vendor
 from app.schemas.media_id import MediaID
 
 
@@ -96,6 +97,34 @@ async def test_detail_overview_does_not_fetch_schedule_when_cache_has_no_schedul
     assert summary.media_type == MediaType.tv
     assert summary.aired_episode_count == 0
     fetch_schedule.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_detail_overview_enriches_cached_schedule_platform_urls():
+    media = MediaFullInfo(
+        media_id=MediaID.parse("douban:tv:36939912"),
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        douban_id="36939912",
+        season_number=1,
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[SchedulePlatform(id="tencent", name="Tencent Video", url="https://v.qq.com/")],
+        ),
+        vendors=[
+            Vendor(
+                id="qq",
+                name="Sample",
+                url="douban://douban.com/goToWXMiniProgram?path=preload_play/play/index?cid=mzc002007tp60ap&vid=w41025my54z&type=0&id=gh_fce17bb0518f",
+            )
+        ],
+    )
+
+    summary = await service._resolve_schedule_summary(media)
+
+    assert summary.platforms[0].name == "腾讯视频"
+    assert summary.platforms[0].url == "https://v.qq.com/x/cover/mzc002007tp60ap/w41025my54z.html"
 
 
 @pytest.mark.asyncio

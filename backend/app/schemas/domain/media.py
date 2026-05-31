@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from app.schemas.media_id import MediaID, MediaIDModel
 from app.schemas.domain.media_context import MediaCapabilities, MediaPrimarySource
@@ -135,6 +135,7 @@ class MediaExecutionSnapshot(MediaIdentity):
 
 class MediaFullInfo(MediaIdentity):
     model_config = ConfigDict(from_attributes=True, extra="ignore")
+    _source_networks: List[SchedulePlatform] = PrivateAttr(default_factory=list)
 
     media_id: MediaID
     original_title: Optional[str] = None
@@ -181,8 +182,6 @@ class MediaFullInfo(MediaIdentity):
     physical_release_date: Optional[str] = None
     tv_release_date: Optional[str] = None
     release_dates: List[MovieReleaseDateDetail] = Field(default_factory=list)
-    networks: List[SchedulePlatform] = Field(default_factory=list)
-    online_platforms: List[SchedulePlatform] = Field(default_factory=list)
     schedule: Optional[MediaScheduleSummary] = None
     airings: List[ScheduleAiring] = Field(default_factory=list)
     status: Optional[str] = None
