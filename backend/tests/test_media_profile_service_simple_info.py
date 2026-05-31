@@ -154,6 +154,40 @@ def test_build_profile_from_media_persists_first_detail_schedule_snapshot():
     assert profile.schedule_updated_at is not None
 
 
+def test_build_profile_from_media_preserves_source_networks_without_airings():
+    media_id = MediaID.parse("tmdb:tv:273129")
+    network = SchedulePlatform(id="network-1", name="Network One")
+    online = SchedulePlatform(id="stream-1", name="Stream One")
+    media = MediaFullInfo(
+        media_id=media_id,
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=273129,
+        season_number=1,
+        schedule=MediaScheduleSummary(
+            media_type=MediaType.tv,
+            platforms=[network, online],
+        ),
+        primary_metadata_source="tmdb",
+    )
+    media._source_networks = [network]
+
+    profile = build_profile_from_media(
+        media,
+        existing=None,
+        is_active=False,
+        episodes_count=15,
+    )
+
+    assert profile.networks == [network]
+    assert profile.online_platforms == [online]
+    payload = media.model_dump(mode="json")
+    assert "networks" not in payload
+    assert "online_platforms" not in payload
+    assert "_source_networks" not in payload
+
+
 def test_profile_read_model_keeps_scope_douban_rating_source_without_score():
     service = MediaProfileService(provider_service=None, schedule_service=MediaScheduleService())
     media_id = MediaID.parse("tmdb:tv:233295")

@@ -438,7 +438,7 @@ def build_tmdb_media_info(
         seasons=seasons,
         selected_season=selected_season,
     )
-    return MediaFullInfo(
+    media = MediaFullInfo(
         media_id=mid,
         title=details.title,
         original_title=details.original_title,
@@ -489,6 +489,8 @@ def build_tmdb_media_info(
         status=details.status,
         original_language=details.original_language,
     )
+    media._source_networks = list(networks)
+    return media
 
 
 def pick_best_tmdb_search_id(title: str, results: list[ProviderSearchItem]) -> int | None:

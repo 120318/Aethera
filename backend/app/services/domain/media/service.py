@@ -91,6 +91,12 @@ class MediaService:
     async def build_schedule_summary_for_media(self, media: MediaFullInfo) -> MediaScheduleSummary:
         return await self.schedule_service.build_schedule_summary_for_media(media)
 
+    def apply_schedule_vendor_links(self, schedule: MediaScheduleSummary, media: MediaFullInfo) -> MediaScheduleSummary:
+        platforms = self.schedule_service.platforms.dedupe(
+            self.schedule_service.platforms.apply_vendor_links(list(schedule.platforms), list(media.vendors or []))
+        )
+        return schedule.model_copy(update={"platforms": platforms})
+
     async def build_schedule_bundle(self, media: MediaFullInfo) -> tuple[MediaScheduleSummary, list[ScheduleAiring]]:
         return await self.schedule_service.build_schedule_bundle(media)
 

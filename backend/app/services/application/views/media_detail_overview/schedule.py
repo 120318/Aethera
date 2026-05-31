@@ -9,21 +9,25 @@ from app.services.domain.media import media_service
 
 
 class MediaDetailOverviewScheduleMixin:
+    def _schedule_with_vendor_links(self, schedule: MediaScheduleSummary, media: MediaFullInfo) -> MediaScheduleSummary:
+        return media_service.apply_schedule_vendor_links(schedule, media)
+
     async def _resolve_schedule_summary(self, media: MediaFullInfo) -> MediaScheduleSummary:
         if media.media_type == MediaType.tv and media.season_number:
-            platforms = list(media.schedule.platforms) if media.schedule else []
+            schedule = self._schedule_with_vendor_links(media.schedule, media) if media.schedule else None
+            platforms = list(schedule.platforms) if schedule else []
             season_schedule = self._resolve_tv_season_schedule_from_cache(media, platforms)
             if season_schedule:
                 return season_schedule
-            if media.schedule and self._schedule_matches_season(media.schedule, media.season_number):
-                return media.schedule
+            if schedule and self._schedule_matches_season(schedule, media.season_number):
+                return schedule
             return MediaScheduleSummary(
                 media_type=media.media_type,
                 first_air_date=self._season_first_air_date(media),
                 platforms=platforms,
             )
         if media.schedule:
-            return media.schedule
+            return self._schedule_with_vendor_links(media.schedule, media)
         schedule = await media_service.build_schedule_summary_for_media(media)
         return schedule
 

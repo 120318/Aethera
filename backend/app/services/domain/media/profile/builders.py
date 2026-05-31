@@ -64,11 +64,15 @@ def _airing_networks(media: MediaFullInfo) -> list[SchedulePlatform]:
     return SchedulePlatformService().dedupe(platforms)
 
 
+def _source_networks(media: MediaFullInfo) -> list[SchedulePlatform]:
+    return list(media._source_networks or [])
+
+
 def _merge_networks(media: MediaFullInfo, existing: ManagedMediaProfile | None) -> list[SchedulePlatform]:
     if media.media_type != MediaType.tv:
         return []
     networks = _airing_networks(media)
-    return networks or (list(existing.networks) if existing else [])
+    return networks or _source_networks(media) or (list(existing.networks) if existing else [])
 
 
 def _merge_online_platforms(media: MediaFullInfo, existing: ManagedMediaProfile | None) -> list[SchedulePlatform]:
