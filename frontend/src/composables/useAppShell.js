@@ -3,7 +3,7 @@ import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
-import { useAlertCenterStore } from '@/stores/alert-center'
+import { useNotificationCenterStore } from '@/stores/notification-center'
 import { useI18n } from 'vue-i18n'
 
 const ACTIVE_OPERATIONS_POLL_MS = 5000
@@ -14,23 +14,24 @@ export function useAppShell() {
   const route = useRoute()
   const authStore = useAuthStore()
   const themeStore = useThemeStore()
-  const alertCenterStore = useAlertCenterStore()
+  const notificationCenterStore = useNotificationCenterStore()
   const { t } = useI18n()
-  const { activityTick, badgeCount, bellState, pollFast, summary } = storeToRefs(alertCenterStore)
+  const { activityTick, badgeCount, bellState, pollFast, summary } = storeToRefs(notificationCenterStore)
 
   const headerSearchQuery = ref('')
-  const displayAlertCount = computed(() => badgeCount.value)
-  const alertCountButtonClass = computed(() => {
-    const label = displayAlertCount.value > 99 ? '99+' : String(displayAlertCount.value)
+  const displayNotificationCount = computed(() => badgeCount.value)
+  const notificationCountButtonClass = computed(() => {
+    const label = displayNotificationCount.value > 99 ? '99+' : String(displayNotificationCount.value)
     return label.length === 1 ? 'ui-task-count-button-single' : 'ui-task-count-button-multi'
   })
-  const alertButtonPt = computed(() => ({
+  const notificationButtonPt = computed(() => ({
     root: {
       class: [
-        'ui-alert-button shrink-0',
-        alertCountButtonClass.value,
-        bellState.value === 'error' ? 'ui-alert-button-error' : '',
-        bellState.value === 'running' ? 'ui-alert-button-running' : '',
+        'ui-notification-button shrink-0',
+        notificationCountButtonClass.value,
+        bellState.value === 'error' ? 'ui-notification-button-error' : '',
+        bellState.value === 'warning' ? 'ui-notification-button-error' : '',
+        bellState.value === 'running' ? 'ui-notification-button-running' : '',
       ],
     },
     icon: {
@@ -40,19 +41,22 @@ export function useAppShell() {
       class: 'leading-none',
     },
   }))
-  const alertCenterTooltip = computed(() => {
+  const notificationCenterTooltip = computed(() => {
     if (bellState.value === 'error') {
-      return t('alertCenter.tooltipError', { count: summary.value.unacknowledged_error_count || 0 })
+      return t('notificationCenter.tooltipError', { count: summary.value.error_event_count || 0 })
+    }
+    if (bellState.value === 'warning') {
+      return t('notificationCenter.tooltipWarning', { count: summary.value.warning_event_count || 0 })
     }
     if (bellState.value === 'running') {
-      return t('alertCenter.tooltipRunning', { count: summary.value.active_action_count || 0 })
+      return t('notificationCenter.tooltipRunning', { count: summary.value.active_action_count || 0 })
     }
-    return t('alertCenter.tooltipIdle')
+    return t('notificationCenter.tooltipIdle')
   })
 
   const isAuthPage = computed(() => route.path === '/login' || route.path === '/setup')
   const isHomePage = computed(() => route.path === '/discover')
-  const shouldPollAlertCenter = computed(() => authStore.isAuthenticated && !isAuthPage.value)
+  const shouldPollNotificationCenter = computed(() => authStore.isAuthenticated && !isAuthPage.value)
   const mainClass = computed(() => {
     if (isAuthPage.value) return 'flex-1 w-full flex justify-center'
     return 'flex-1 w-full max-w-layout mx-auto px-container py-page'
@@ -70,8 +74,8 @@ export function useAppShell() {
     }
   })
 
-  let alertPollTimer = null
-  let alertPollInFlight = false
+  let notificationPollTimer = null
+  let notificationPollInFlight = false
 
   function handleHeaderSearch(value) {
     const query = String(value || '').trim()
@@ -84,84 +88,84 @@ export function useAppShell() {
     })
   }
 
-  function stopAlertPolling() {
-    if (!alertPollTimer) return
-    window.clearTimeout(alertPollTimer)
-    alertPollTimer = null
+  function stopNotificationPolling() {
+    if (!notificationPollTimer) return
+    window.clearTimeout(notificationPollTimer)
+    notificationPollTimer = null
   }
 
-  function nextAlertPollDelay() {
+  function nextNotificationPollDelay() {
     return pollFast.value ? ACTIVE_OPERATIONS_POLL_MS : IDLE_OPERATIONS_POLL_MS
   }
 
-  function scheduleAlertPolling() {
-    stopAlertPolling()
-    if (!shouldPollAlertCenter.value || document.hidden) return
-    alertPollTimer = window.setTimeout(() => {
-      void refreshAlertCenterPoll()
-    }, nextAlertPollDelay())
+  function scheduleNotificationPolling() {
+    stopNotificationPolling()
+    if (!shouldPollNotificationCenter.value || document.hidden) return
+    notificationPollTimer = window.setTimeout(() => {
+      void refreshNotificationCenterPoll()
+    }, nextNotificationPollDelay())
   }
 
-  async function refreshAlertCenterPoll() {
-    if (alertPollInFlight || !shouldPollAlertCenter.value || document.hidden) return
-    alertPollInFlight = true
+  async function refreshNotificationCenterPoll() {
+    if (notificationPollInFlight || !shouldPollNotificationCenter.value || document.hidden) return
+    notificationPollInFlight = true
     try {
-      await alertCenterStore.refreshCenter()
+      await notificationCenterStore.refreshCenter()
     } finally {
-      alertPollInFlight = false
-      scheduleAlertPolling()
+      notificationPollInFlight = false
+      scheduleNotificationPolling()
     }
   }
 
-  function startAlertPolling() {
-    if (alertPollTimer || alertPollInFlight || !shouldPollAlertCenter.value || document.hidden) return
-    void refreshAlertCenterPoll()
+  function startNotificationPolling() {
+    if (notificationPollTimer || notificationPollInFlight || !shouldPollNotificationCenter.value || document.hidden) return
+    void refreshNotificationCenterPoll()
   }
 
   function handleVisibilityChange() {
     if (document.hidden) {
-      stopAlertPolling()
+      stopNotificationPolling()
       return
     }
-    startAlertPolling()
+    startNotificationPolling()
   }
 
   onMounted(() => {
     themeStore.init()
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    startAlertPolling()
+    startNotificationPolling()
   })
 
   onUnmounted(() => {
     document.removeEventListener('visibilitychange', handleVisibilityChange)
-    stopAlertPolling()
+    stopNotificationPolling()
   })
 
-  watch(shouldPollAlertCenter, (enabled) => {
+  watch(shouldPollNotificationCenter, (enabled) => {
     if (enabled) {
-      startAlertPolling()
+      startNotificationPolling()
       return
     }
-    stopAlertPolling()
+    stopNotificationPolling()
   }, { immediate: true })
 
   watch(activityTick, () => {
-    if (!shouldPollAlertCenter.value || document.hidden) return
-    stopAlertPolling()
-    void refreshAlertCenterPoll()
+    if (!shouldPollNotificationCenter.value || document.hidden) return
+    stopNotificationPolling()
+    void refreshNotificationCenterPoll()
   })
 
   return {
     route,
     headerSearchQuery,
-    displayAlertCount,
-    alertButtonPt,
-    alertCenterTooltip,
+    displayNotificationCount,
+    notificationButtonPt,
+    notificationCenterTooltip,
     isAuthPage,
     isHomePage,
     mainClass,
     mainStyle,
-    alertCenterStore,
+    notificationCenterStore,
     handleHeaderSearch,
   }
 }

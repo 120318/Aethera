@@ -279,10 +279,37 @@ async def _select_video_file_resources(
         if not best_resource or not best_known_covered or best_rank is None:
             break
         if best_resource.attrs.episodes:
-            selected_items.append((best_resource, best_known_covered, None))
-            needed_episodes -= best_known_covered
-            candidates.remove(best_resource)
-            logger.debug("Selected known resource: title=%s episodes=%s", best_resource.resources.title, sorted(best_known_covered))
+            try:
+                payload = await fetch_torrent_payload(best_resource.resources)
+            except ValueError as exc:
+                logger.warning("Failed to fetch resource torrent payload: title=%s error=%s", best_resource.resources.title, exc)
+                candidates.remove(best_resource)
+                continue
+            original_best_resource = best_resource
+            best_resource = _resource_with_metadata_attrs(original_best_resource, payload)
+            if not match_filters(best_resource, filters, quality_profile):
+                candidates.remove(original_best_resource)
+                continue
+            real_episodes = payload.metadata.get_episodes()
+            best_upgrade_score = compute_quality_upgrade_score(best_resource, quality_profile)
+            real_covered = {
+                ep
+                for ep in real_episodes & needed_episodes
+                if not required_scores or best_upgrade_score >= (required_scores[ep] if ep in required_scores else -10**9)
+            }
+            if real_covered:
+                selected_items.append((best_resource, real_covered, payload))
+                needed_episodes -= real_covered
+                logger.debug("Selected known resource: title=%s episodes=%s", best_resource.resources.title, sorted(real_covered))
+            else:
+                logger.debug(
+                    "Discarded known resource after payload verification: title=%s expected=%s actual=%s needed=%s",
+                    best_resource.resources.title,
+                    sorted(best_known_covered),
+                    sorted(real_episodes),
+                    sorted(needed_episodes),
+                )
+            candidates.remove(original_best_resource)
             continue
         logger.debug(
             "Lazy fetching resource candidate: title=%s seeders=%s",
@@ -385,6 +412,7 @@ async def _select_disc_package_resources(
 
 
 def _resource_with_metadata_attrs(resource: Resource, payload: TorrentPayload) -> Resource:
-    if not payload.metadata.attrs:
+    attrs = payload.metadata.attrs
+    if not attrs:
         return resource
-    return resource.model_copy(update={"attrs": payload.metadata.attrs})
+    return resource.model_copy(update={"attrs": attrs})

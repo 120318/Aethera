@@ -424,6 +424,15 @@ class SubscriptionCommandService:
             logger.warning("Subscription profile activation failed: media=%s error=%s", state.media_id, exc)
 
     async def _emit_event(self, change: SubscriptionChange, intent: SubscriptionLifecycleEventIntent) -> None:
+        if intent.type in {
+            SubscriptionLifecycleEventType.SUBSCRIPTION_ENABLED,
+            SubscriptionLifecycleEventType.SUBSCRIPTION_DISABLED,
+            SubscriptionLifecycleEventType.FOLLOW_ENABLED,
+            SubscriptionLifecycleEventType.FOLLOW_DISABLED,
+        }:
+            return
+        if intent.type == SubscriptionLifecycleEventType.SUBSCRIPTION_ENDED and intent.trigger == SubscriptionEndTrigger.MANUAL:
+            return
         current = change.current or change.previous
         if current is None:
             return
@@ -438,7 +447,6 @@ class SubscriptionCommandService:
         if intent.type == SubscriptionLifecycleEventType.SUBSCRIPTION_ENDED:
             reason = intent.reason or SubscriptionEndReason.MANUAL
             event_type = {
-                SubscriptionEndReason.MANUAL: EventTypes.SUBSCRIPTION_ENDED_MANUAL,
                 SubscriptionEndReason.MOVIE_LIBRARY_COMPLETED: EventTypes.SUBSCRIPTION_ENDED_MOVIE_COMPLETED,
                 SubscriptionEndReason.MOVIE_DOWNLOADING_COMPLETED: EventTypes.SUBSCRIPTION_ENDED_MOVIE_DOWNLOADING_COMPLETED,
                 SubscriptionEndReason.MOVIE_TARGET_COMPLETED: EventTypes.SUBSCRIPTION_ENDED_MOVIE_TARGET_COMPLETED,
@@ -446,19 +454,9 @@ class SubscriptionCommandService:
                 SubscriptionEndReason.TV_UPGRADE_COMPLETED: EventTypes.SUBSCRIPTION_ENDED_TV_UPGRADE_COMPLETED,
                 SubscriptionEndReason.TV_TARGET_COMPLETED: EventTypes.SUBSCRIPTION_ENDED_TV_TARGET_COMPLETED,
             }[reason]
-            actor = EventActor.user if intent.trigger == SubscriptionEndTrigger.MANUAL else EventActor.system
-        elif intent.type == SubscriptionLifecycleEventType.SUBSCRIPTION_ENABLED:
-            event_type = EventTypes.SUBSCRIPTION_ENABLED
-            actor = EventActor.user
-        elif intent.type == SubscriptionLifecycleEventType.SUBSCRIPTION_DISABLED:
-            event_type = EventTypes.SUBSCRIPTION_DISABLED
-            actor = EventActor.user
-        elif intent.type == SubscriptionLifecycleEventType.FOLLOW_ENABLED:
-            event_type = EventTypes.FOLLOW_ENABLED
-            actor = EventActor.user
+            actor = EventActor.system
         else:
-            event_type = EventTypes.FOLLOW_DISABLED
-            actor = EventActor.user
+            return
         event_service.emit_media(
             MediaEventCreate(
                 type=event_type,

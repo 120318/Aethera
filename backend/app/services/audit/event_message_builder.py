@@ -75,19 +75,6 @@ def _format_path_name(path: str | None) -> str | None:
     return Path(normalized).name or normalized
 
 
-def build_download_started_message(task: TaskData, downloader_name: str | None = None) -> str:
-    title = _display_name(task.context.resource_title, task.context.media.title)
-    total_files = len(task.metadata.files) if task.metadata and task.metadata.files else None
-    hash_prefix = _format_hash_prefix(task.torrent_hash)
-    details = [
-        f"site {task.context.indexer}" if task.context.indexer else "",
-        f"downloader {downloader_name}" if downloader_name else "",
-        _format_file_selection(task.context.selected_files, total_files),
-        f"hash {hash_prefix}" if hash_prefix else "",
-    ]
-    return f'Download started for "{title}"{_join_details(details)}'
-
-
 def build_download_completed_message(task: TaskData, downloader_name: str | None = None) -> str:
     title = _display_name(
         task.context.resource_title,
@@ -163,49 +150,6 @@ def build_follow_digital_released_message(media: MediaIdentity, air_date: str | 
 def build_follow_physical_released_message(media: MediaIdentity, air_date: str | None) -> str:
     details = [f"date {air_date}" if air_date else ""]
     return f"Physical release is available{_join_details(details)}"
-
-
-def build_subscription_run_completed_message(*, checked: int, added: int) -> str:
-    return f"Subscription check completed ({checked} candidates matched, {added} download tasks created)"
-
-
-def build_subscription_run_failed_message(reason: str) -> str:
-    normalized = reason.strip()
-    if not normalized:
-        return "Subscription run failed"
-    if normalized.startswith("Subscription run failed"):
-        return normalized
-    return f"Subscription run failed: {normalized}"
-
-
-def build_pilot_episode_queued_message(
-    media: MediaIdentity,
-    *,
-    directory_id: str,
-    sites: list[str] | None = None,
-) -> str:
-    details = [
-        f"directory {directory_id}" if directory_id else "",
-        f"{len(sites)} sites" if sites else "default sites",
-    ]
-    action_label = "download task" if media.media_id.media_type.value == "movie" else "pilot task"
-    return f"{action_label.capitalize()} submitted{_join_details(details)}"
-
-
-def build_subscription_enabled_message(media: MediaIdentity) -> str:
-    return "Subscription auto-download enabled"
-
-
-def build_subscription_disabled_message(media: MediaIdentity) -> str:
-    return "Subscription auto-download disabled"
-
-
-def build_follow_enabled_message(media: MediaIdentity) -> str:
-    return "Follow reminder enabled"
-
-
-def build_follow_disabled_message(media: MediaIdentity) -> str:
-    return "Follow reminder disabled"
 
 
 def build_subscription_ended_message(reason: SubscriptionEndReason) -> str:

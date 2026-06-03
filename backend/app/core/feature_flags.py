@@ -14,7 +14,3 @@ def env_flag_enabled(name: str, *, default: bool = False) -> bool:
 
 def oidc_auth_enabled() -> bool:
     return env_flag_enabled("AETHERA_EXPERIMENTAL_OIDC_AUTH")
-
-
-def telegram_notifications_enabled() -> bool:
-    return env_flag_enabled("AETHERA_EXPERIMENTAL_TELEGRAM_NOTIFICATIONS")

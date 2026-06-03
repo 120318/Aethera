@@ -130,6 +130,10 @@ Fixed rules:
 - Do not duplicate semantics in `meta` when a top-level field already exists.
 - Use explicit Pydantic snapshot models for `meta` by default.
 - Do not put full domain objects, repository records, or ORM objects into `meta`.
+- Action and command records own operation lifecycle: user clicks, enqueue, queued, running, cancellation, manual setting toggles, and operation success for a user-initiated command.
+- Events own subscribable business facts: automatic domain outcomes, externally interesting completions, warnings, failures, and facts that another workflow must consume.
+- Do not emit events for operation-only lifecycle markers such as "started", "queued", manual enable/disable, or storage-change success when an action/command record already carries the state.
+- Telegram and other notification channels consume events only; if a record would be strange as an external notification, it usually belongs in action/command history instead of the event stream.
 - Ordinary events and media events are modeled and emitted separately.
 - Events with `media_id` must use the media-event entrypoint. Do not keep reusing generic `emit()`.
 - A media event that carries `media_id` must also carry complete `MediaIdentity`, not fragmented fields.

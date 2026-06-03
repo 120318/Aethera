@@ -2,9 +2,8 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.api.deps import OptionalMediaIDParam
-from app.schemas.constants.event_types import EventTypes
 from app.schemas.media_id import MediaID
-from app.schemas.domain.event import Event, EventLevel, EventSource, EventType
+from app.schemas.domain.event import Event, EventCenterResponse, EventLevel, EventSource, EventType
 from app.services.audit.event_service import event_service
 
 router = APIRouter()
@@ -19,6 +18,11 @@ class EventFilterOptionsResponse(BaseModel):
     levels: list[str]
     types: list[str]
     sources: list[str]
+
+
+class EventAcknowledgeResponse(BaseModel):
+    ok: bool
+    acknowledged_count: int = 0
 
 
 @router.get("/", response_model=EventListResponse)
@@ -53,6 +57,22 @@ async def list_events(
     return EventListResponse(total=total, items=items)
 
 
+@router.get("/center", response_model=EventCenterResponse)
+async def get_event_center() -> EventCenterResponse:
+    return event_service.get_center()
+
+
+@router.post("/center/acknowledge-all", response_model=EventAcknowledgeResponse)
+async def acknowledge_event_center() -> EventAcknowledgeResponse:
+    return EventAcknowledgeResponse(ok=True, acknowledged_count=event_service.acknowledge_attention_events())
+
+
+@router.post("/{event_id}/acknowledge", response_model=EventAcknowledgeResponse)
+async def acknowledge_event(event_id: str) -> EventAcknowledgeResponse:
+    acknowledged = event_service.acknowledge_event(event_id)
+    return EventAcknowledgeResponse(ok=acknowledged, acknowledged_count=1 if acknowledged else 0)
+
+
 @router.get("/filter-options", response_model=EventFilterOptionsResponse)
 async def get_event_filter_options(
     media_id: MediaID | None = Depends(OptionalMediaIDParam),
@@ -65,31 +85,7 @@ async def get_event_filter_options(
     _ = (media_id, season_number, task_id, subscription_id, action_id, keyword)
     return EventFilterOptionsResponse(
         levels=[level.value for level in EventLevel],
-        types=[
-            EventTypes.DOWNLOAD_STARTED.value,
-            EventTypes.DOWNLOAD_COMPLETED.value,
-            EventTypes.DOWNLOAD_FAILED.value,
-            EventTypes.MEDIA_IMPORT_STARTED.value,
-            EventTypes.MEDIA_IMPORT_COMPLETED.value,
-            EventTypes.MEDIA_IMPORT_FAILED.value,
-            EventTypes.MEDIA_SERVER_SYNC_STARTED.value,
-            EventTypes.MEDIA_SERVER_SYNC_COMPLETED.value,
-            EventTypes.MEDIA_SERVER_SYNC_FAILED.value,
-            EventTypes.DANMU_GENERATE_STARTED.value,
-            EventTypes.DANMU_GENERATE_COMPLETED.value,
-            EventTypes.DANMU_GENERATE_FAILED.value,
-            EventTypes.MEDIA_DELETED.value,
-            EventTypes.SUBSCRIPTION_ENABLED.value,
-            EventTypes.SUBSCRIPTION_DISABLED.value,
-            EventTypes.FOLLOW_ENABLED.value,
-            EventTypes.FOLLOW_DISABLED.value,
-            EventTypes.FOLLOW_RELEASED.value,
-            EventTypes.FOLLOW_DIGITAL_RELEASED.value,
-            EventTypes.FOLLOW_PHYSICAL_RELEASED.value,
-            EventTypes.SUBSCRIPTION_RUN_COMPLETED.value,
-            EventTypes.SUBSCRIPTION_RUN_FAILED.value,
-            EventTypes.PILOT_EPISODE_QUEUED.value,
-        ],
+        types=[event_type.value for event_type in EventType],
         sources=[source.value for source in EventSource],
     )
 

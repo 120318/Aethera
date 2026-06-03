@@ -3,7 +3,15 @@ from uuid import uuid4
 
 import pytest
 
-from app.schemas.config import DownloadConfig, MovieNamingTemplateConfig, QBittorrentConfig, TVNamingTemplateConfig
+from app.api.v1.config.read_tabs import SystemTabAuthResponse, SystemTabResponse
+from app.schemas.config import (
+    DownloadConfig,
+    LoggingConfig,
+    MovieNamingTemplateConfig,
+    QBittorrentConfig,
+    SchedulerConfig,
+    TVNamingTemplateConfig,
+)
 from app.schemas.domain.filter_config import FilterConfig
 from app.schemas.domain.quality_profile import QualityProfile
 from app.schemas.domain.subscription_filters import SubscriptionFilters
@@ -240,6 +248,20 @@ def test_update_download_config_preserves_existing_default_downloader():
 
     assert service.get_default_downloader_id() == downloader_id
     assert service.get_system_tab_config()["download"].default_downloader_id == downloader_id
+
+
+def test_system_tab_response_preserves_system_identity_fields():
+    response = SystemTabResponse(
+        locale="en-US",
+        public_base_url="https://ae.example.com",
+        auth=SystemTabAuthResponse(),
+        download=DownloadConfig(default_tag="Aethera"),
+        logging=LoggingConfig(),
+        scheduler=SchedulerConfig(),
+    )
+
+    assert response.locale == "en-US"
+    assert response.public_base_url == "https://ae.example.com"
 
 
 def test_base_config_uses_db_sections_without_yaml_fallback():

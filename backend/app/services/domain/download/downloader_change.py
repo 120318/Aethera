@@ -14,8 +14,6 @@ from app.services.domain.library.service import library_service
 from app.services.domain.download.downloader_change_side_effects import (
     create_migration_action,
     emit_change_failed,
-    emit_change_started,
-    emit_change_succeeded,
     mark_migration_action_completed,
 )
 from app.services.domain.download.downloader_change_file_ops import (
@@ -192,7 +190,6 @@ class TaskDownloaderChangeService:
         task.status = TaskStatus.MIGRATING
         task.updated_at = datetime.now()
         await self._repo.update_task(task)
-        emit_change_started(task, migration)
         preview.ok = True
         return preview
 
@@ -290,7 +287,6 @@ class TaskDownloaderChangeService:
                 if self._should_start_target_after_finalize(migration.previous_task_status):
                     if not await target_client.start_torrents([migration.torrent_hash]):
                         logger.warning("Failed to start target torrent after storage migration: task_id=%s hash=%s", task.id, migration.torrent_hash)
-                emit_change_succeeded(task, migration)
                 return True
 
     def _load_task_client(self, task: TaskData) -> DownloadClient | None:

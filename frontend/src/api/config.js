@@ -49,7 +49,7 @@ export const updateMediaServer = (id, payload) => http.put(`/api/v1/config/media
 export const deleteMediaServer = (id) => http.delete(`/api/v1/config/media-servers/${id}`)
 export const setDefaultMediaServerEntry = (id) => http.post(`/api/v1/config/media-servers/set-default/${id}`)
 export const clearDefaultMediaServer = () => http.post('/api/v1/config/media-servers/clear-default')
-export const testServiceConnection = (payload) => http.post('/api/v1/config/test-connection', payload)
+export const testServiceConnection = (payload, options = {}) => http.post('/api/v1/config/test-connection', payload, options)
 
 export const saveAddons = async (addons) => {
   const data = await http.post('/api/v1/config/addons', addons)

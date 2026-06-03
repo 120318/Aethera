@@ -52,7 +52,7 @@ def test_action_search_text_includes_rendered_command_message():
 
 
 def test_download_event_message_uses_resource_title():
-    event = MediaEventCreate(type=EventTypes.DOWNLOAD_STARTED, media=_media(), task_id="task-1")
+    event = MediaEventCreate(type=EventTypes.DOWNLOAD_COMPLETED, media=_media(), task_id="task-1")
     params = event_message_params(
         event,
         DownloadTaskEventMeta(
@@ -73,7 +73,7 @@ def test_download_event_message_uses_resource_title():
 
 
 def test_download_event_message_prefers_torrent_name_over_resource_title():
-    event = MediaEventCreate(type=EventTypes.DOWNLOAD_STARTED, media=_media(), task_id="task-1")
+    event = MediaEventCreate(type=EventTypes.DOWNLOAD_COMPLETED, media=_media(), task_id="task-1")
     params = event_message_params(
         event,
         DownloadTaskEventMeta(
@@ -113,7 +113,7 @@ def test_media_import_event_message_includes_first_file_name():
 
 
 def test_media_server_sync_message_includes_target_file_name():
-    event = MediaEventCreate(type=EventTypes.MEDIA_SERVER_SYNC_STARTED, media=_media(), task_id="task-1")
+    event = MediaEventCreate(type=EventTypes.MEDIA_SERVER_SYNC_COMPLETED, media=_media(), task_id="task-1")
     params = event_message_params(
         event,
         MediaServerSyncEventMeta(
@@ -130,7 +130,7 @@ def test_media_server_sync_message_includes_target_file_name():
 
 
 def test_danmu_event_message_includes_video_file_name():
-    event = MediaEventCreate(type=EventTypes.DANMU_GENERATE_STARTED, media=_media(), task_id="task-1")
+    event = MediaEventCreate(type=EventTypes.DANMU_GENERATE_COMPLETED, media=_media(), task_id="task-1")
     params = event_message_params(
         event,
         DanmuGenerateEventMeta(

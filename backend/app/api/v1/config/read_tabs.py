@@ -65,6 +65,8 @@ class SystemTabAuthResponse(BaseModel):
 
 
 class SystemTabResponse(BaseModel):
+    locale: str = "zh-CN"
+    public_base_url: str = ""
     auth: SystemTabAuthResponse
     download: DownloadConfig
     logging: LoggingConfig

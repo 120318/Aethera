@@ -18,6 +18,19 @@ from app.services.platform.domain_lock_service import domain_lock_service
 logger = logging.getLogger("app.services.download")
 
 
+def selected_task_episodes(task: TaskData) -> list[int]:
+    if not task.metadata or not task.metadata.files:
+        return []
+    selected = set(task.context.selected_files or []) if task.context and task.context.selected_files else None
+    episodes: set[int] = set()
+    for position, file_item in enumerate(task.metadata.files):
+        file_index = file_item.index if file_item.index is not None else position
+        if selected and file_index not in selected:
+            continue
+        episodes.update(file_item.get_episodes())
+    return sorted(episode for episode in episodes if episode > 0)
+
+
 class TaskRuntimeRepository(Protocol):
     async def find_by_id(self, task_id: str) -> TaskData | None: ...
 
@@ -205,8 +218,9 @@ class TaskRuntimeService:
                         resource_title=task.context.resource_title,
                         torrent_name=task.metadata.name if task.metadata else None,
                         torrent_hash=task.torrent_hash,
-                        progress=task.progress,
+                        progress=progress,
                         selected_files=list(task.context.selected_files or []),
+                        selected_episodes=selected_task_episodes(task),
                         total_files=len(task.metadata.files) if task.metadata and task.metadata.files else None,
                     ),
                 )

@@ -296,13 +296,7 @@ async def test_change_task_downloader_pauses_source_and_updates_task(monkeypatch
     assert repo.updated.downloader_id == "old"
     assert service._migration_repo.items[0].target_downloader_id == "new"
     assert service._migration_repo.items[0].action_id == f"storage-migration:{service._migration_repo.items[0].id}"
-    assert len(emitted_events) == 1
-    event, meta = emitted_events[0]
-    assert event.type == EventTypes.DOWNLOAD_TASK_STORAGE_CHANGE_STARTED
-    assert event.action_id == service._migration_repo.items[0].action_id
-    assert event.message_params["source_downloader_id"] == "old"
-    assert event.message_params["target_downloader_id"] == "new"
-    assert meta.task_id == "task-1"
+    assert emitted_events == []
 
     target_path.joinpath("Movie").touch()
     target_client.info.progress = 1.0
@@ -317,8 +311,7 @@ async def test_change_task_downloader_pauses_source_and_updates_task(monkeypatch
     assert source_client.deleted == [("abc", False)]
     assert service._migration_repo.items[0].status == TaskStorageMigrationStatus.FINALIZED
     assert action_updates == [("completed", service._migration_repo.items[0].action_id)]
-    assert emitted_events[-1][0].type == EventTypes.DOWNLOAD_TASK_STORAGE_CHANGED
-    assert emitted_events[-1][0].action_id == service._migration_repo.items[0].action_id
+    assert emitted_events == []
 
 
 @pytest.mark.asyncio

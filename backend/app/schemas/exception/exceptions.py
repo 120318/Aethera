@@ -35,11 +35,14 @@ class RequestParamException(AppException):
 
 
 class TestConnectionException(AppException):
-    def __init__(self, service_name: str):
+    def __init__(self, service_name: str, reason: str | None = None):
+        params = {"service": service_name}
+        if reason:
+            params["reason"] = reason
         super().__init__(
             code=10002,
-            message_key="backendErrors.testConnectionFailed",
-            params={"service": service_name},
+            message_key="backendErrors.testConnectionFailedWithReason" if reason else "backendErrors.testConnectionFailed",
+            params=params,
         )
 
 

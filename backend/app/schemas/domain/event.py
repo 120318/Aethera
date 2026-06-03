@@ -8,6 +8,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from app.schemas.media_id import MediaID
+from app.schemas.domain.action import ActionRecord
 from app.schemas.domain.media import MediaIdentity
 
 
@@ -28,42 +29,28 @@ class EventSource(str, Enum):
 
 
 class EventType(str, Enum):
-    DOWNLOAD_STARTED = "download.started"
     DOWNLOAD_COMPLETED = "download.completed"
     DOWNLOAD_FAILED = "download.failed"
-    DOWNLOAD_TASK_DOWNLOADER_CHANGED = "download.task.downloader_changed"
     DOWNLOAD_TASK_DOWNLOADER_CHANGE_FAILED = "download.task.downloader_change_failed"
-    DOWNLOAD_TASK_STORAGE_CHANGE_STARTED = "download.task.storage_change_started"
-    DOWNLOAD_TASK_STORAGE_CHANGED = "download.task.storage_changed"
     DOWNLOAD_TASK_STORAGE_CHANGE_FAILED = "download.task.storage_change_failed"
-    MEDIA_IMPORT_STARTED = "media.import.started"
     MEDIA_IMPORT_COMPLETED = "media.import.completed"
     MEDIA_IMPORT_FAILED = "media.import.failed"
-    MEDIA_SERVER_SYNC_STARTED = "media_server_sync.started"
     MEDIA_SERVER_SYNC_COMPLETED = "media_server_sync.completed"
     MEDIA_SERVER_SYNC_FAILED = "media_server_sync.failed"
-    DANMU_GENERATE_STARTED = "danmu.generate.started"
     DANMU_GENERATE_COMPLETED = "danmu.generate.completed"
     DANMU_GENERATE_FAILED = "danmu.generate.failed"
     MEDIA_DELETED = "media.deleted"
     LIBRARY_FILE_MISSING = "library.file.missing"
-    SUBSCRIPTION_ENABLED = "subscription.enabled"
-    SUBSCRIPTION_DISABLED = "subscription.disabled"
-    SUBSCRIPTION_ENDED_MANUAL = "subscription.ended.manual"
+    INDEXER_SITE_UNHEALTHY = "indexer.site.unhealthy"
     SUBSCRIPTION_ENDED_MOVIE_COMPLETED = "subscription.ended.movie_completed"
     SUBSCRIPTION_ENDED_MOVIE_DOWNLOADING_COMPLETED = "subscription.ended.movie_downloading_completed"
     SUBSCRIPTION_ENDED_MOVIE_TARGET_COMPLETED = "subscription.ended.movie_target_completed"
     SUBSCRIPTION_ENDED_TV_COMPLETED = "subscription.ended.tv_completed"
     SUBSCRIPTION_ENDED_TV_UPGRADE_COMPLETED = "subscription.ended.tv_upgrade_completed"
     SUBSCRIPTION_ENDED_TV_TARGET_COMPLETED = "subscription.ended.tv_target_completed"
-    FOLLOW_ENABLED = "follow.enabled"
-    FOLLOW_DISABLED = "follow.disabled"
     FOLLOW_RELEASED = "follow.released"
     FOLLOW_DIGITAL_RELEASED = "follow.digital_released"
     FOLLOW_PHYSICAL_RELEASED = "follow.physical_released"
-    SUBSCRIPTION_RUN_COMPLETED = "subscription.run.completed"
-    SUBSCRIPTION_RUN_FAILED = "subscription.run.failed"
-    PILOT_EPISODE_QUEUED = "pilot.episode.queued"
     ADDON_RUN_STARTED = "addon.run.started"
     ADDON_RUN_COMPLETED = "addon.run.completed"
     ADDON_RUN_FAILED = "addon.run.failed"
@@ -130,3 +117,23 @@ class Event(BaseModel):
     @property
     def media_year(self) -> int | None:
         return self.media.year if self.media else None
+
+
+class EventCenterBellState(str, Enum):
+    idle = "idle"
+    warning = "warning"
+    error = "error"
+    running = "running"
+
+
+class EventCenterSummary(BaseModel):
+    active_action_count: int = 0
+    warning_event_count: int = 0
+    error_event_count: int = 0
+    bell_state: EventCenterBellState = EventCenterBellState.idle
+
+
+class EventCenterResponse(BaseModel):
+    summary: EventCenterSummary
+    active_actions: list[ActionRecord] = Field(default_factory=list)
+    events: list[Event] = Field(default_factory=list)

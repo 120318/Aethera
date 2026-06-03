@@ -5,12 +5,19 @@ from app.schemas.domain.event import EventActor, EventEntityRef, EventLevel, Eve
 from app.schemas.domain.media import MediaFullInfo
 from app.schemas.domain.media_server_sync import MediaServerSyncTargetFile
 from app.services.audit.event_service import event_service
-from app.services.domain.alerts.workflow_alerts import (
-    raise_danmu_alert,
-    raise_media_server_sync_alert,
-    resolve_danmu_alert,
-    resolve_media_server_sync_alert,
-)
+
+_INFO_DANMU_FAILURE_KEYS = {
+    "runtimeReasons.danmuDurationMismatch",
+    "runtimeReasons.danmuNotFound",
+}
+
+
+def _danmu_event_level(event_type: EventType, error_key: str | None) -> EventLevel:
+    if event_type != EventType.DANMU_GENERATE_FAILED:
+        return EventLevel.info
+    if error_key in _INFO_DANMU_FAILURE_KEYS:
+        return EventLevel.info
+    return EventLevel.error
 
 
 def emit_danmu_generate_event(
@@ -27,22 +34,10 @@ def emit_danmu_generate_event(
     error: str = "",
     error_key: str | None = None,
 ) -> None:
-    if event_type == EventType.DANMU_GENERATE_FAILED:
-        raise_danmu_alert(
-            media=media,
-            video_path=video_path,
-            action_id=action_id,
-            task_id=task_id,
-            provider=provider,
-            error=error,
-            error_key=error_key,
-        )
-    elif event_type == EventType.DANMU_GENERATE_COMPLETED:
-        resolve_danmu_alert(video_path)
     event_service.emit_media(
         MediaEventCreate(
             type=event_type,
-            level=EventLevel.error if event_type == EventType.DANMU_GENERATE_FAILED else EventLevel.info,
+            level=_danmu_event_level(event_type, error_key),
             media=media,
             task_id=task_id,
             actor=EventActor.system,
@@ -79,16 +74,6 @@ def emit_media_server_sync_events(
 ) -> None:
     target_paths = _sync_event_paths(anchor_file, transfer_results)
     for path in target_paths:
-        if event_type == EventType.MEDIA_SERVER_SYNC_FAILED:
-            raise_media_server_sync_alert(
-                media=media,
-                file_path=path,
-                media_server_id=media_server_id,
-                task_id=task_id,
-                error=error,
-            )
-        elif event_type == EventType.MEDIA_SERVER_SYNC_COMPLETED:
-            resolve_media_server_sync_alert(media=media, file_path=path, media_server_id=media_server_id)
         event_service.emit_media(
             MediaEventCreate(
                 type=event_type,

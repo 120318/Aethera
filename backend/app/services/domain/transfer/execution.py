@@ -16,12 +16,13 @@ from app.schemas.exception.base import AppException
 from app.schemas.exception.exceptions import TransferException
 from app.services.domain.directory import directory_service
 from app.services.domain.download import download_service
+from app.services.domain.library.service import library_service
 from app.services.domain.library.target_path_policy import library_target_path_policy
 from app.utils.fs_utils import fs_provider
 from app.utils.library_paths import build_download_path, build_library_file_path
 
 from .materializers import transfer_materializer_registry
-from .upgrade import validate_transfer_upgrade_policy
+from .upgrade import is_idempotent_transfer_retry, validate_transfer_upgrade_policy
 
 
 class TransferExecutionContext(BaseModel):
@@ -123,15 +124,7 @@ async def resolve_source_base_path(task: TaskData) -> Path:
 
 
 def generate_source_path(task: TaskData, file_item: TorrentFileItem, source_base_path: Path) -> Path:
-    relative = Path(file_item.filename)
-    root_name = Path(task.metadata.name).name
-    if task.metadata.uses_root_directory_for(file_item):
-        if not root_name:
-            raise TransferException("backendErrors.transferTorrentRootNameMissing", params={"task_id": task.id})
-        source_path = source_base_path / relative if relative.parts and relative.parts[0] == root_name else source_base_path / root_name / relative
-    else:
-        source_path = source_base_path / relative
-
+    source_path = build_source_path(task, file_item, source_base_path)
     if fs_provider.exists(source_path):
         return source_path
     raise TransferException(
@@ -140,8 +133,25 @@ def generate_source_path(task: TaskData, file_item: TorrentFileItem, source_base
     )
 
 
+def build_source_path(task: TaskData, file_item: TorrentFileItem, source_base_path: Path) -> Path:
+    relative = Path(file_item.filename)
+    root_name = Path(task.metadata.name).name
+    if task.metadata.uses_root_directory_for(file_item):
+        if not root_name:
+            raise TransferException("backendErrors.transferTorrentRootNameMissing", params={"task_id": task.id})
+        return source_base_path / relative if relative.parts and relative.parts[0] == root_name else source_base_path / root_name / relative
+    return source_base_path / relative
+
+
 def collect_present_library_files(library_files: list[LibraryFile]) -> list[LibraryFile]:
     return [library_file for library_file in library_files if fs_provider.exists(build_library_file_path(library_file.path, library_file.file_name))]
+
+
+async def should_skip_existing_task_materialization(task: TaskData, transfer_result: TransferFileResult) -> bool:
+    existing_file = await library_service.find_file_by_path(transfer_result.destination_path)
+    if not existing_file or not is_idempotent_transfer_retry(task, existing_file, transfer_result):
+        return False
+    return fs_provider.exists(build_library_file_path(existing_file.path, existing_file.file_name))
 
 
 def should_skip_retransfer(
@@ -173,6 +183,17 @@ async def all_transfer_sources_available(task: TaskData) -> bool:
         except TransferException:
             return False
     return found_any
+
+
+async def missing_transfer_source_paths(task: TaskData) -> list[str]:
+    validate_transfer_task(task)
+    source_base_path = await resolve_source_base_path(task)
+    missing_paths: list[str] = []
+    for _, file_item in iter_selected_files(task.metadata.files, task.context.selected_files if task.context else None):
+        source_path = build_source_path(task, file_item, source_base_path)
+        if not fs_provider.exists(source_path):
+            missing_paths.append(str(source_path))
+    return missing_paths
 
 
 async def validate_transfer_reentry(task: TaskData, existing_library_files: list[LibraryFile]) -> TransferResult | None:
@@ -361,6 +382,8 @@ async def execute_transfer(task: TaskData, execution_context: TransferExecutionC
         source_path = Path(transfer_result.source_path)
         destination_path = Path(transfer_result.destination_path)
         try:
+            if await should_skip_existing_task_materialization(task, transfer_result):
+                continue
             await asyncio.to_thread(materializer.materialize, source_path, destination_path)
         except (TransferException, OSError):
             raise

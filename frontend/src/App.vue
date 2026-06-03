@@ -38,12 +38,12 @@
 
         <div v-if="!isAuthPage" class="absolute inset-y-0 right-container flex items-center gap-container">
           <Button
-            v-tooltip.right="alertCenterTooltip"
+            v-tooltip.right="notificationCenterTooltip"
             icon="pi pi-bell"
-            :label="displayAlertCount > 0 ? (displayAlertCount > 99 ? '99+' : String(displayAlertCount)) : undefined"
+            :label="displayNotificationCount > 0 ? (displayNotificationCount > 99 ? '99+' : String(displayNotificationCount)) : undefined"
             text
-            :pt="alertButtonPt"
-            @click="alertCenterStore.open()"
+            :pt="notificationButtonPt"
+            @click="notificationCenterStore.open()"
           />
           <RouterLink
             v-tooltip.right="$t('menu.calendar')"
@@ -72,9 +72,9 @@
     >
       <p class="text-muted">{{ $t('app.footer') }}</p>
     </footer>
-    <AlertCenterDialog
-      :visible="alertCenterStore.visible"
-      @update:visible="alertCenterStore.setVisible"
+    <NotificationCenterDialog
+      :visible="notificationCenterStore.visible"
+      @update:visible="notificationCenterStore.setVisible"
     />
   </div>
 </template>
@@ -87,7 +87,7 @@ import Toast from 'primevue/toast'
 import { useToast } from 'primevue/usetoast'
 import Button from 'primevue/button'
 import AppMenu from './components/AppMenu.vue'
-import AlertCenterDialog from './components/AlertCenterDialog.vue'
+import NotificationCenterDialog from './components/NotificationCenterDialog.vue'
 import SearchBox from './components/common/SearchBox.vue'
 import { useAppShell } from '@/composables/useAppShell'
 import { useNotificationStore } from '@/stores/notification'
@@ -99,14 +99,14 @@ const { locale, t } = useI18n()
 const {
   route,
   headerSearchQuery,
-  displayAlertCount,
-  alertButtonPt,
-  alertCenterTooltip,
+  displayNotificationCount,
+  notificationButtonPt,
+  notificationCenterTooltip,
   isAuthPage,
   isHomePage,
   mainClass,
   mainStyle,
-  alertCenterStore,
+  notificationCenterStore,
   handleHeaderSearch,
 } = useAppShell()
 

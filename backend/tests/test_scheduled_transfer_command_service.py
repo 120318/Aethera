@@ -1,5 +1,6 @@
 import os
 import uuid
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -11,6 +12,8 @@ os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
 from app.services.application.commands.service import CommandConflictException
 from app.services.application.workflows.scheduled_transfer.service import scheduled_transfer_command_service
+from app.schemas.domain.download import TaskErrorStage, TaskStatus
+from app.schemas.exception.exceptions import TransferException
 
 
 @pytest.mark.asyncio
@@ -25,6 +28,10 @@ async def test_enqueue_finished_tasks_counts_conflicts_as_skips_and_runtime_fail
         "app.services.application.workflows.scheduled_transfer.service.download_service.get_tasks",
         AsyncMock(return_value=tasks),
     )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.missing_transfer_source_paths",
+        AsyncMock(return_value=[]),
+    )
     create_command_mock = AsyncMock(
         side_effect=[object(), CommandConflictException(), RuntimeError("worker down")]
     )
@@ -38,3 +45,95 @@ async def test_enqueue_finished_tasks_counts_conflicts_as_skips_and_runtime_fail
     assert result.processed == 3
     assert result.completed == 1
     assert result.errors == 1
+
+
+@pytest.mark.asyncio
+async def test_enqueue_finished_tasks_delays_transfer_when_sources_are_not_visible(monkeypatch):
+    tasks = [SimpleNamespace(id="task-1", updated_at=datetime.now())]
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.download_service.get_tasks",
+        AsyncMock(return_value=tasks),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.missing_transfer_source_paths",
+        AsyncMock(return_value=["/downloads/missing.mkv"]),
+    )
+    create_command_mock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.command_service.create_command",
+        create_command_mock,
+    )
+
+    result = await scheduled_transfer_command_service.enqueue_finished_tasks()
+
+    assert result.processed == 1
+    assert result.completed == 0
+    assert result.errors == 0
+    create_command_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_finished_tasks_enqueues_transfer_when_sources_stay_missing_after_grace(monkeypatch):
+    tasks = [SimpleNamespace(id="task-1", updated_at=datetime.now() - timedelta(minutes=10))]
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.download_service.get_tasks",
+        AsyncMock(return_value=tasks),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.missing_transfer_source_paths",
+        AsyncMock(return_value=["/downloads/missing.mkv"]),
+    )
+    create_command_mock = AsyncMock(return_value=object())
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.command_service.create_command",
+        create_command_mock,
+    )
+
+    result = await scheduled_transfer_command_service.enqueue_finished_tasks()
+
+    assert result.processed == 1
+    assert result.completed == 1
+    assert result.errors == 0
+    create_command_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_finished_tasks_marks_transfer_precheck_exception(monkeypatch):
+    tasks = [SimpleNamespace(id="task-1", updated_at=datetime.now() - timedelta(minutes=10))]
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.download_service.get_tasks",
+        AsyncMock(return_value=tasks),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.missing_transfer_source_paths",
+        AsyncMock(
+            side_effect=TransferException(
+                "backendErrors.transferSourceFileNotFound",
+                params={"path": "/downloads/missing.mkv"},
+            )
+        ),
+    )
+    create_command_mock = AsyncMock()
+    update_task_state_mock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.command_service.create_command",
+        create_command_mock,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.download_service.update_task_state",
+        update_task_state_mock,
+    )
+
+    result = await scheduled_transfer_command_service.enqueue_finished_tasks()
+
+    assert result.processed == 1
+    assert result.completed == 0
+    assert result.errors == 1
+    create_command_mock.assert_not_awaited()
+    update_task_state_mock.assert_awaited_once_with(
+        "task-1",
+        TaskStatus.FINISHED,
+        error_key="backendErrors.transferSourceFileNotFound",
+        error_params={"path": "/downloads/missing.mkv"},
+        error_stage=TaskErrorStage.TRANSFER,
+    )

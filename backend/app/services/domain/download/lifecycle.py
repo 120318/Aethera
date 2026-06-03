@@ -7,15 +7,11 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Protocol
 
 from app.schemas.config import DownloaderConfig
-from app.schemas.constants.event_types import EventTypes
-from app.schemas.domain.addon_events import DownloadTaskEventMeta
-from app.schemas.domain.download import DownloadTaskCreateInput, TaskContext, TaskData, TaskStatus
-from app.schemas.domain.event import EventActor, EventEntityRef, EventSource, MediaEventCreate
+from app.schemas.domain.download import DownloadFileInfo, DownloadTaskCreateInput, TaskContext, TaskData, TaskStatus
 from app.schemas.domain.resource_search import ResourceSearchResult
 from app.schemas.domain.torrent import TorrentFileItem
 from app.schemas.exception import ConfigurationException
 from app.schemas.exception.exceptions import DownloadException, DownloadTaskAlreadyExistsException, InvalidRequestException
-from app.services.audit.event_service import event_service
 from app.services.domain.directory import directory_service
 from app.services.config.settings_service import settings_service
 from app.services.domain.resource.parser import resource_parser
@@ -155,14 +151,15 @@ class DownloadCreationService:
         merged = sorted(existing | requested)
         task.context.selected_files = merged
         task.status = self._task_status_after_selection_expansion(task.status)
-        task.updated_at = datetime.now()
-        await self._repo.update_task(task)
         await self.sync_existing_torrent_selection(
             client,
             task.torrent_hash,
             self._selection_union(hash_tasks, files),
             files,
         )
+        await self._sync_expanded_task_progress(task=task, client=client, files=files)
+        task.updated_at = datetime.now()
+        await self._repo.update_task(task)
         logger.info(
             "Expanded existing download task selection: media=%s task=%s hash=%s selected_files=%d",
             task.media_id,
@@ -170,7 +167,6 @@ class DownloadCreationService:
             task.torrent_hash,
             len(merged),
         )
-        self.emit_download_started(task, task.context.media)
         return task
 
     @staticmethod
@@ -242,43 +238,6 @@ class DownloadCreationService:
         tag = settings_service.get_base_system_config().download.default_tag.strip()
         return [tag] if tag else None
 
-    def emit_download_started(self, task: TaskData, media) -> None:
-        downloader_name = None
-        if task.downloader_id:
-            display_map = self.get_downloader_display_map()
-            downloader_info = (
-                display_map[task.downloader_id]
-                if task.downloader_id in display_map
-                else self._downloader_display_info_cls(name=task.downloader_id)
-            )
-            downloader_name = downloader_info.name
-        event_service.emit_media(
-            MediaEventCreate(
-                type=EventTypes.DOWNLOAD_STARTED,
-                message_params={"downloader_id": downloader_name or task.downloader_id or ""},
-                media=media,
-                task_id=task.id,
-                actor=EventActor.system,
-                source=EventSource.base,
-                entities=[
-                    EventEntityRef(type="task", id=task.id),
-                    EventEntityRef(type="media", id=str(task.media_id)),
-                ],
-            ),
-            meta=DownloadTaskEventMeta(
-                task_id=task.id,
-                media_id=task.media_id,
-                status=task.status,
-                downloader_id=task.downloader_id,
-                resource_title=task.context.resource_title,
-                torrent_name=task.metadata.name if task.metadata else None,
-                torrent_hash=task.torrent_hash,
-                progress=task.progress,
-                selected_files=list(task.context.selected_files or []),
-                total_files=len(task.metadata.files) if task.metadata and task.metadata.files else None,
-            ),
-        )
-
     @staticmethod
     async def sync_existing_torrent_selection(
         client: DownloadClient,
@@ -296,6 +255,54 @@ class DownloadCreationService:
         if unselected:
             await client.set_file_priority(torrent_hash, unselected, 0)
         await client.set_file_priority(torrent_hash, valid_selected, 1)
+
+    @staticmethod
+    def _selected_file_progress(
+        selected_files: list[int],
+        metadata_files: list[TorrentFileItem] | None,
+        live_files: list[DownloadFileInfo] | None,
+    ) -> float | None:
+        if not selected_files or not live_files:
+            return None
+
+        live_by_index = {file.index: file for file in live_files}
+        metadata_size_by_index = {file.index: file.size for file in metadata_files or []}
+        total_size = 0
+        completed_size = 0.0
+
+        for index in selected_files:
+            live_file = live_by_index.get(index)
+            if live_file is None:
+                return None
+            size = live_file.size or metadata_size_by_index.get(index) or 0
+            if size <= 0:
+                continue
+            total_size += size
+            completed_size += size * live_file.progress
+
+        if total_size <= 0:
+            return None
+        return max(0.0, min(1.0, completed_size / total_size))
+
+    async def _sync_expanded_task_progress(
+        self,
+        *,
+        task: TaskData,
+        client: DownloadClient,
+        files: list[TorrentFileItem] | None,
+    ) -> None:
+        try:
+            live_files = await client.get_torrent_files(task.torrent_hash)
+        except (DownloadException, RuntimeError, ValueError) as exc:
+            logger.warning("Failed to refresh selected file progress after selection expansion: task=%s error=%s", task.id, exc)
+            return
+
+        progress = self._selected_file_progress(task.context.selected_files or [], files, live_files)
+        if progress is None:
+            return
+        task.progress = progress
+        if progress >= 0.999 and task.status in {TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.PAUSED}:
+            task.status = TaskStatus.FINISHED
 
     async def create_download(self, req: DownloadTaskCreateInput, search_result: ResourceSearchResult) -> TaskData:
         if not search_result or search_result.result_id != req.result_id:
@@ -381,7 +388,6 @@ class DownloadCreationService:
                     task.torrent_hash,
                     len(req.selected_files or []),
                 )
-                self.emit_download_started(task, req.media)
                 return task
             await self._task_service.ensure_live_torrent_download_path_matches_hash(
                 client,
@@ -432,5 +438,4 @@ class DownloadCreationService:
                 len(req.selected_files or []),
                 "false",
             )
-            self.emit_download_started(task, req.media)
             return task

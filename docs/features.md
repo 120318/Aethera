@@ -44,4 +44,4 @@ The core workflow is:
 
 ## Disabled Experimental Integrations
 
-OIDC login and Telegram notifications are currently disabled by default because they are experimental and not release-tested.
+OIDC login is currently disabled by default because it is experimental and not release-tested.

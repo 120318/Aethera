@@ -19,7 +19,7 @@ from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
 from app.services.domain.transfer import transfer_service
 from app.services.domain.transfer.service import commit_transfer_results
-from app.services.domain.transfer.execution import TransferExecutionContext, build_transfer_execution_context, build_transfer_plan, execute_transfer, generate_source_path
+from app.services.domain.transfer.execution import TransferExecutionContext, build_transfer_execution_context, build_transfer_plan, execute_transfer, generate_source_path, missing_transfer_source_paths
 
 
 def _task(status: TaskStatus = TaskStatus.COMPLETED) -> TaskData:
@@ -65,6 +65,16 @@ def _library_file(file_id: str = "file-1") -> LibraryFile:
         file_index=0,
         created_at=0.0,
     )
+
+
+@pytest.mark.asyncio
+async def test_missing_transfer_source_paths_reports_selected_files_not_visible(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: False)
+
+    missing_paths = await missing_transfer_source_paths(task)
+
+    assert missing_paths == ["/data/download/downloads/show/Test.Show.S01.2024.1080p.WEB-DL/Test.Show.S01E01.2024.1080p.WEB-DL.mkv"]
 
 
 def _transfer_file_result() -> TransferFileResult:
@@ -256,6 +266,7 @@ async def test_execute_transfer_uses_copy_materializer_for_copy_mode(monkeypatch
     )
     monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
     monkeypatch.setattr("app.services.domain.transfer.execution.validate_transfer_upgrade_policy", AsyncMock())
+    monkeypatch.setattr("app.services.domain.transfer.execution.library_service.find_file_by_path", AsyncMock(return_value=None))
 
     def resolve_materializer(mode):
         assert mode == TransferMode.COPY
@@ -267,6 +278,42 @@ async def test_execute_transfer_uses_copy_materializer_for_copy_mode(monkeypatch
 
     assert len(results) == 1
     assert calls == [(Path(results[0].source_path), Path(results[0].destination_path))]
+
+
+@pytest.mark.asyncio
+async def test_execute_transfer_skips_existing_same_task_file_materialization(monkeypatch):
+    class RecordingMaterializer:
+        @property
+        def mode(self):
+            return TransferMode.COPY
+
+        def materialize(self, source_path, destination_path):
+            calls.append((source_path, destination_path))
+
+    calls = []
+    task = _task(status=TaskStatus.FINISHED)
+    existing_file = _library_file().model_copy(update={"file_size": 100})
+    context = TransferExecutionContext(
+        source_base_path=Path("/downloads"),
+        destination_base_path=Path("/library"),
+        transfer_mode=TransferMode.COPY,
+        template_config=Template(
+            dir_template="{title} ({year})/Season {season:00}",
+            file_template="{title} - S{season:00}E{episode:00}",
+        ),
+        title="Test Show",
+        year=2024,
+        season_number=1,
+    )
+    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.validate_transfer_upgrade_policy", AsyncMock())
+    monkeypatch.setattr("app.services.domain.transfer.execution.library_service.find_file_by_path", AsyncMock(return_value=existing_file))
+    monkeypatch.setattr("app.services.domain.transfer.execution.transfer_materializer_registry.resolve", lambda mode: RecordingMaterializer())
+
+    results = await execute_transfer(task, context)
+
+    assert len(results) == 1
+    assert calls == []
 
 
 def test_build_transfer_plan_preserves_bdmv_package_layout(monkeypatch):

@@ -1,3 +1,18 @@
+export const DEFAULT_NOTIFICATION_EVENT_PATTERNS = [
+  'download.completed',
+  'download.failed',
+  'download.task.downloader_change_failed',
+  'download.task.storage_change_failed',
+  'media.import.completed',
+  'media.import.failed',
+  'library.file.missing',
+  'indexer.site.unhealthy',
+  'follow.*',
+  'subscription.ended.*',
+  'media_server_sync.failed',
+  'danmu.generate.failed',
+]
+
 export function createNotificationChannelId() {
   return globalThis.crypto?.randomUUID?.() || `notification-channel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -8,23 +23,24 @@ export function createEmptyNotificationChannel() {
     type: 'telegram',
     name: '',
     enabled: true,
-    event_patterns: ['subscription.*', 'follow.*', 'media.*', 'download.*'],
+    event_patterns: [...DEFAULT_NOTIFICATION_EVENT_PATTERNS],
     levels: [],
     bot_token: '',
     chat_id: '',
   }
 }
 
-export function assignNotificationChannelForm(form, channel, eventPatternsInput) {
+export function assignNotificationChannelForm(form, channel) {
   form.id = channel.id
   form.type = channel.type || 'telegram'
   form.name = channel.name || ''
   form.enabled = channel.enabled !== false
-  form.event_patterns = Array.isArray(channel.event_patterns) ? [...channel.event_patterns] : ['subscription.*', 'follow.*', 'media.*', 'download.*']
+  form.event_patterns = Array.isArray(channel.event_patterns) && channel.event_patterns.length
+    ? [...channel.event_patterns]
+    : [...DEFAULT_NOTIFICATION_EVENT_PATTERNS]
   form.levels = Array.isArray(channel.levels) ? [...channel.levels] : []
   form.bot_token = channel.bot_token || ''
   form.chat_id = channel.chat_id || ''
-  eventPatternsInput.value = form.event_patterns.join(', ')
 }
 
 export function cloneNotificationChannel(channel) {
@@ -37,13 +53,6 @@ export function cloneNotificationChannel(channel) {
 
 export function cloneNotificationChannels(channels) {
   return channels.map((channel) => cloneNotificationChannel(channel))
-}
-
-export function normalizeCommaSeparatedItems(value) {
-  return value
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
 }
 
 export function formatNotificationItems(value, fallback = '') {

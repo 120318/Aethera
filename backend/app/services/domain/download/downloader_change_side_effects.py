@@ -11,6 +11,7 @@ from app.schemas.domain.event import EventActor, EventEntityRef, EventLevel, Eve
 from app.schemas.domain.task_storage_migration import TaskStorageMigration
 from app.services.audit.action_service import action_service
 from app.services.audit.event_service import event_service
+from app.services.domain.download.task_runtime_service import selected_task_episodes
 
 if TYPE_CHECKING:
     from app.services.domain.download.downloader_change import TaskDownloaderChangePreview
@@ -53,38 +54,6 @@ def mark_migration_action_completed(migration: TaskStorageMigration) -> None:
 def mark_migration_action_failed(migration: TaskStorageMigration, reason: str) -> None:
     if migration.action_id:
         action_service.mark_failed(migration.action_id, error=reason)
-
-
-def emit_change_started(task: TaskData, migration: TaskStorageMigration) -> None:
-    event_service.emit_media(
-        MediaEventCreate(
-            type=EventTypes.DOWNLOAD_TASK_STORAGE_CHANGE_STARTED,
-            message_params=_migration_message_params(migration),
-            media=task.context.media,
-            task_id=task.id,
-            actor=EventActor.user,
-            source=EventSource.base,
-            entities=_build_event_entities(task),
-            action_id=migration.action_id,
-        ),
-        meta=_build_event_meta(task),
-    )
-
-
-def emit_change_succeeded(task: TaskData, migration: TaskStorageMigration) -> None:
-    event_service.emit_media(
-        MediaEventCreate(
-            type=EventTypes.DOWNLOAD_TASK_STORAGE_CHANGED,
-            message_params=_migration_message_params(migration),
-            media=task.context.media,
-            task_id=task.id,
-            actor=EventActor.user,
-            source=EventSource.base,
-            entities=_build_event_entities(task),
-            action_id=migration.action_id,
-        ),
-        meta=_build_event_meta(task),
-    )
 
 
 def emit_change_failed(task: TaskData, preview: TaskDownloaderChangePreview, reason: str) -> None:
@@ -154,6 +123,7 @@ def _build_event_meta(task: TaskData) -> DownloadTaskEventMeta:
         torrent_hash=task.torrent_hash,
         progress=task.progress,
         selected_files=list(task.context.selected_files or []),
+        selected_episodes=selected_task_episodes(task),
         total_files=len(task.metadata.files) if task.metadata and task.metadata.files else None,
     )
 

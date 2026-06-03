@@ -155,7 +155,7 @@ import MultiSelect from 'primevue/multiselect'
 
 import AppTag from '@/components/common/AppTag.vue'
 import { useEventList } from '@/composables/useEventList'
-import { isDanmuNotFoundEvent, resolveEventTypeMeta } from '@/constants/eventTypes'
+import { isDanmuDurationMismatchEvent, isDanmuNotFoundEvent, resolveEventTypeMeta } from '@/constants/eventTypes'
 import { formatAbsoluteDateTime, formatRelativeTime } from '@/utils/formatters'
 import { resolveLocalizedRecordMessage } from '@/utils/localizedMessage'
 import { useI18n } from 'vue-i18n'
@@ -193,11 +193,11 @@ function levelTone(value) {
 }
 
 function getEventMeta(event) {
-  if (event?.type === 'pilot.episode.queued' && String(event?.media?.media_id || '').includes(':movie:')) {
-    return { subjectKey: 'events.subject.download', actionKey: 'events.action.started', icon: 'pi pi-bolt', tone: 'accent' }
-  }
   if (isDanmuNotFoundEvent(event)) {
-    return { subjectKey: '', actionKey: 'events.action.danmuNotFound', icon: 'pi pi-comments', tone: 'warn' }
+    return { subjectKey: '', actionKey: 'events.action.danmuNotFound', icon: 'pi pi-comments', tone: 'accent' }
+  }
+  if (isDanmuDurationMismatchEvent(event)) {
+    return { subjectKey: '', actionKey: 'events.action.danmuDurationMismatch', icon: 'pi pi-comments', tone: 'accent' }
   }
   return resolveEventTypeMeta(event?.type)
 }
@@ -225,9 +225,15 @@ function getEventTypeLabel(typeValue) {
 }
 
 function getEventSubline(event) {
-  const message = isDanmuNotFoundEvent(event)
-    ? t('eventMessages.danmuNotFound', event?.message_params || {})
-    : resolveLocalizedRecordMessage(event)
+  if (isDanmuNotFoundEvent(event)) {
+    const message = t('eventMessages.danmuNotFound', event?.message_params || {})
+    return event?.addon_name ? `${event.addon_name} · ${message}` : message
+  }
+  if (isDanmuDurationMismatchEvent(event)) {
+    const message = t('eventMessages.danmuGenerateFailed', event?.message_params || {})
+    return event?.addon_name ? `${event.addon_name} · ${message}` : message
+  }
+  const message = resolveLocalizedRecordMessage(event)
   if (event?.addon_name && message) return `${event.addon_name} · ${message}`
   if (message) return message
   if (event?.addon_name) return event.addon_name

@@ -66,17 +66,6 @@ class SubscriptionRunOutcome(BaseModel):
     correlation_id: str | None = None
     warnings: list[SubscriptionSearchWarning] = Field(default_factory=list)
 
-    @property
-    def should_emit_failed(self) -> bool:
-        return self.status in {
-            SubscriptionRunOutcomeStatus.INVALID,
-            SubscriptionRunOutcomeStatus.QUEUE_FAILED,
-        }
-
-    @property
-    def should_emit_completed(self) -> bool:
-        return self.status == SubscriptionRunOutcomeStatus.QUEUED and self.response.added > 0
-
 
 class SelectedSubscriptionResource(BaseModel):
     payload_name: str

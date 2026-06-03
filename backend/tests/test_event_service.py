@@ -15,7 +15,7 @@ def test_emit_and_list_events_basic():
     media_id = MediaID.parse(f"douban:movie:{uuid.uuid4().hex}")
     ev = svc.emit_media(
         MediaEventCreate(
-            type=EventTypes.DOWNLOAD_STARTED,
+            type=EventTypes.DOWNLOAD_COMPLETED,
             level=EventLevel.info,
             message="created",
             media=MediaIdentity(media_id=media_id, title="text1", year=2024),
@@ -34,7 +34,7 @@ def test_emit_media_merges_default_and_explicit_message_params():
     media_id = MediaID.parse(f"douban:movie:{uuid.uuid4().hex}")
     ev = svc.emit_media(
         MediaEventCreate(
-            type=EventTypes.DOWNLOAD_STARTED,
+            type=EventTypes.DOWNLOAD_COMPLETED,
             level=EventLevel.info,
             media=MediaIdentity(media_id=media_id, title="text1", year=2024),
             message_params={"downloader_id": "d1"},
@@ -46,13 +46,50 @@ def test_emit_media_merges_default_and_explicit_message_params():
     assert ev.message_params["downloader_id"] == "d1"
 
 
+def test_acknowledge_event_is_idempotent():
+    svc = EventService()
+    media_id = MediaID.parse(f"douban:movie:{uuid.uuid4().hex}")
+    ev = svc.emit_media(
+        MediaEventCreate(
+            type=EventTypes.MEDIA_IMPORT_FAILED,
+            level=EventLevel.error,
+            media=MediaIdentity(media_id=media_id, title="text1", year=2024),
+        ),
+    )
+
+    assert svc.acknowledge_event(ev.id) is True
+    assert svc.acknowledge_event(ev.id) is True
+
+
+def test_acknowledge_attention_events_is_idempotent():
+    svc = EventService()
+    media_id = MediaID.parse(f"douban:movie:{uuid.uuid4().hex}")
+    svc.emit_media(
+        MediaEventCreate(
+            type=EventTypes.MEDIA_IMPORT_FAILED,
+            level=EventLevel.error,
+            media=MediaIdentity(media_id=media_id, title="text1", year=2024),
+        )
+    )
+    svc.emit_media(
+        MediaEventCreate(
+            type=EventTypes.LIBRARY_FILE_MISSING,
+            level=EventLevel.warning,
+            media=MediaIdentity(media_id=media_id, title="text1", year=2024),
+        )
+    )
+
+    assert svc.acknowledge_attention_events() == 2
+    assert svc.acknowledge_attention_events() == 0
+
+
 def test_list_events_filters():
     svc = EventService()
     media_id_1 = MediaID.parse(f"douban:movie:{uuid.uuid4().hex}")
     media_id_2 = MediaID.parse(f"douban:movie:{uuid.uuid4().hex}")
     svc.emit_media(
         MediaEventCreate(
-            type=EventTypes.DOWNLOAD_STARTED,
+            type=EventTypes.DOWNLOAD_FAILED,
             message="hello",
             media=MediaIdentity(media_id=media_id_1, title="text1", year=2024),
         )
@@ -74,7 +111,7 @@ def test_list_events_filters_tv_seasons():
     media_id = MediaID.parse(f"tmdb:tv:{uuid.uuid4().int % 100000000}")
     season_one_event = svc.emit_media(
         MediaEventCreate(
-            type=EventTypes.DOWNLOAD_STARTED,
+            type=EventTypes.DOWNLOAD_FAILED,
             media=MediaIdentity(media_id=media_id, season_number=1, title="text1", year=2024),
         )
     )

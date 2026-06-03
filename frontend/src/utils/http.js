@@ -50,6 +50,10 @@ function buildApiError(message, code, isSystemError, originalError = null, respo
   return error
 }
 
+function shouldNotifyError(config) {
+  return !config?.suppressErrorNotification
+}
+
 http.interceptors.response.use(
   response => {
     if (response.config.url && response.config.url.startsWith('/api/')) {
@@ -75,10 +79,12 @@ http.interceptors.response.use(
             return Promise.reject(buildApiError(message, data.code, isSystemError, null, response, data.message_key, data.params))
           }
           const message = resolveApiMessage(data)
-          if (isSystemError) {
-            notification.error(message)
-          } else {
-            notification.warn(message)
+          if (shouldNotifyError(response.config)) {
+            if (isSystemError) {
+              notification.error(message)
+            } else {
+              notification.warn(message)
+            }
           }
           return Promise.reject(buildApiError(message, data.code, isSystemError, null, response, data.message_key, data.params))
         }
@@ -139,10 +145,12 @@ http.interceptors.response.use(
       return Promise.reject(buildApiError(errorMessage, 401, false, error, null, messageKey, messageParams))
     }
 
-    if (isSystemError) {
-      notification.error(errorMessage)
-    } else {
-      notification.warn(errorMessage)
+    if (shouldNotifyError(error.config)) {
+      if (isSystemError) {
+        notification.error(errorMessage)
+      } else {
+        notification.warn(errorMessage)
+      }
     }
     return Promise.reject(buildApiError(errorMessage, errorCode, isSystemError, error, null, messageKey, messageParams))
   }

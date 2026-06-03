@@ -1,12 +1,35 @@
 import logging
+from datetime import datetime
 
-from app.schemas.exception.exceptions import DownloadException
+from app.schemas.exception.exceptions import DownloadException, TransferException
 from app.schemas.domain.command import CommandCreateRequest, CommandInitiator, CommandType, TaskTransferCommandRequestPayload
-from app.schemas.domain.download import BatchJobResult, TaskStatus
+from app.schemas.domain.download import BatchJobResult, TaskData, TaskErrorStage, TaskStatus
 from app.services.application.commands.service import CommandConflictException, command_service
 from app.services.domain.download import download_service
+from app.services.domain.transfer.execution import missing_transfer_source_paths
 
 logger = logging.getLogger("app.services.scheduled_transfer_command")
+
+SOURCE_VISIBILITY_GRACE_SECONDS = 120
+
+
+def _source_visibility_grace_elapsed(task: TaskData, now: datetime | None = None) -> bool:
+    if not task.updated_at:
+        return True
+    return ((now or datetime.now()) - task.updated_at).total_seconds() >= SOURCE_VISIBILITY_GRACE_SECONDS
+
+
+async def _mark_precheck_transfer_failed(task: TaskData, exc: TransferException) -> None:
+    try:
+        await download_service.update_task_state(
+            task.id,
+            TaskStatus.FINISHED,
+            error_key=exc.message_key,
+            error_params={str(key): str(value) for key, value in exc.params.items()},
+            error_stage=TaskErrorStage.TRANSFER,
+        )
+    except DownloadException as update_exc:
+        logger.error("Failed to mark scheduled transfer precheck failure for task %s: %s", task.id, update_exc)
 
 
 class ScheduledTransferCommandService:
@@ -22,6 +45,20 @@ class ScheduledTransferCommandService:
         for task in finished_tasks:
             processed += 1
             try:
+                missing_sources = await missing_transfer_source_paths(task)
+                if missing_sources:
+                    if not _source_visibility_grace_elapsed(task):
+                        logger.info(
+                            "Scheduled transfer delayed until source files are visible: task=%s missing=%s",
+                            task.id,
+                            missing_sources[:3],
+                        )
+                        continue
+                    logger.warning(
+                        "Scheduled transfer source files still missing after grace period; enqueueing transfer for visible failure handling: task=%s missing=%s",
+                        task.id,
+                        missing_sources[:3],
+                    )
                 await command_service.create_command(
                     CommandCreateRequest(
                         type=CommandType.TASK_TRANSFER,
@@ -32,6 +69,10 @@ class ScheduledTransferCommandService:
                 completed += 1
             except CommandConflictException:
                 logger.info("Scheduled transfer command already exists for task %s", task.id)
+            except TransferException as exc:
+                logger.error("Scheduled transfer precheck failed for task %s: %s", task.id, exc)
+                await _mark_precheck_transfer_failed(task, exc)
+                errors += 1
             except (DownloadException, RuntimeError, ValueError) as exc:
                 logger.error("Failed to enqueue scheduled transfer for task %s: %s", task.id, exc)
                 errors += 1

@@ -118,7 +118,7 @@
   .ui-task-count-button-multi { min-width: var(--size-control-icon-sm); padding-inline: var(--spacing-inline); }
   .ui-task-count-button .p-button-label { line-height: 1; }
 
-  .ui-alert-button {
+  .ui-notification-button {
     width: var(--size-control-icon);
     height: var(--size-control-icon);
     min-width: var(--size-control-icon);
@@ -129,34 +129,34 @@
     transition: color var(--p-transition-duration), background-color var(--p-transition-duration);
   }
 
-  .ui-alert-button:hover {
+  .ui-notification-button:hover {
     color: var(--accent-primary);
     background-color: color-mix(in srgb, var(--surface-subtle) 70%, transparent);
   }
 
-  .ui-alert-button-error {
+  .ui-notification-button-error {
     color: var(--state-error);
   }
 
-  .ui-alert-button-error:hover {
+  .ui-notification-button-error:hover {
     color: var(--state-error);
   }
 
-  .ui-alert-button-running {
+  .ui-notification-button-running {
     color: var(--state-success);
   }
 
-  .ui-alert-button-running:hover {
+  .ui-notification-button-running:hover {
     color: var(--state-success);
   }
 
-  .ui-alert-button.ui-task-count-button-multi {
+  .ui-notification-button.ui-task-count-button-multi {
     width: auto;
     min-width: var(--size-control-icon);
     padding-inline: var(--spacing-inline);
   }
 
-  .ui-alert-button .p-button-label { line-height: 1; }
+  .ui-notification-button .p-button-label { line-height: 1; }
 
   .ui-settings-card {
     display: flex;

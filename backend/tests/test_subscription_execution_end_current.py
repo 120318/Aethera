@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -355,18 +355,14 @@ async def test_run_one_does_not_emit_event_when_no_resources(monkeypatch):
         "app.services.application.workflows.subscription.run.resource_search_service.search_media",
         AsyncMock(return_value=[]),
     )
-    emit_media = Mock()
-    monkeypatch.setattr("app.services.application.workflows.subscription.run.event_service.emit_media", emit_media)
-
     result = await service.run_one(sub)
 
     assert result.checked == 0
     assert result.added == 0
-    emit_media.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_run_one_emits_failed_event_when_subscription_is_invalid(monkeypatch):
+async def test_run_one_does_not_emit_event_when_subscription_is_invalid(monkeypatch):
     service = SubscriptionRunApplicationService()
     media = MediaExecutionSnapshot(
         media_id=MediaID.parse("tmdb:tv:1"),
@@ -398,22 +394,14 @@ async def test_run_one_emits_failed_event_when_subscription_is_invalid(monkeypat
         "app.services.application.workflows.subscription.run.subscription_completion_checker.check",
         AsyncMock(return_value=None),
     )
-    emit_media = Mock()
-    monkeypatch.setattr("app.services.application.workflows.subscription.run.event_service.emit_media", emit_media)
-
     result = await service.run_one(sub)
 
     assert result.checked == 0
     assert result.added == 0
-    emit_media.assert_called_once()
-    event = emit_media.call_args.args[0]
-    assert event.type.value == "subscription.run.failed"
-    assert event.message_key is None
-    assert event.message_params == {"reason_key": "backendErrors.subscriptionRunEpisodeCountMissing"}
 
 
 @pytest.mark.asyncio
-async def test_run_one_emits_failed_event_when_all_selected_resources_fail_to_queue(monkeypatch):
+async def test_run_one_does_not_emit_event_when_all_selected_resources_fail_to_queue(monkeypatch):
     service = SubscriptionRunApplicationService()
     sub = _movie_subscription()
     resource_result = ResourceSearchResult(
@@ -458,17 +446,10 @@ async def test_run_one_emits_failed_event_when_all_selected_resources_fail_to_qu
         "app.services.application.workflows.subscription.run.command_service.create_command",
         AsyncMock(side_effect=DownloadException("queue failed")),
     )
-    emit_media = Mock()
-    monkeypatch.setattr("app.services.application.workflows.subscription.run.event_service.emit_media", emit_media)
-
     result = await service.run_one(sub)
 
     assert result.checked == 1
     assert result.added == 0
-    emit_media.assert_called_once()
-    event = emit_media.call_args.args[0]
-    assert event.type.value == "subscription.run.failed"
-    assert event.message_params == {"reason_key": "subscriptionRunMessages.queueFailed"}
 
 
 @pytest.mark.asyncio
