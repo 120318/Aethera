@@ -1,8 +1,8 @@
-"""Drop alerts storage.
+"""Create notification center event storage.
 
-Revision ID: 0003_drop_alerts
+Revision ID: 0003_notification_center_events
 Revises: 0002_scope_douban_identity
-Create Date: 2026-05-31
+Create Date: 2026-06-03
 """
 
 from __future__ import annotations
@@ -11,10 +11,29 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0003_drop_alerts"
+revision = "0003_notification_center_events"
 down_revision = "0002_scope_douban_identity"
 branch_labels = None
 depends_on = None
+
+
+PRUNED_EVENT_TYPES = (
+    "download.started",
+    "download.task.downloader_changed",
+    "download.task.storage_change_started",
+    "download.task.storage_changed",
+    "media.import.started",
+    "media_server_sync.started",
+    "danmu.generate.started",
+    "subscription.enabled",
+    "subscription.disabled",
+    "subscription.ended.manual",
+    "subscription.run.completed",
+    "subscription.run.failed",
+    "follow.enabled",
+    "follow.disabled",
+    "pilot.episode.queued",
+)
 
 
 def _has_table(table_name: str) -> bool:
@@ -22,12 +41,56 @@ def _has_table(table_name: str) -> bool:
     return sa.inspect(bind).has_table(table_name)
 
 
+def _prune_events(event_types: tuple[str, ...]) -> None:
+    if not event_types or not _has_table("events"):
+        return
+    bind = op.get_bind()
+    params = {f"type_{index}": value for index, value in enumerate(event_types)}
+    placeholders = ", ".join(f":type_{index}" for index in range(len(event_types)))
+    if _has_table("event_dispatches"):
+        bind.execute(
+            sa.text(
+                f"""
+                DELETE FROM event_dispatches
+                WHERE event_id IN (
+                    SELECT id FROM events WHERE type IN ({placeholders})
+                )
+                """
+            ),
+            params,
+        )
+    if _has_table("event_acknowledgements"):
+        bind.execute(
+            sa.text(
+                f"""
+                DELETE FROM event_acknowledgements
+                WHERE event_id IN (
+                    SELECT id FROM events WHERE type IN ({placeholders})
+                )
+                """
+            ),
+            params,
+        )
+    bind.execute(sa.text(f"DELETE FROM events WHERE type IN ({placeholders})"), params)
+
+
 def upgrade() -> None:
     if _has_table("alerts"):
         op.drop_table("alerts")
+    if not _has_table("event_acknowledgements"):
+        op.create_table(
+            "event_acknowledgements",
+            sa.Column("event_id", sa.Text(), primary_key=True),
+            sa.Column("acknowledged_at", sa.Text(), nullable=False),
+        )
+        op.create_index("ix_event_acknowledgements_acknowledged_at", "event_acknowledgements", ["acknowledged_at"])
+    _prune_events(PRUNED_EVENT_TYPES)
 
 
 def downgrade() -> None:
+    if _has_table("event_acknowledgements"):
+        op.drop_index("ix_event_acknowledgements_acknowledged_at", table_name="event_acknowledgements")
+        op.drop_table("event_acknowledgements")
     if _has_table("alerts"):
         return
     op.create_table(
