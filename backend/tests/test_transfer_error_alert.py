@@ -27,20 +27,12 @@ def _task() -> TaskData:
 
 
 @pytest.mark.asyncio
-async def test_handle_transfer_error_serializes_alert_reason_params(monkeypatch):
-    captured = {}
+async def test_handle_transfer_error_updates_task_state(monkeypatch):
     update_task_state = AsyncMock(return_value=True)
-
-    def raise_alert(request):
-        captured["request"] = request
 
     monkeypatch.setattr(
         "app.services.domain.transfer.service.download_service.update_task_state",
         update_task_state,
-    )
-    monkeypatch.setattr(
-        "app.services.domain.transfer.service.alert_service.raise_alert",
-        raise_alert,
     )
 
     await handle_transfer_error(
@@ -56,10 +48,3 @@ async def test_handle_transfer_error_serializes_alert_reason_params(monkeypatch)
         error_params={"reason": "disk full"},
         error_stage=TaskErrorStage.TRANSFER,
     )
-    request = captured["request"]
-    assert request.message_params == {
-        "task": "Test.Movie.2024.2160p",
-        "reason_key": "backendErrors.transferFailed",
-        "reason_params": '{"reason": "disk full"}',
-    }
-    assert request.message_key == "alertMessages.taskTransferFailed"

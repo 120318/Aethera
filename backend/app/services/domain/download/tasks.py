@@ -7,10 +7,8 @@ from typing import TYPE_CHECKING, Protocol
 import qbittorrentapi
 
 from app.schemas.domain.download import TaskData, TaskStatus
-from app.schemas.domain.alert import AlertResolveRequest
 from app.schemas.domain.torrent_status import TorrentStatus
 from app.schemas.exception.exceptions import DownloadException
-from app.services.domain.alerts import alert_service
 from app.services.domain.directory import directory_service
 from app.services.domain.download.downloader_delete import delete_downloader_task
 from app.services.domain.library.service import library_service
@@ -277,7 +275,6 @@ class DownloadTaskService:
                 if not force_delete_record:
                     raise
         await self._repo.delete_by_id(task.id)
-        alert_service.resolve_alert(AlertResolveRequest(fingerprint=f"task.transfer:{task.id}"))
         return True
 
     async def get_torrent_status_by_task_ids(self, task_ids: list[str]) -> Mapping[str, TorrentStatus]:

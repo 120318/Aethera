@@ -378,38 +378,6 @@ class ActionORM(Base):
     )
 
 
-class AlertORM(Base):
-    __tablename__ = "alerts"
-
-    id: Mapped[str] = mapped_column(Text, primary_key=True)
-    fingerprint: Mapped[str] = mapped_column(Text, nullable=False, unique=True, index=True)
-    status: Mapped[str] = mapped_column(Text, nullable=False, index=True)
-    severity: Mapped[str] = mapped_column(Text, nullable=False, index=True)
-    category: Mapped[str] = mapped_column(Text, nullable=False, index=True)
-    message_key: Mapped[str] = mapped_column(Text, nullable=False)
-    message_params_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    target_type: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
-    target_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
-    media_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
-    media_season_number: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
-    media_title: Mapped[str | None] = mapped_column(Text, nullable=True)
-    media_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    task_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
-    action_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
-    occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    first_seen_at: Mapped[str] = mapped_column(Text, nullable=False, index=True)
-    last_seen_at: Mapped[str] = mapped_column(Text, nullable=False, index=True)
-    acknowledged_at: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
-    resolved_at: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False)
-    updated_at: Mapped[str] = mapped_column(Text, nullable=False, index=True)
-
-    __table_args__ = (
-        Index("ix_alerts_status_ack_severity", "status", "acknowledged_at", "severity"),
-        Index("ix_alerts_target", "target_type", "target_id"),
-    )
-
-
 class EventORM(Base):
     __tablename__ = "events"
 
@@ -438,6 +406,13 @@ class EventORM(Base):
     __table_args__ = (
         Index("ix_events_media_season_ts", "media_id", "media_season_number", "ts"),
     )
+
+
+class EventAcknowledgementORM(Base):
+    __tablename__ = "event_acknowledgements"
+
+    event_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    acknowledged_at: Mapped[str] = mapped_column(Text, nullable=False, index=True)
 
 
 class SchedulerRuntimeORM(Base):

@@ -7,7 +7,7 @@ import pytest
 
 from app.clients.qbittorrent import QBittorrentClient
 from app.schemas.config import DownloadConfig, QBittorrentConfig, SystemConfig
-from app.schemas.domain.download import DownloadTaskCreateInput, TaskContext, TaskData, TaskStatus
+from app.schemas.domain.download import DownloadFileInfo, DownloadTaskCreateInput, TaskContext, TaskData, TaskStatus
 from app.schemas.domain.media import MediaExecutionSnapshot
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_attributes import ResourceAttributes
@@ -172,11 +172,6 @@ async def test_create_download_passes_configured_default_tag(monkeypatch):
         "app.services.domain.download.lifecycle.domain_lock_service.acquire_download_create",
         fake_download_lock,
     )
-    monkeypatch.setattr(
-        "app.services.domain.download.lifecycle.event_service.emit_media",
-        lambda *args, **kwargs: None,
-    )
-
     await service.create_download(
         DownloadTaskCreateInput(
             media=media,
@@ -344,6 +339,7 @@ async def test_create_download_expands_existing_torrent_selection(monkeypatch):
             raise AssertionError("existing task should be reused")
 
         async def update_task(self, task):
+            assert priorities == [("abc123", [0, 1, 2, 3, 4], 1)]
             updated["task"] = task
             return True
 
@@ -354,6 +350,15 @@ async def test_create_download_expands_existing_torrent_selection(monkeypatch):
         async def set_file_priority(self, torrent_hash, file_ids, priority):
             priorities.append((torrent_hash, list(file_ids), priority))
             return True
+
+        async def get_torrent_files(self, torrent_hash):
+            return [
+                DownloadFileInfo(index=0, name="Test.Show.S01E01.mkv", size=1, progress=1.0, priority=1),
+                DownloadFileInfo(index=1, name="Test.Show.S01E02.mkv", size=1, progress=1.0, priority=1),
+                DownloadFileInfo(index=2, name="Test.Show.S01E03.mkv", size=1, progress=1.0, priority=1),
+                DownloadFileInfo(index=3, name="Test.Show.S01E04.mkv", size=1, progress=0.5, priority=1),
+                DownloadFileInfo(index=4, name="Test.Show.S01E05.mkv", size=1, progress=0.0, priority=1),
+            ]
 
     class FakeClientFactory:
         def get_download_client(self, downloader_id):
@@ -395,11 +400,6 @@ async def test_create_download_expands_existing_torrent_selection(monkeypatch):
         "app.services.domain.download.lifecycle.domain_lock_service.acquire_download_create",
         fake_download_lock,
     )
-    monkeypatch.setattr(
-        "app.services.domain.download.lifecycle.event_service.emit_media",
-        lambda *args, **kwargs: None,
-    )
-
     task = await service.create_download(
         DownloadTaskCreateInput(
             media=media,
@@ -413,6 +413,7 @@ async def test_create_download_expands_existing_torrent_selection(monkeypatch):
     assert task.id == "task-1"
     assert updated["task"].context.selected_files == [0, 1, 2, 3, 4]
     assert updated["task"].status == TaskStatus.DOWNLOADING
+    assert updated["task"].progress == pytest.approx(0.7)
     assert priorities == [("abc123", [0, 1, 2, 3, 4], 1)]
 
 
@@ -534,11 +535,6 @@ async def test_create_download_attaches_new_season_to_existing_torrent(monkeypat
         "app.services.domain.download.lifecycle.settings_service.list_downloaders",
         lambda enabled_only=False: [],
     )
-    monkeypatch.setattr(
-        "app.services.domain.download.lifecycle.event_service.emit_media",
-        lambda *args, **kwargs: None,
-    )
-
     task = await service.create_download(
         DownloadTaskCreateInput(
             media=season_two_media,

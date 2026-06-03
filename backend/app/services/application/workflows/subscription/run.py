@@ -5,11 +5,8 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.command import CommandCreateRequest, CommandInitiator
 from app.schemas.domain.download import DownloadTaskCreateInput
-from app.schemas.domain.event import EventActor, EventEntityRef, EventLevel, EventSource, MediaEventCreate
-from app.schemas.domain.event_meta import SubscriptionRunCompletedEventMeta
 from app.schemas.domain.media import MediaTarget
 from app.schemas.domain.media_subscription_state import MediaSubscriptionState, SubscriptionEndTrigger
 from app.schemas.domain.resource_search import MediaSearchQuery, Resource
@@ -26,7 +23,6 @@ from app.schemas.runtime.subscription_runtime import (
     SubscriptionRunPlan,
 )
 from app.schemas.runtime.subscription_lifecycle import EndSubscriptionCommand, ResourceRunSelection, SubscriptionRunRecord
-from app.services.audit.event_service import event_service
 from app.services.domain.media import media_service
 from app.services.domain.subscription.download_config_service import subscription_download_config_service
 from app.services.domain.resource.filtering import compute_preference_score
@@ -68,7 +64,6 @@ class SubscriptionRunApplicationService:
             resource_run_plan_service.validate_runtime_subscription(runtime_sub)
             checked_at = time.time()
             outcome = await self._run_one_outcome(runtime_sub)
-            self._emit_run_events(runtime_sub, outcome)
             upgrade_snapshot = await subscription_upgrade_baseline_service.resolve_for_subscription(runtime_sub)
 
             await subscription_store.save_run_record(
@@ -306,51 +301,6 @@ class SubscriptionRunApplicationService:
             )
             added += 1
         return added
-
-    def _emit_run_events(self, runtime_sub: Subscription, outcome: SubscriptionRunOutcome) -> None:
-        if outcome.should_emit_failed:
-            self._emit_run_failed(runtime_sub, outcome)
-        if outcome.should_emit_completed:
-            self._emit_run_completed(runtime_sub, outcome)
-
-    def _emit_run_failed(self, runtime_sub: Subscription, outcome: SubscriptionRunOutcome) -> None:
-        correlation_id = outcome.correlation_id or (outcome.plan.correlation_id if outcome.plan else runtime_sub.sub_id)
-        event_service.emit_media(
-            MediaEventCreate(
-                type=EventTypes.SUBSCRIPTION_RUN_FAILED,
-                level=EventLevel.error,
-                message_params={"reason_key": outcome.message_key or "subscriptionRunMessages.failed"},
-                media=outcome.plan.media if outcome.plan else runtime_sub.media,
-                subscription_id=runtime_sub.sub_id,
-                actor=EventActor.system,
-                source=EventSource.base,
-                entities=[
-                    EventEntityRef(type="subscription", id=runtime_sub.sub_id),
-                    EventEntityRef(type="job_run", id=correlation_id),
-                ],
-                correlation_id=correlation_id,
-            ),
-        )
-
-    def _emit_run_completed(self, runtime_sub: Subscription, outcome: SubscriptionRunOutcome) -> None:
-        if outcome.plan is None:
-            return
-        event_service.emit_media(
-            MediaEventCreate(
-                type=EventTypes.SUBSCRIPTION_RUN_COMPLETED,
-                level=EventLevel.info,
-                media=outcome.plan.media,
-                subscription_id=runtime_sub.sub_id,
-                actor=EventActor.system,
-                source=EventSource.base,
-                entities=[
-                    EventEntityRef(type="subscription", id=runtime_sub.sub_id),
-                    EventEntityRef(type="job_run", id=outcome.plan.correlation_id),
-                ],
-                correlation_id=outcome.plan.correlation_id,
-            ),
-            meta=SubscriptionRunCompletedEventMeta(checked=outcome.response.checked, added=outcome.response.added),
-        )
 
     async def run_all(self) -> SubscriptionRunResponse:
         async with self._acquire_subscription_sweep() as acquired:

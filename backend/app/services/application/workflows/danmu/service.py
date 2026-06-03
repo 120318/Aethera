@@ -276,7 +276,6 @@ class DanmuApplicationService:
         event_task_id = task_id or (event.task_id if event else None)
         try:
             await self._mark_danmu_artifacts(library_file, video_path, config, LibraryFileArtifactStatus.pending)
-            emit_danmu_generate_event(EventType.DANMU_GENERATE_STARTED, media, video_path, episode_number, action_id, event_task_id)
             async with asyncio.timeout(DANMU_GENERATION_TIMEOUT_SECONDS):
                 with action_context(action_id):
                     result = await danmu_provider_service.fetch(

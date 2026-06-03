@@ -4,7 +4,7 @@ import { defineStore } from 'pinia'
 import { getActiveActions } from '@/api/actions'
 import { cancelCommand as cancelCommandApi, createCommand, getActiveCommands, getCommand, getCommands } from '@/api/commands'
 import { buildMediaTarget, mediaTargetKey } from '@/composables/mediaIdentitySupport'
-import { useAlertCenterStore } from '@/stores/alert-center'
+import { useNotificationCenterStore } from '@/stores/notification-center'
 import { t } from '@/i18n'
 const RECENT_LIMIT = 20
 const FINISHED_STATUSES = ['succeeded', 'failed', 'cancelled']
@@ -186,7 +186,7 @@ export const useOperationsStore = defineStore('operations', () => {
     try {
       const command = await createCommand(request)
       registerSubmittedCommand(command)
-      useAlertCenterStore().notifyActivity()
+      useNotificationCenterStore().notifyActivity()
       return command
     } finally {
       clearSubmitting(dedupeKey)
@@ -202,7 +202,7 @@ export const useOperationsStore = defineStore('operations', () => {
         ...activeCommands.value.filter(item => item?.id !== command.id),
       ]
       recentCommands.value = recentCommands.value.filter(item => item?.id !== command.id)
-      useAlertCenterStore().notifyActivity()
+      useNotificationCenterStore().notifyActivity()
       return command
     }
 

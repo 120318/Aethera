@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.addons.registry import AddonDescriptor, AddonJobSpec, AddonRegistry
-from app.schemas.config import AddonsConfig
+from app.schemas.config import AddonsConfig, NotificationChannelConfig
 from app.services.application.workflows.danmu import danmu_application_service
 from app.services.application.workflows.notifications import notification_application_service
 from app.services.platform.auth_provider_service import auth_provider_service
@@ -13,9 +13,15 @@ def _auth_enabled(config: AddonsConfig) -> bool:
 
 
 def _notifications_enabled(config: AddonsConfig) -> bool:
-    return config.notifications.enabled and any(
-        notification_channel_service.supports(channel.type) for channel in config.notifications.channels
-    )
+    if not config.notifications.enabled:
+        return False
+    return any(_notification_channel_ready(channel) for channel in config.notifications.channels)
+
+
+def _notification_channel_ready(channel: NotificationChannelConfig) -> bool:
+    if not channel.enabled or not notification_channel_service.supports(channel.type):
+        return False
+    return notification_channel_service.get_channel(channel.type).is_configured(channel)
 
 
 def _notification_event_patterns() -> list[str]:

@@ -50,6 +50,7 @@ export function setI18nLocale(locale) {
   i18n.global.locale.value = normalized
   window.localStorage.setItem(STORAGE_KEY, normalized)
   document.documentElement.lang = normalized
+  return normalized
 }
 
 export function t(key, params) {

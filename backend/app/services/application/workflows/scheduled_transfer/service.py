@@ -5,6 +5,7 @@ from app.schemas.domain.command import CommandCreateRequest, CommandInitiator, C
 from app.schemas.domain.download import BatchJobResult, TaskStatus
 from app.services.application.commands.service import CommandConflictException, command_service
 from app.services.domain.download import download_service
+from app.services.domain.transfer.execution import missing_transfer_source_paths
 
 logger = logging.getLogger("app.services.scheduled_transfer_command")
 
@@ -22,6 +23,14 @@ class ScheduledTransferCommandService:
         for task in finished_tasks:
             processed += 1
             try:
+                missing_sources = await missing_transfer_source_paths(task)
+                if missing_sources:
+                    logger.info(
+                        "Scheduled transfer delayed until source files are visible: task=%s missing=%s",
+                        task.id,
+                        missing_sources[:3],
+                    )
+                    continue
                 await command_service.create_command(
                     CommandCreateRequest(
                         type=CommandType.TASK_TRANSFER,

@@ -7,10 +7,7 @@ from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
 from app.schemas.media_id import MediaID
 from app.services.audit.event_message_builder import (
     build_download_completed_message,
-    build_download_started_message,
     build_media_import_completed_message,
-    build_pilot_episode_queued_message,
-    build_subscription_run_completed_message,
 )
 
 
@@ -55,16 +52,6 @@ def _task() -> TaskData:
     )
 
 
-def test_build_download_started_message_includes_torrent_and_selection_context():
-    message = build_download_started_message(_task(), "qBittorrent")
-
-    assert "Example.Show.S01.1080p" in message
-    assert "site mteam" in message
-    assert "downloader qBittorrent" in message
-    assert "2/3 files selected" in message
-    assert "hash 12345678" in message
-
-
 def test_build_download_completed_message_prefers_resource_title_over_metadata_name():
     task = _task()
     task.metadata.name = "S01E01.mkv"
@@ -105,28 +92,3 @@ def test_build_media_import_completed_message_includes_file_count_episode_and_ta
     assert "episodes 1-2 covered" in message
     assert "S01E01.mkv" in message
 
-
-def test_build_subscription_run_completed_message_is_explicit():
-    message = build_subscription_run_completed_message(checked=5, added=2)
-
-    assert message == "Subscription check completed (5 candidates matched, 2 download tasks created)"
-
-
-def test_build_pilot_episode_queued_message_includes_directory_and_site_count():
-    media = MediaIdentity(media_id=MediaID.parse("tmdb:tv:1"), title="Sample", year=2024)
-
-    message = build_pilot_episode_queued_message(media, directory_id="tv-default", sites=["mteam", "pter"])
-
-    assert "Sample" not in message
-    assert "directory tv-default" in message
-    assert "2 sites" in message
-
-
-def test_build_pilot_episode_queued_message_uses_download_wording_for_movie():
-    media = MediaIdentity(media_id=MediaID.parse("tmdb:movie:1"), title="Sample", year=2024)
-
-    message = build_pilot_episode_queued_message(media, directory_id="movie-default", sites=None)
-
-    assert "Download task submitted" in message
-    assert "directory movie-default" in message
-    assert "default sites" in message

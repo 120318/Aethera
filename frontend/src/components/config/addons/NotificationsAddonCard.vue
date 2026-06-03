@@ -92,7 +92,7 @@
             </div>
             <div class="ui-dialog-section">
               <label class="ui-dialog-item-title block">{{ $t('settings.addons.notifications.botToken') }}</label>
-              <InputText v-model="channelForm.bot_token" class="w-full" />
+              <SecretInput v-model="channelForm.bot_token" class="w-full" />
             </div>
           </div>
         </template>
@@ -110,8 +110,14 @@
                 :aria-label="$t('settings.addons.notifications.eventRulesHelpLabel')"
               />
             </div>
-            <InputText
-              v-model="eventPatternsInput"
+            <MultiSelect
+              v-model="channelForm.event_patterns"
+              :options="eventPatternOptions"
+              option-label="label"
+              option-value="value"
+              display="chip"
+              filter
+              :max-selected-labels="3"
               class="w-full"
               :placeholder="$t('settings.addons.notifications.eventRulesPlaceholder')"
             />
@@ -133,7 +139,16 @@
       </div>
 
       <template #footer>
-        <Button :label="$t('common.cancel')" severity="secondary" text @click="closeChannelDialog" />
+        <Button
+          v-if="channelForm.type === 'telegram'"
+          :label="$t('settings.addons.notifications.sendTestMessage')"
+          icon="pi pi-send"
+          severity="secondary"
+          outlined
+          :loading="testingConnection"
+          @click="testChannelConnection"
+        />
+        <Button :label="$t('common.cancel')" severity="secondary" outlined @click="closeChannelDialog" />
         <Button :label="$t('settings.addons.notifications.saveChannel')" severity="primary" @click="saveChannel" />
       </template>
     </ConfigDialog>
@@ -151,15 +166,17 @@ import Select from 'primevue/select'
 import ToggleSwitch from 'primevue/toggleswitch'
 import { useConfirm } from 'primevue/useconfirm'
 
-import { saveAddons } from '@/api/config'
+import { saveAddons, testServiceConnection } from '@/api/config'
 import ConfigDialog from '@/components/common/ConfigDialog.vue'
+import SecretInput from '@/components/common/SecretInput.vue'
+import { EVENT_TYPE_MAP, resolveEventTypeMeta } from '@/constants/eventTypes'
 import {
   assignNotificationChannelForm,
   cloneNotificationChannel,
   cloneNotificationChannels,
   createEmptyNotificationChannel,
+  DEFAULT_NOTIFICATION_EVENT_PATTERNS,
   formatNotificationItems,
-  normalizeCommaSeparatedItems,
 } from '@/components/config/addons/notificationChannelsSupport'
 import { useNotificationStore } from '@/stores/notification'
 
@@ -176,8 +193,8 @@ const { t } = useI18n()
 const dialogVisible = ref(false)
 const channelDialogVisible = ref(false)
 const editingChannelId = ref('')
-const eventPatternsInput = ref('')
 const toggleKey = ref(0)
+const testingConnection = ref(false)
 
 const channelTypeOptions = computed(() => [
   { label: t('settings.addons.notifications.telegram'), value: 'telegram' },
@@ -190,6 +207,18 @@ const levelOptions = computed(() => [
 ])
 
 const channelForm = reactive(createEmptyNotificationChannel())
+
+const eventPatternOptions = computed(() => {
+  const options = [
+    ...eventPatternScopeOptions(),
+    ...eventTypeOptions(),
+  ]
+  const knownValues = new Set(options.map((option) => option.value))
+  const customOptions = channelForm.event_patterns
+    .filter((value) => value && !knownValues.has(value))
+    .map((value) => ({ label: `${t('settings.addons.notifications.customEventRule')} · ${value}`, value }))
+  return [...options, ...customOptions]
+})
 
 function ensureNotificationsConfig() {
   if (!props.config.addons.notifications) {
@@ -210,7 +239,7 @@ const notificationsConfig = computed(() => props.config.addons.notifications)
 const enabledChannelCount = computed(() => notificationsConfig.value.channels.filter((channel) => channel.enabled).length)
 
 function resetChannelForm() {
-  assignNotificationChannelForm(channelForm, createEmptyNotificationChannel(), eventPatternsInput)
+  assignNotificationChannelForm(channelForm, createEmptyNotificationChannel())
 }
 
 function openDialog() {
@@ -220,7 +249,7 @@ function openDialog() {
 function openChannelDialog(channel = null) {
   if (channel) {
     editingChannelId.value = channel.id
-    assignNotificationChannelForm(channelForm, channel, eventPatternsInput)
+    assignNotificationChannelForm(channelForm, channel)
   } else {
     editingChannelId.value = ''
     resetChannelForm()
@@ -283,7 +312,7 @@ async function saveChannel() {
     type: channelForm.type,
     name: channelForm.name.trim(),
     enabled: channelForm.enabled,
-    event_patterns: normalizeCommaSeparatedItems(eventPatternsInput.value),
+    event_patterns: [...channelForm.event_patterns].filter(Boolean),
     levels: [...channelForm.levels],
     bot_token: channelForm.bot_token.trim(),
     chat_id: channelForm.chat_id.trim(),
@@ -298,7 +327,7 @@ async function saveChannel() {
     return
   }
   if (!nextChannel.event_patterns.length) {
-    nextChannel.event_patterns = ['subscription.*', 'follow.*', 'media.*', 'download.*']
+    nextChannel.event_patterns = [...DEFAULT_NOTIFICATION_EVENT_PATTERNS]
   }
 
   const channelIndex = notificationsConfig.value.channels.findIndex((item) => item.id === editingChannelId.value)
@@ -317,6 +346,69 @@ async function saveChannel() {
   } catch {
     notificationsConfig.value.channels.splice(0, notificationsConfig.value.channels.length, ...previousChannels)
     notification.error(t('settings.addons.notifications.channelSaveFailed'))
+  }
+}
+
+function eventPatternScopeOptions() {
+  return [
+    { value: 'follow.*', label: t('settings.addons.notifications.eventScopeFollow') },
+    { value: 'download.*', label: t('settings.addons.notifications.eventScopeDownload') },
+    { value: 'media.*', label: t('settings.addons.notifications.eventScopeMedia') },
+    { value: 'subscription.ended.*', label: t('settings.addons.notifications.eventScopeSubscriptionEnded') },
+    { value: 'media_server_sync.*', label: t('settings.addons.notifications.eventScopeMediaServerSync') },
+    { value: 'danmu.*', label: t('settings.addons.notifications.eventScopeDanmu') },
+    { value: 'library.*', label: t('settings.addons.notifications.eventScopeLibrary') },
+  ].map((option) => ({
+    ...option,
+    label: `${t('settings.addons.notifications.eventScopeGroup')} · ${option.label}`,
+  }))
+}
+
+function eventTypeOptions() {
+  return Object.entries(EVENT_TYPE_MAP)
+    .filter(([domain]) => !['addon', 'notification'].includes(domain))
+    .flatMap(([domain, actions]) => Object.keys(actions).map((action) => `${domain}.${action}`))
+    .map((value) => ({
+      label: `${t('settings.addons.notifications.eventTypeGroup')} · ${eventTypeLabel(value)}`,
+      value,
+    }))
+}
+
+function eventTypeLabel(value) {
+  const eventMeta = resolveEventTypeMeta(value)
+  if (!eventMeta) return value
+  const subject = eventMeta.subjectKey ? t(eventMeta.subjectKey) : ''
+  const action = eventMeta.actionKey ? t(eventMeta.actionKey) : ''
+  return `${subject} ${action}`.trim() || value
+}
+
+async function testChannelConnection() {
+  const botToken = channelForm.bot_token.trim()
+  const chatId = channelForm.chat_id.trim()
+  if (!botToken || !chatId) {
+    notification.warn(t('settings.addons.notifications.telegramRequired'))
+    return
+  }
+
+  testingConnection.value = true
+  try {
+    await testServiceConnection(
+      {
+        type: 'telegram',
+        config: {
+          type: 'telegram',
+          bot_token: botToken,
+          chat_id: chatId,
+        },
+      },
+      { suppressErrorNotification: true },
+    )
+    notification.success(t('settings.addons.notifications.testMessageSent'))
+  } catch (error) {
+    console.error(t('settings.addons.notifications.testMessageFailed'), error)
+    notification.error(error?.message || t('settings.addons.notifications.testMessageFailed'))
+  } finally {
+    testingConnection.value = false
   }
 }
 

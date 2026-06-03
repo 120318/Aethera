@@ -6,15 +6,13 @@ from pathlib import Path
 
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.addon_events import ImportedMediaFile, MediaImportCompletedEventMeta
-from app.schemas.domain.addon_events import MediaImportFailedEventMeta, MediaImportStartedEventMeta
-from app.schemas.domain.alert import AlertCategory, AlertRaiseRequest, AlertResolveRequest, AlertSeverity, AlertTargetType
+from app.schemas.domain.addon_events import MediaImportFailedEventMeta
 from app.schemas.domain.download import TaskData, TaskErrorStage, TaskStatus, TransferFileResult, TransferResult
 from app.schemas.domain.event import EventActor, EventEntityRef, EventLevel, EventSource, MediaEventCreate
 from app.schemas.domain.library import LibraryFile
 from app.schemas.exception.base import AppException
 from app.schemas.exception.exceptions import TransferException
 from app.services.audit.event_service import event_service
-from app.services.domain.alerts import alert_service
 from app.services.domain.download import download_service
 from app.services.domain.library.service import library_service
 from app.services.domain.media import media_service
@@ -28,18 +26,6 @@ from .replacement import library_replacement_policy
 
 
 logger = logging.getLogger("app.services.transfer")
-
-
-def _transfer_alert_fingerprint(task_id: str) -> str:
-    return f"task.transfer:{task_id}"
-
-
-def _task_alert_title(task: TaskData) -> str:
-    if task.context and task.context.resource_title:
-        return task.context.resource_title
-    if task.metadata and task.metadata.name:
-        return task.metadata.name
-    return task.id
 
 
 def _nested_message_params(params: dict[str, str] | None) -> str:
@@ -72,7 +58,6 @@ class TransferService:
             await self._lock_task_status(task)
             existing_library_files = await library_service.get_files_by_task(task.id)
             execution_context = await execution.build_transfer_execution_context(task)
-            await emit_media_import_started(task)
             transfer_results = await execution.execute_transfer(task, execution_context)
             replacement_plan = await library_replacement_policy.build_plan(task, transfer_results, execution_context.season_number)
             await commit_transfer_results(
@@ -119,32 +104,6 @@ def cleanup_replaced_library_files(
 
 def _task_import_entities(task: TaskData) -> list[EventEntityRef]:
     return [EventEntityRef(type="task", id=task.id), EventEntityRef(type="media", id=str(task.media_id))]
-
-
-async def emit_media_import_started(task: TaskData) -> None:
-    try:
-        media = task.context.media
-        if media is None:
-            raise TransferException("backendErrors.transferMediaSnapshotMissing", params={"task_id": task.id, "media_id": str(task.media_id)})
-        event_service.emit_media(
-            MediaEventCreate(
-                type=EventTypes.MEDIA_IMPORT_STARTED,
-                media=media,
-                task_id=task.id,
-                actor=EventActor.system,
-                source=EventSource.base,
-                entities=_task_import_entities(task),
-            ),
-            meta=MediaImportStartedEventMeta(
-                task_id=task.id,
-                directory_id=task.context.directory_id,
-                media_id=task.media_id,
-                resource_title=task.context.resource_title,
-                torrent_name=task.metadata.name if task.metadata else None,
-            ),
-        )
-    except AppException as exc:
-        logger.warning("Failed to emit media import started event for task %s: %s", task.id, exc)
 
 
 async def emit_media_import_completed(task: TaskData, transfer_results: list[TransferFileResult]) -> None:
@@ -230,7 +189,6 @@ async def commit_transfer_results(
             replacement_files,
         )
         await download_service.update_task_state(task.id, TaskStatus.COMPLETED)
-        alert_service.resolve_alert(AlertResolveRequest(fingerprint=_transfer_alert_fingerprint(task.id)))
         cleanup_replaced_library_files(replaced_library_files or existing_library_files, transfer_results)
         try:
             await media_service.refresh_profile_safely(task.media_id, execution_context.season_number)
@@ -249,24 +207,6 @@ async def handle_transfer_error(task: TaskData, error_key: str, error_params: di
             error_key=error_key,
             error_params=error_params,
             error_stage=TaskErrorStage.TRANSFER,
-        )
-        alert_service.raise_alert(
-            AlertRaiseRequest(
-                fingerprint=_transfer_alert_fingerprint(task.id),
-                severity=AlertSeverity.error,
-                category=AlertCategory.task_transfer,
-                message_key="alertMessages.taskTransferFailed",
-                message_params={
-                    "task": _task_alert_title(task),
-                    "reason_key": error_key,
-                    "reason_params": _nested_message_params(error_params),
-                },
-                target_type=AlertTargetType.task,
-                target_id=task.id,
-                media=task.context.media if task.context else None,
-                media_id=task.media_id,
-                task_id=task.id,
-            )
         )
     except AppException as exc:
         logger.error("Failed to update error status: %s", exc)

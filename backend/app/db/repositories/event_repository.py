@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from sqlalchemy import delete, desc, func, not_, or_, select
+from sqlalchemy import delete, desc, func, insert, not_, or_, select
 
-from app.db.sql.models import EventORM
+from app.db.sql.models import EventAcknowledgementORM, EventORM
 from app.db.sql.session import SessionLocal
 from app.schemas.media_id import MediaID
 from app.schemas.domain.event import Event, EventLevel, EventSource, EventType
@@ -43,6 +43,7 @@ class EventRepository:
         action_id: str | None = None,
         keyword: str | None = None,
         excluded_type_prefixes: tuple[str, ...] = (),
+        acknowledged: bool | None = None,
     ):
         stmt = select(EventORM)
         if media_id:
@@ -69,6 +70,13 @@ class EventRepository:
             stmt = stmt.where(
                 not_(or_(*[EventORM.type.like(f"{prefix}%") for prefix in excluded_type_prefixes]))
             )
+        if acknowledged is not None:
+            ack_exists = (
+                select(EventAcknowledgementORM.event_id)
+                .where(EventAcknowledgementORM.event_id == EventORM.id)
+                .exists()
+            )
+            stmt = stmt.where(ack_exists if acknowledged else not_(ack_exists))
         return stmt
 
     @staticmethod
@@ -165,6 +173,7 @@ class EventRepository:
         action_id: str | None = None,
         keyword: str | None = None,
         excluded_type_prefixes: tuple[str, ...] = (),
+        acknowledged: bool | None = None,
     ) -> list[Event]:
         with SessionLocal() as session:
             stmt = self._build_filtered_stmt(
@@ -179,6 +188,7 @@ class EventRepository:
                 action_id=action_id,
                 keyword=keyword,
                 excluded_type_prefixes=excluded_type_prefixes,
+                acknowledged=acknowledged,
             ).order_by(desc(EventORM.ts))
             rows = session.execute(stmt).scalars().all()
             return [self._to_model(row) for row in rows]
@@ -199,6 +209,7 @@ class EventRepository:
         action_id: str | None = None,
         keyword: str | None = None,
         excluded_type_prefixes: tuple[str, ...] = (),
+        acknowledged: bool | None = None,
     ) -> tuple[int, list[Event]]:
         with SessionLocal() as session:
             stmt = self._build_filtered_stmt(
@@ -213,6 +224,7 @@ class EventRepository:
                 action_id=action_id,
                 keyword=keyword,
                 excluded_type_prefixes=excluded_type_prefixes,
+                acknowledged=acknowledged,
             )
 
             total = int(
@@ -276,6 +288,42 @@ class EventRepository:
         with SessionLocal() as session:
             row = session.get(EventORM, event_id)
             return self._to_model(row) if row else None
+
+    def acknowledge_event(self, event_id: str) -> bool:
+        acknowledged_at = datetime.now().isoformat()
+        with SessionLocal() as session:
+            event = session.get(EventORM, event_id)
+            if event is None:
+                return False
+            acknowledgement = session.get(EventAcknowledgementORM, event_id)
+            if acknowledgement is None:
+                session.add(EventAcknowledgementORM(event_id=event_id, acknowledged_at=acknowledged_at))
+            session.commit()
+            return True
+
+    def acknowledge_attention_events(self) -> int:
+        acknowledged_at = datetime.now().isoformat()
+        with SessionLocal() as session:
+            stmt = (
+                select(EventORM.id)
+                .where(EventORM.level.in_([EventLevel.warning.value, EventLevel.error.value]))
+                .where(
+                    not_(
+                        select(EventAcknowledgementORM.event_id)
+                        .where(EventAcknowledgementORM.event_id == EventORM.id)
+                        .exists()
+                    )
+                )
+            )
+            event_ids = session.execute(stmt).scalars().all()
+            if not event_ids:
+                return 0
+            session.execute(
+                insert(EventAcknowledgementORM),
+                [{"event_id": event_id, "acknowledged_at": acknowledged_at} for event_id in event_ids],
+            )
+            session.commit()
+            return len(event_ids)
 
     def prune_to_limit(self, max_records: int) -> int:
         limit = int(max_records or 0)

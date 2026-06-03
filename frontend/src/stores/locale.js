@@ -1,5 +1,6 @@
 import { computed } from 'vue'
 import { defineStore } from 'pinia'
+import { getSystemConfig, saveSystemConfig } from '@/api/config'
 import { SUPPORTED_LOCALES, i18n, setI18nLocale, t } from '@/i18n'
 
 export const useLocaleStore = defineStore('locale', () => {
@@ -13,7 +14,21 @@ export const useLocaleStore = defineStore('locale', () => {
   ))
 
   function setLocale(locale) {
-    setI18nLocale(locale)
+    const normalized = setI18nLocale(locale)
+    void syncBackendLocale(normalized)
+  }
+
+  async function syncBackendLocale(locale) {
+    try {
+      const data = await getSystemConfig()
+      const system = data.system || data
+      await saveSystemConfig({
+        ...system,
+        locale,
+      })
+    } catch (error) {
+      console.error('Failed to sync backend locale', error)
+    }
   }
 
   return {

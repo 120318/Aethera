@@ -8,9 +8,21 @@ from collections.abc import Mapping
 from app.core.action_context import get_current_action_id
 from app.db.repositories.event_repository import EventRepository
 from app.db.sql.serialization import to_jsonable
+from app.schemas.domain.action import ActionStatus
 from app.schemas.media_id import MediaID
-from app.schemas.domain.event import Event, EventCreate, EventLevel, EventSource, EventType, MediaEventCreate
+from app.schemas.domain.event import (
+    Event,
+    EventCenterBellState,
+    EventCenterResponse,
+    EventCenterSummary,
+    EventCreate,
+    EventLevel,
+    EventSource,
+    EventType,
+    MediaEventCreate,
+)
 from app.services.application.events.dispatch import event_dispatch_service
+from app.services.audit.action_service import action_service
 from app.services.audit.event_message_i18n import attach_event_message_i18n, event_message_key, event_message_params
 from app.services.audit.search_text_support import build_event_search_text
 from pydantic import BaseModel
@@ -183,9 +195,50 @@ class EventService:
             sources=sources,
             addon_id=addon_id,
             action_id=action_id,
-            excluded_type_prefixes=NON_BUSINESS_EVENT_PREFIXES,
         )
         return total, [attach_event_message_i18n(event) for event in events]
+
+    def get_center(self) -> EventCenterResponse:
+        active_action_count, active_actions = action_service.list_actions(
+            limit=50,
+            statuses=[ActionStatus.queued, ActionStatus.running],
+        )
+        _attention_total, events = self.repo.list_filtered_page(
+            limit=50,
+            offset=0,
+            levels=[EventLevel.warning, EventLevel.error],
+            acknowledged=False,
+        )
+        warning_event_count, _warning_sample = self.repo.list_filtered_page(
+            limit=1,
+            offset=0,
+            levels=[EventLevel.warning],
+            acknowledged=False,
+        )
+        error_event_count, _error_sample = self.repo.list_filtered_page(
+            limit=1,
+            offset=0,
+            levels=[EventLevel.error],
+            acknowledged=False,
+        )
+        if error_event_count > 0:
+            bell_state = EventCenterBellState.error
+        elif warning_event_count > 0:
+            bell_state = EventCenterBellState.warning
+        elif active_actions:
+            bell_state = EventCenterBellState.running
+        else:
+            bell_state = EventCenterBellState.idle
+        return EventCenterResponse(
+            summary=EventCenterSummary(
+                active_action_count=active_action_count,
+                warning_event_count=warning_event_count,
+                error_event_count=error_event_count,
+                bell_state=bell_state,
+            ),
+            active_actions=active_actions,
+            events=[attach_event_message_i18n(event) for event in events],
+        )
 
     def list_media_events(self, media_id: MediaID, limit: int = 50, season_number: int | None = None) -> list[Event]:
         events = [
@@ -196,6 +249,12 @@ class EventService:
         events.sort(key=lambda event: event.ts, reverse=True)
         items = events[:limit] if limit else events
         return [attach_event_message_i18n(event) for event in items]
+
+    def acknowledge_event(self, event_id: str) -> bool:
+        return self.repo.acknowledge_event(event_id)
+
+    def acknowledge_attention_events(self) -> int:
+        return self.repo.acknowledge_attention_events()
 
     def list_filter_options(
         self,

@@ -326,6 +326,8 @@ class SettingsService(SettingsObjectOperations):
         config = self._load_base_config()
         download = config.download.model_copy(update={"default_downloader_id": self.get_default_downloader_id()})
         return {
+            "locale": config.locale,
+            "public_base_url": config.public_base_url,
             "auth": {
                 "enabled": bool(config.auth.enabled),
                 "session_ttl_seconds": config.auth.session_ttl_seconds,
@@ -490,6 +492,8 @@ class SettingsService(SettingsObjectOperations):
 
     def _build_system_config(self, config: AppConfig) -> SystemConfig:
         return SystemConfig(
+            locale=config.locale,
+            public_base_url=config.public_base_url,
             cache=config.cache,
             scheduler=config.scheduler,
             download=config.download,
@@ -499,6 +503,8 @@ class SettingsService(SettingsObjectOperations):
         )
 
     def _apply_system_config(self, config: AppConfig, system_config: SystemConfig) -> None:
+        config.locale = system_config.locale
+        config.public_base_url = system_config.public_base_url
         config.cache, config.scheduler = system_config.cache, system_config.scheduler
         config.download = self._download_config_preserving_default(system_config.download)
         config.library, config.logging, config.onboarding_enabled = system_config.library, system_config.logging, system_config.onboarding_enabled

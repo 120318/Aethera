@@ -5,7 +5,6 @@ import os
 import pkgutil
 from abc import ABC, abstractmethod
 
-from app.core.feature_flags import telegram_notifications_enabled
 from app.schemas.exception.exceptions import ConfigurationException
 from app.schemas.config import NotificationChannelConfig
 from app.schemas.domain.event import Event
@@ -42,8 +41,6 @@ class NotificationChannelService:
         package_path = os.path.dirname(notification_channels_pkg.__file__)
         for _, module_name, is_pkg in pkgutil.iter_modules([package_path]):
             if not is_pkg:
-                continue
-            if module_name == "telegram" and not telegram_notifications_enabled():
                 continue
             importlib.import_module(f"app.services.integration.notifications.channels.{module_name}")
 

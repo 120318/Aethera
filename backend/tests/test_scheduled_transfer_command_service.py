@@ -25,6 +25,10 @@ async def test_enqueue_finished_tasks_counts_conflicts_as_skips_and_runtime_fail
         "app.services.application.workflows.scheduled_transfer.service.download_service.get_tasks",
         AsyncMock(return_value=tasks),
     )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.missing_transfer_source_paths",
+        AsyncMock(return_value=[]),
+    )
     create_command_mock = AsyncMock(
         side_effect=[object(), CommandConflictException(), RuntimeError("worker down")]
     )
@@ -38,3 +42,28 @@ async def test_enqueue_finished_tasks_counts_conflicts_as_skips_and_runtime_fail
     assert result.processed == 3
     assert result.completed == 1
     assert result.errors == 1
+
+
+@pytest.mark.asyncio
+async def test_enqueue_finished_tasks_delays_transfer_when_sources_are_not_visible(monkeypatch):
+    tasks = [SimpleNamespace(id="task-1")]
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.download_service.get_tasks",
+        AsyncMock(return_value=tasks),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.missing_transfer_source_paths",
+        AsyncMock(return_value=["/downloads/missing.mkv"]),
+    )
+    create_command_mock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.command_service.create_command",
+        create_command_mock,
+    )
+
+    result = await scheduled_transfer_command_service.enqueue_finished_tasks()
+
+    assert result.processed == 1
+    assert result.completed == 0
+    assert result.errors == 0
+    create_command_mock.assert_not_awaited()

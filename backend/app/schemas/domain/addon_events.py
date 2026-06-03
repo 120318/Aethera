@@ -16,6 +16,7 @@ class DownloadTaskEventMeta(BaseModel):
     torrent_hash: str | None = None
     progress: float | None = None
     selected_files: list[int] = Field(default_factory=list)
+    selected_episodes: list[int] = Field(default_factory=list)
     total_files: int | None = None
 
 

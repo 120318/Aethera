@@ -3,11 +3,6 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 
-class SubscriptionRunCompletedEventMeta(BaseModel):
-    checked: int
-    added: int
-
-
 class SubscriptionEnabledEventMeta(BaseModel):
     follow_auto_enabled: bool
 

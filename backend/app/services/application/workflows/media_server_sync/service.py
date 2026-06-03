@@ -111,15 +111,6 @@ class MediaServerSyncService:
                 if existing_state is None or not existing_state.last_success_at
                 else MediaServerChangeType.UPDATED
             )
-            emit_media_server_sync_events(
-                EventType.MEDIA_SERVER_SYNC_STARTED,
-                media_info,
-                file_path,
-                transfer_results,
-                media_server.id,
-                trigger="import",
-                task_id=event.task_id,
-            )
             await media_server_sync_pipeline.run(
                 media_info,
                 file_path,
@@ -287,14 +278,6 @@ class MediaServerSyncService:
                     str(media_root_dir),
                     LibraryFileArtifactStatus.pending,
                 )
-            emit_media_server_sync_events(
-                EventType.MEDIA_SERVER_SYNC_STARTED,
-                media,
-                file_path,
-                grouped_targets,
-                media_server.id,
-                trigger="manual",
-            )
             try:
                 await media_server_sync_pipeline.run(
                     media,

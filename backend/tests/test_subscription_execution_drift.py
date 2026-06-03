@@ -420,6 +420,65 @@ async def test_default_subscription_category_excludes_original_disc(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_select_resources_continues_after_known_candidate_payload_misses_targets(monkeypatch):
+    stale_pack = _video_resource("Show.S01.2160p.WEB-DL", [45, 46, 47, 48, 49, 50, 51, 52], seeders=50)
+    episode_45 = _video_resource("Show.S01E45.2160p.WEB-DL", [45], seeders=20)
+    payloads = {
+        stale_pack.resources.title: TorrentPayload(
+            metadata=TorrentMetadata(
+                hash="hash-stale",
+                name=stale_pack.resources.title,
+                size=40,
+                files=[
+                    TorrentFileItem(
+                        index=index,
+                        filename=f"Show.S01E{episode:02d}.mkv",
+                        size=1,
+                        attrs=ResourceAttributes(
+                            title=f"Show.S01E{episode:02d}",
+                            seasons=[1],
+                            episodes=[episode],
+                            sources=["WEB-DL"],
+                            resource_form="Video File",
+                        ),
+                    )
+                    for index, episode in enumerate(range(1, 41))
+                ],
+                attrs=ResourceAttributes(
+                    title=stale_pack.resources.title,
+                    seasons=[1],
+                    episodes=list(range(1, 41)),
+                    sources=["WEB-DL"],
+                    resource_form="Video File",
+                ),
+                coverage_kind="exact_episodes",
+            ),
+            blob=b"stale",
+        ),
+        episode_45.resources.title: TorrentPayload(metadata=_video_metadata(episode_45.resources.title, [45]), blob=b"episode"),
+    }
+
+    async def fake_fetch_payload(result):
+        return payloads[result.title]
+
+    monkeypatch.setattr(
+        "app.services.domain.resource.selection.fetch_torrent_payload",
+        fake_fetch_payload,
+    )
+
+    selected = await select_resources(
+        [stale_pack, episode_45],
+        episodes={45},
+        filters=SubscriptionFilters(resource_kind=["video_file"]),
+        episode_mode=True,
+    )
+
+    assert len(selected) == 1
+    assert selected[0][2].resources.title == episode_45.resources.title
+    assert selected[0][1] == [0]
+
+
+@pytest.mark.asyncio
 async def test_original_disc_category_only_selects_disc_package(monkeypatch):
     resources = [_disc_resource("Show.S01.Disc.1.of.1", seeders=20), _video_resource("Show.S01E01.1080p.WEB-DL", [1], seeders=50)]
     payloads = {

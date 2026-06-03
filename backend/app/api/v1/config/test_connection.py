@@ -8,11 +8,13 @@ from app.schemas.config import (
     PathMapping,
     ProwlarrConfig,
     RTorrentConfig,
+    TelegramNotificationChannelConfig,
     TMDBConfig,
     QBittorrentConfig,
 )
 from app.schemas.exception import ServiceTypeException, TestConnectionException
 from app.services.integration import douban as douban_integration
+from app.services.integration import notifications as notifications_integration
 from app.services.integration import tmdb as tmdb_integration
 from app.services.integration.download.gateway import download_gateway
 from app.services.integration.indexer import indexer_gateway
@@ -27,6 +29,7 @@ SERVICE_TYPE_PROWLARR = "prowlarr"
 SERVICE_TYPE_JELLYFIN = "jellyfin"
 SERVICE_TYPE_TMDB = "themoviedb"
 SERVICE_TYPE_DOUBAN = "douban"
+SERVICE_TYPE_TELEGRAM = "telegram"
 SUPPORTED_SERVICE_TYPES = [
     SERVICE_TYPE_QBITTORRENT,
     SERVICE_TYPE_RTORRENT,
@@ -35,6 +38,7 @@ SUPPORTED_SERVICE_TYPES = [
     SERVICE_TYPE_JELLYFIN,
     SERVICE_TYPE_TMDB,
     SERVICE_TYPE_DOUBAN,
+    SERVICE_TYPE_TELEGRAM,
 ]
 
 
@@ -47,6 +51,8 @@ class TestConnectionConfig(BaseModel):
     username: str | None = None
     password: str | None = None
     api_key: str | None = None
+    bot_token: str | None = None
+    chat_id: str | None = None
     path_mappings: list[PathMapping] = []
 
 
@@ -91,6 +97,12 @@ async def test_service_connection(payload: TestServiceConnectionRequest):
     elif service_type == SERVICE_TYPE_DOUBAN:
         config = DoubanConfig.model_validate(config_data)
         success = await douban_integration.test_connection_for_config(config)
+    elif service_type == SERVICE_TYPE_TELEGRAM:
+        config = TelegramNotificationChannelConfig.model_validate(config_data)
+        try:
+            success = await notifications_integration.test_telegram_connection_for_config(config)
+        except RuntimeError as exc:
+            raise TestConnectionException(service_name=service_type, reason=str(exc)) from exc
     else:
         raise ServiceTypeException(service_type=service_type, supported_types=SUPPORTED_SERVICE_TYPES)
 

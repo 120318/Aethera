@@ -50,10 +50,21 @@ export function syncDownloadState(download, value) {
   download.default_tag = next.default_tag ?? 'Aethera'
 }
 
-export function buildNextDownloadConfig(currentDownload, download) {
+export function syncGeneralState(general, value) {
+  const next = value || {}
+  general.locale = next.locale || 'zh-CN'
+  general.public_base_url = next.public_base_url || ''
+}
+
+export function buildNextGeneralSystemConfig(config, general, download) {
   return {
-    ...(currentDownload || {}),
-    default_tag: String(download.default_tag ?? '').trim(),
+    ...(config || {}),
+    locale: general.locale || 'zh-CN',
+    public_base_url: String(general.public_base_url || '').trim().replace(/\/+$/, ''),
+    download: {
+      ...(config?.download || {}),
+      default_tag: String(download.default_tag ?? '').trim(),
+    },
   }
 }
 

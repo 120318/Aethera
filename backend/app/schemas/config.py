@@ -386,6 +386,21 @@ class AuthAddonConfig(BaseModel):
     providers: list[OIDCAuthProviderConfig] = Field(default_factory=list)
 
 
+DEFAULT_NOTIFICATION_EVENT_PATTERNS = [
+    "download.completed",
+    "download.failed",
+    "download.task.downloader_change_failed",
+    "download.task.storage_change_failed",
+    "media.import.completed",
+    "media.import.failed",
+    "library.file.missing",
+    "follow.*",
+    "subscription.ended.*",
+    "media_server_sync.failed",
+    "danmu.generate.failed",
+]
+
+
 class NotificationChannelConfig(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
@@ -394,7 +409,7 @@ class NotificationChannelConfig(BaseModel):
     name: str = ""
     enabled: bool = True
     event_patterns: list[str] = Field(
-        default_factory=lambda: ["subscription.*", "follow.*", "media.*", "download.*"]
+        default_factory=lambda: list(DEFAULT_NOTIFICATION_EVENT_PATTERNS)
     )
     levels: list[str] = Field(default_factory=list)
 
@@ -499,7 +514,7 @@ class AddonsConfig(BaseModel):
                         "type": "telegram",
                         "name": bot["name"] if type(bot) is dict and "name" in bot else "",
                         "enabled": bool(bot["enabled"]) if type(bot) is dict and "enabled" in bot else True,
-                        "event_patterns": list(bot["event_patterns"]) if type(bot) is dict and "event_patterns" in bot and type(bot["event_patterns"]) is list else ["subscription.*", "follow.*", "media.*", "download.*"],
+                        "event_patterns": list(bot["event_patterns"]) if type(bot) is dict and "event_patterns" in bot and type(bot["event_patterns"]) is list else list(DEFAULT_NOTIFICATION_EVENT_PATTERNS),
                         "levels": list(bot["levels"]) if type(bot) is dict and "levels" in bot and type(bot["levels"]) is list else [],
                         "bot_token": bot["bot_token"] if type(bot) is dict and "bot_token" in bot else "",
                         "chat_id": bot["chat_id"] if type(bot) is dict and "chat_id" in bot else "",
@@ -530,12 +545,32 @@ class ServicesConfig(BaseModel):
 class SystemConfig(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
+    locale: str = "zh-CN"
+    public_base_url: str = ""
     cache: CacheConfig = Field(default_factory=CacheConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     download: DownloadConfig = Field(default_factory=DownloadConfig)
     library: LibraryConfig = Field(default_factory=LibraryConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     onboarding_enabled: bool = False
+
+    @field_validator("locale", mode="before")
+    @classmethod
+    def validate_locale(cls, value: object) -> str:
+        normalized = str(value or "zh-CN").replace("_", "-").strip()
+        if normalized.lower().startswith("en"):
+            return "en-US"
+        return "zh-CN"
+
+    @field_validator("public_base_url", mode="before")
+    @classmethod
+    def validate_public_base_url(cls, value: object) -> str:
+        normalized = str(value or "").strip().rstrip("/")
+        if not normalized:
+            return ""
+        if not (normalized.startswith("http://") or normalized.startswith("https://")):
+            return ""
+        return normalized
 
 
 class AppConfig(BaseModel):
@@ -545,6 +580,8 @@ class AppConfig(BaseModel):
     browse_source: BrowseSource = BrowseSource.douban
     douban: DoubanConfig = Field(default_factory=DoubanConfig)
     themoviedb: TMDBConfig = Field(default_factory=TMDBConfig)
+    locale: str = "zh-CN"
+    public_base_url: str = ""
 
     # Internal note.
     indexers: list[IndexerProviderConfig] = Field(default_factory=list)
@@ -561,6 +598,16 @@ class AppConfig(BaseModel):
     default_indexer_id: str | None = None
     default_movie_template_id: str | None = None
     default_tv_template_id: str | None = None
+
+    @field_validator("locale", mode="before")
+    @classmethod
+    def validate_locale(cls, value: object) -> str:
+        return SystemConfig.validate_locale(value)
+
+    @field_validator("public_base_url", mode="before")
+    @classmethod
+    def validate_public_base_url(cls, value: object) -> str:
+        return SystemConfig.validate_public_base_url(value)
 
     # Internal note.
     cache: CacheConfig = Field(default_factory=CacheConfig)

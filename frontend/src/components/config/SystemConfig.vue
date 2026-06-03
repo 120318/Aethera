@@ -18,6 +18,16 @@
             class="w-full"
           />
         </div>
+        <div class="ui-dialog-section w-full md:w-1/2">
+          <label for="system-public-base-url" class="ui-dialog-item-title block">{{ $t('settings.system.publicBaseUrl') }}</label>
+          <p class="m-none text-caption text-muted">{{ $t('settings.system.publicBaseUrlHint') }}</p>
+          <InputText
+            v-model="general.public_base_url"
+            input-id="system-public-base-url"
+            :placeholder="$t('settings.system.publicBaseUrlPlaceholder')"
+            class="w-full"
+          />
+        </div>
       </div>
     </div>
 
@@ -119,14 +129,15 @@ import InputText from 'primevue/inputtext'
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { changePassword, logout } from '@/api/auth'
-import { saveAuthConfig, saveDownloadConfig, saveLoggingConfig } from '@/api/config'
+import { getSystemConfig, saveAuthConfig, saveLoggingConfig, saveSystemConfig } from '@/api/config'
 import {
-  buildNextDownloadConfig,
   buildNextAuthConfig,
+  buildNextGeneralSystemConfig,
   buildNextSystemLoggingConfig,
   buildLoggingFieldDefinitions,
   syncAuthState,
   syncDownloadState,
+  syncGeneralState,
   syncLoggingState,
 } from '@/components/config/systemConfigSupport'
 import { useAuthStore } from '@/stores/auth'
@@ -151,6 +162,10 @@ const savingLogging = ref(false)
 const savingAuth = ref(false)
 const savingPassword = ref(false)
 
+const general = reactive({
+  locale: 'zh-CN',
+  public_base_url: '',
+})
 const download = reactive({
   default_tag: 'Aethera',
 })
@@ -168,9 +183,16 @@ const newPasswordConfirm = ref('')
 
 const loggingFields = computed(() => buildLoggingFieldDefinitions(t).map((field) => ({ ...field, model: logging })))
 
+syncGeneralState(general, props.config)
 syncDownloadState(download, props.config.download)
 syncAuthState(auth, props.config.auth)
 syncLoggingState(logging, props.config.logging)
+
+watch(
+  () => props.config,
+  (value) => syncGeneralState(general, value),
+  { deep: true },
+)
 
 watch(
   () => props.config.download,
@@ -193,13 +215,16 @@ watch(
 const saveDownloadConfigSection = async () => {
   savingDownload.value = true
   try {
-    const nextDownload = buildNextDownloadConfig(props.config.download, download)
-    await saveDownloadConfig({
-      download: nextDownload,
+    const nextSystem = buildNextGeneralSystemConfig(props.config, general, download)
+    const data = await getSystemConfig()
+    const currentSystem = data.system || data
+    await saveSystemConfig({
+      ...currentSystem,
+      locale: nextSystem.locale,
+      public_base_url: nextSystem.public_base_url,
+      download: nextSystem.download,
     })
-    props.applyConfigPatch({
-      download: nextDownload,
-    })
+    props.applyConfigPatch(nextSystem)
     notification.success(t('settings.system.generalSaved'))
   } catch (error) {
     notification.error(t('settings.system.saveFailed', { message: error.message || error }))

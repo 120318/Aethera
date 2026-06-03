@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import actions, alerts, auth, calendar, commands, config, discover, events, addons, library, logs, media, media_management, resource, scheduler, subscription, task
+from app.api.v1 import actions, auth, calendar, commands, config, discover, events, addons, library, logs, media, media_management, resource, scheduler, subscription, task
 from app.api.v1.config.test_directory import router as test_directory_router
 from app.api.v1.resource import download_history, parser
 
@@ -22,7 +22,6 @@ api_router.include_router(task.router, tags=["task"])
 api_router.include_router(commands.router, tags=["commands"])
 api_router.include_router(events.router, tags=["events"])
 api_router.include_router(actions.router, tags=["actions"])
-api_router.include_router(alerts.router, tags=["alerts"])
 api_router.include_router(logs.router, tags=["logs"])
 api_router.include_router(addons.router, tags=["addons"])
 api_router.include_router(media_management.router, tags=["media-management"])

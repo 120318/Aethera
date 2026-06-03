@@ -176,6 +176,36 @@ async def test_sync_active_downloads_marks_pending_task_as_downloading_when_prog
 
 
 @pytest.mark.asyncio
+async def test_sync_active_downloads_completed_event_uses_live_torrent_progress(monkeypatch):
+    task = _task(status=TaskStatus.DOWNLOADING)
+    task.progress = 0.96
+    torrent = TorrentStatus(
+        hash=task.torrent_hash,
+        name="Torrent",
+        size=100,
+        progress=1.0,
+        state=TorrentState.SEEDING,
+        downloader_id="downloader-1",
+    )
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.domain.download.task_runtime_service.event_service",
+        type("FakeEventService", (), {"emit_media": lambda self, event, meta=None: captured.setdefault("meta", meta)})(),
+    )
+    service = TaskRuntimeService(_FakeRepo(task), _FakeClientFactory(torrent_statuses=[torrent]))
+    update_task_state = AsyncMock(return_value=True)
+
+    result = await service.sync_active_downloads(
+        get_tasks_by_statuses=AsyncMock(return_value=[task]),
+        update_task_state=update_task_state,
+    )
+
+    assert result.updated == 1
+    assert captured["meta"].progress == 1.0
+    update_task_state.assert_awaited_once_with(task.id, TaskStatus.FINISHED, None, 1.0, None)
+
+
+@pytest.mark.asyncio
 async def test_recover_stuck_transferring_tasks_force_recovers_all_transferring_tasks():
     task = _task(status=TaskStatus.TRANSFERRING)
     service = TaskRuntimeService(_FakeRepo(task), _FakeClientFactory())

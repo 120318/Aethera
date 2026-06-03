@@ -66,14 +66,6 @@ class MediaServerSyncSeasonRunner:
                 needs.media_root_dir,
                 LibraryFileArtifactStatus.pending,
             )
-        emit_media_server_sync_events(
-            EventType.MEDIA_SERVER_SYNC_STARTED,
-            media,
-            needs.anchor_file or "",
-            needs.transfer_results,
-            media_server.id,
-            trigger="scheduler",
-        )
         try:
             await self.apply_updates(media_server, media, needs.anchor_file, needs.transfer_results, needs.media_root_dir)
         except ValueError as exc:

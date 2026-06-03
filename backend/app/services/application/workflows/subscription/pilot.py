@@ -4,10 +4,8 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.command import CommandCreateRequest, CommandInitiator, CommandType, PilotEpisodeCommandRequestPayload
 from app.schemas.domain.download import DownloadTaskCreateInput
-from app.schemas.domain.event import EventActor, EventEntityRef, EventLevel, EventSource, MediaEventCreate
 from app.schemas.domain.media import MediaExecutionSnapshot, MediaTarget
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_search import MediaSearchQuery
@@ -21,7 +19,6 @@ from app.services.domain.resource.selection import (
     select_resources as select_download_resources,
 )
 from app.services.application.commands.service import command_service
-from app.services.audit.event_service import event_service
 from app.services.config.settings_service import settings_service
 from app.services.domain.download import download_service
 from app.services.domain.library.service import library_service
@@ -68,22 +65,6 @@ class PilotDownloadApplicationService:
         media = command.payload.media
         if media is None:
             raise DownloadException("backendErrors.mediaExecutionSnapshotRequired")
-        event_service.emit_media(
-            MediaEventCreate(
-                type=EventTypes.PILOT_EPISODE_QUEUED,
-                level=EventLevel.info,
-                message_params={
-                    "directory_id": effective_config.directory_id or "",
-                    "site_count": str(len(effective_config.sites or [])),
-                },
-                media=media,
-                actor=EventActor.user,
-                source=EventSource.base,
-                entities=[EventEntityRef(type="command", id=command.id)],
-                correlation_id=command.id,
-                action_id=command.id,
-            ),
-        )
         return command
 
     async def execute(

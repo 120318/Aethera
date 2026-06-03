@@ -1,7 +1,7 @@
 <template>
   <ConfigDialog
     :model-value="visible"
-    :title="$t('alertCenter.title')"
+    :title="$t('notificationCenter.title')"
     size="lg"
     @update:model-value="handleVisibleChange"
   >
@@ -12,17 +12,29 @@
       </div>
 
       <div class="flex flex-wrap items-center gap-item text-caption text-muted">
-        <AppTag :label="$t('alertCenter.runningCount', { count: summary.active_action_count || 0 })" tone="accent" />
-        <AppTag :label="$t('alertCenter.errorCount', { count: summary.unacknowledged_error_count || 0 })" tone="danger" />
+        <AppTag :label="$t('notificationCenter.runningCount', { count: summary.active_action_count || 0 })" tone="accent" />
+        <AppTag :label="$t('notificationCenter.warningCount', { count: summary.warning_event_count || 0 })" tone="warn" />
+        <AppTag :label="$t('notificationCenter.errorCount', { count: summary.error_event_count || 0 })" tone="danger" />
+        <Button
+          v-if="unreadEventCount > 0"
+          :label="$t('notificationCenter.markAllRead')"
+          icon="pi pi-check"
+          severity="secondary"
+          outlined
+          size="small"
+          class="ml-auto"
+          :loading="markingAllRead"
+          @click="handleMarkAllRead"
+        />
       </div>
 
       <section class="flex flex-col gap-item">
         <div v-if="loading && !centerItems.length" class="ui-tab-empty">
-          <EmptyState :border="false" :description="$t('alertCenter.loadingStatus')" image="pi pi-spin pi-spinner" />
+          <EmptyState :border="false" :description="$t('notificationCenter.loadingStatus')" image="pi pi-spin pi-spinner" />
         </div>
         <div v-else-if="centerItems.length === 0" class="ui-tab-empty">
-          <p class="text-title font-medium mb-item">{{ $t('alertCenter.noAlertsTitle') }}</p>
-          <p class="text-caption text-muted">{{ $t('alertCenter.noAlertsDescription') }}</p>
+          <p class="text-title font-medium mb-item">{{ $t('notificationCenter.noEventsTitle') }}</p>
+          <p class="text-caption text-muted">{{ $t('notificationCenter.noEventsDescription') }}</p>
         </div>
         <DataView v-else :value="centerItems" layout="list" class="overflow-hidden" :pt="listPt">
           <template #list="slotProps">
@@ -65,30 +77,32 @@
                       </span>
                     </div>
                   </div>
-                  <Button
-                    v-if="item.kind === 'alert'"
-                    v-tooltip.top="$t('alertCenter.acknowledge')"
-                    icon="pi pi-times"
-                    severity="secondary"
-                    text
-                    rounded
-                    :aria-label="$t('alertCenter.acknowledge')"
-                    class="w-control-icon h-control-icon p-none shrink-0 self-start transition-colors"
-                    :loading="acknowledgingAlertIds.has(item.record.id)"
-                    @click="handleAcknowledge(item.record)"
-                  />
-                  <Button
-                    v-else-if="canCancelAction(item.record)"
-                    v-tooltip.top="$t('operationCenter.cancelTask')"
-                    icon="pi pi-times"
-                    severity="danger"
-                    text
-                    rounded
-                    :aria-label="$t('operationCenter.cancelTask')"
-                    class="w-control-icon h-control-icon p-none shrink-0 self-start transition-colors"
-                    :loading="cancellingActionIds.has(item.record.id)"
-                    @click="handleCancelAction(item.record)"
-                  />
+                  <div class="flex items-center gap-inline shrink-0 self-start">
+                    <Button
+                      v-if="item.kind === 'event'"
+                      v-tooltip.top="$t('notificationCenter.markRead')"
+                      icon="pi pi-check"
+                      severity="secondary"
+                      text
+                      rounded
+                      :aria-label="$t('notificationCenter.markRead')"
+                      class="w-control-icon h-control-icon p-none transition-colors"
+                      :loading="markingReadEventIds.has(item.record.id)"
+                      @click="handleMarkEventRead(item.record)"
+                    />
+                    <Button
+                      v-if="canCancelAction(item.record)"
+                      v-tooltip.top="$t('operationCenter.cancelTask')"
+                      icon="pi pi-times"
+                      severity="danger"
+                      text
+                      rounded
+                      :aria-label="$t('operationCenter.cancelTask')"
+                      class="w-control-icon h-control-icon p-none transition-colors"
+                      :loading="cancellingActionIds.has(item.record.id)"
+                      @click="handleCancelAction(item.record)"
+                    />
+                  </div>
                 </div>
               </article>
             </div>
@@ -100,7 +114,7 @@
 </template>
 
 <script setup>
-import { reactive, watch } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { RouterLink } from 'vue-router'
 import Button from 'primevue/button'
@@ -108,9 +122,10 @@ import DataView from 'primevue/dataview'
 import AppTag from '@/components/common/AppTag.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import ConfigDialog from '@/components/common/ConfigDialog.vue'
-import { useAlertCenterStore } from '@/stores/alert-center'
+import { useNotificationCenterStore } from '@/stores/notification-center'
 import { useOperationsStore } from '@/stores/operations'
 import { resolveActionKindLabel, resolveActionNameLabel, resolveActionStatusMeta, resolvePilotEpisodeActionLabel } from '@/constants/actionTypes'
+import { resolveEventTypeMeta } from '@/constants/eventTypes'
 import { formatAbsoluteDateTime, formatRelativeTime } from '@/utils/formatters'
 import { resolveLocalizedRecordMessage } from '@/utils/localizedMessage'
 import { useI18n } from 'vue-i18n'
@@ -123,15 +138,16 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:visible'])
-const alertCenter = useAlertCenterStore()
+const notificationCenter = useNotificationCenterStore()
 const operationsStore = useOperationsStore()
-const { summary, centerItems, lastError, loading } = storeToRefs(alertCenter)
+const { summary, centerItems, lastError, loading, markingAllRead } = storeToRefs(notificationCenter)
 const { t } = useI18n()
 const cancellingActionIds = reactive(new Set())
-const acknowledgingAlertIds = reactive(new Set())
+const markingReadEventIds = reactive(new Set())
 const listPt = {
   content: { class: 'p-none bg-transparent border-none' },
 }
+const unreadEventCount = computed(() => (summary.value.warning_event_count || 0) + (summary.value.error_event_count || 0))
 
 function handleVisibleChange(value) {
   emit('update:visible', value)
@@ -205,21 +221,22 @@ function mediaRouteFor(record) {
   }
 }
 
-function alertTarget(alert) {
-  const media = alert?.media
+function eventTarget(event) {
+  const media = event?.media
   if (media?.title && media?.year) return `${media.title} (${media.year})`
-  return alert?.message_params?.task || alert?.task_id || alert?.target_id || '-'
+  return event?.message_params?.target || event?.message_params?.task || event?.task_id || event?.subscription_id || event?.action_id || '-'
 }
 
-function alertCategoryLabel(alert) {
-  const key = alert?.category ? `alertCenter.categories.${alert.category}` : ''
-  if (!key) return ''
-  const label = t(key)
-  return label && label !== key ? label : alert.category
+function eventTypeLabel(event) {
+  const eventMeta = resolveEventTypeMeta(event?.type)
+  if (!eventMeta) return event?.type || ''
+  const subject = eventMeta.subjectKey ? t(eventMeta.subjectKey) : ''
+  const action = eventMeta.actionKey ? t(eventMeta.actionKey) : ''
+  return [subject, action].filter(Boolean).join(' · ') || event.type
 }
 
-function alertMessage(alert) {
-  return resolveLocalizedRecordMessage(alert, t('alertCenter.noMessage'))
+function eventMessage(event) {
+  return resolveLocalizedRecordMessage(event, t('notificationCenter.noMessage'))
 }
 
 function itemRecord(item) {
@@ -227,47 +244,46 @@ function itemRecord(item) {
 }
 
 function itemStatusLabel(item) {
-  if (item?.kind === 'alert') return t('alertCenter.status.error')
+  if (item?.kind === 'event') return t(`notificationCenter.levels.${itemRecord(item).level}`)
   return getStatusLabel(itemRecord(item).status)
 }
 
 function itemStatusTone(item) {
-  if (item?.kind === 'alert') return 'danger'
+  if (item?.kind === 'event') return itemRecord(item).level === 'error' ? 'danger' : 'warn'
   return getStatusTone(itemRecord(item).status)
 }
 
 function itemStatusIcon(item) {
-  if (item?.kind === 'alert') return 'pi pi-exclamation-triangle'
+  if (item?.kind === 'event') return itemRecord(item).level === 'error' ? 'pi pi-times-circle' : 'pi pi-exclamation-triangle'
   return itemRecord(item).status === 'running' ? 'pi pi-spin pi-spinner' : ''
 }
 
 function itemTypeLabel(item) {
   const record = itemRecord(item)
-  if (item?.kind === 'alert') return alertCategoryLabel(record)
+  if (item?.kind === 'event') return eventTypeLabel(record)
   return getActionTypeLabel(record)
 }
 
 function itemTarget(item) {
   const record = itemRecord(item)
-  return item?.kind === 'alert' ? alertTarget(record) : actionTarget(record)
+  return item?.kind === 'event' ? eventTarget(record) : actionTarget(record)
 }
 
 function itemMessage(item) {
   const record = itemRecord(item)
-  return item?.kind === 'alert' ? alertMessage(record) : actionMessage(record)
+  return item?.kind === 'event' ? eventMessage(record) : actionMessage(record)
 }
 
 function itemTimestamp(item) {
   const record = itemRecord(item)
-  return item?.kind === 'alert' ? (record.last_seen_at || record.updated_at || record.created_at) : actionTimestamp(record)
+  return item?.kind === 'event' ? record.ts : actionTimestamp(record)
 }
 
 function itemMetaText(item) {
-  const record = itemRecord(item)
-  if (item?.kind === 'alert') {
-    return t('alertCenter.occurrenceCount', { count: record.occurrence_count || 1 })
+  if (item?.kind === 'event') {
+    return t('notificationCenter.eventMeta')
   }
-  return t('alertCenter.runningMeta')
+  return t('notificationCenter.runningMeta')
 }
 
 function getItemMediaRoute(item) {
@@ -291,26 +307,31 @@ async function handleCancelAction(action) {
   cancellingActionIds.add(action.id)
   try {
     await operationsStore.cancelCommand(action.id)
-    await alertCenter.refreshCenter()
+    await notificationCenter.refreshCenter()
   } finally {
     cancellingActionIds.delete(action.id)
   }
 }
 
-async function handleAcknowledge(alert) {
-  if (!alert?.id || acknowledgingAlertIds.has(alert.id)) return
-  acknowledgingAlertIds.add(alert.id)
+async function handleMarkEventRead(event) {
+  if (!event?.id || markingReadEventIds.has(event.id)) return
+  markingReadEventIds.add(event.id)
   try {
-    await alertCenter.acknowledge(alert.id)
+    await notificationCenter.markEventRead(event.id)
   } finally {
-    acknowledgingAlertIds.delete(alert.id)
+    markingReadEventIds.delete(event.id)
   }
+}
+
+async function handleMarkAllRead() {
+  if (markingAllRead.value || unreadEventCount.value <= 0) return
+  await notificationCenter.markAllRead()
 }
 
 watch(
   () => props.visible,
   (visible) => {
-    if (visible) alertCenter.refreshCenter()
+    if (visible) notificationCenter.refreshCenter()
   },
   { immediate: true }
 )
