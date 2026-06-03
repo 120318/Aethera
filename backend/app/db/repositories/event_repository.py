@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 from sqlalchemy import delete, desc, func, insert, not_, or_, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.sql.models import EventAcknowledgementORM, EventORM
 from app.db.sql.session import SessionLocal
@@ -295,9 +296,11 @@ class EventRepository:
             event = session.get(EventORM, event_id)
             if event is None:
                 return False
-            acknowledgement = session.get(EventAcknowledgementORM, event_id)
-            if acknowledgement is None:
-                session.add(EventAcknowledgementORM(event_id=event_id, acknowledged_at=acknowledged_at))
+            session.execute(
+                sqlite_insert(EventAcknowledgementORM)
+                .values(event_id=event_id, acknowledged_at=acknowledged_at)
+                .on_conflict_do_nothing(index_elements=[EventAcknowledgementORM.event_id])
+            )
             session.commit()
             return True
 

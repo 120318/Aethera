@@ -46,6 +46,21 @@ def test_emit_media_merges_default_and_explicit_message_params():
     assert ev.message_params["downloader_id"] == "d1"
 
 
+def test_acknowledge_event_is_idempotent():
+    svc = EventService()
+    media_id = MediaID.parse(f"douban:movie:{uuid.uuid4().hex}")
+    ev = svc.emit_media(
+        MediaEventCreate(
+            type=EventTypes.MEDIA_IMPORT_FAILED,
+            level=EventLevel.error,
+            media=MediaIdentity(media_id=media_id, title="text1", year=2024),
+        ),
+    )
+
+    assert svc.acknowledge_event(ev.id) is True
+    assert svc.acknowledge_event(ev.id) is True
+
+
 def test_list_events_filters():
     svc = EventService()
     media_id_1 = MediaID.parse(f"douban:movie:{uuid.uuid4().hex}")

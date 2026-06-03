@@ -25,7 +25,7 @@
     </div>
 
     <ConfigDialog
-      v-model:visible="dialogVisible"
+      v-model="dialogVisible"
       :title="$t('settings.addons.notifications.editTitle')"
       size="lg"
       :intro="$t('settings.addons.notifications.intro')"
@@ -68,7 +68,7 @@
     </ConfigDialog>
 
     <ConfigDialog
-      v-model:visible="channelDialogVisible"
+      v-model="channelDialogVisible"
       :title="editingChannelId ? $t('settings.addons.notifications.editChannel') : $t('settings.addons.notifications.addChannelTitle')"
       size="lg"
     >

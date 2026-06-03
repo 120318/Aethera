@@ -1,13 +1,22 @@
 import logging
+from datetime import datetime
 
 from app.schemas.exception.exceptions import DownloadException
 from app.schemas.domain.command import CommandCreateRequest, CommandInitiator, CommandType, TaskTransferCommandRequestPayload
-from app.schemas.domain.download import BatchJobResult, TaskStatus
+from app.schemas.domain.download import BatchJobResult, TaskData, TaskStatus
 from app.services.application.commands.service import CommandConflictException, command_service
 from app.services.domain.download import download_service
 from app.services.domain.transfer.execution import missing_transfer_source_paths
 
 logger = logging.getLogger("app.services.scheduled_transfer_command")
+
+SOURCE_VISIBILITY_GRACE_SECONDS = 120
+
+
+def _source_visibility_grace_elapsed(task: TaskData, now: datetime | None = None) -> bool:
+    if not task.updated_at:
+        return True
+    return ((now or datetime.now()) - task.updated_at).total_seconds() >= SOURCE_VISIBILITY_GRACE_SECONDS
 
 
 class ScheduledTransferCommandService:
@@ -25,12 +34,18 @@ class ScheduledTransferCommandService:
             try:
                 missing_sources = await missing_transfer_source_paths(task)
                 if missing_sources:
-                    logger.info(
-                        "Scheduled transfer delayed until source files are visible: task=%s missing=%s",
+                    if not _source_visibility_grace_elapsed(task):
+                        logger.info(
+                            "Scheduled transfer delayed until source files are visible: task=%s missing=%s",
+                            task.id,
+                            missing_sources[:3],
+                        )
+                        continue
+                    logger.warning(
+                        "Scheduled transfer source files still missing after grace period; enqueueing transfer for visible failure handling: task=%s missing=%s",
                         task.id,
                         missing_sources[:3],
                     )
-                    continue
                 await command_service.create_command(
                     CommandCreateRequest(
                         type=CommandType.TASK_TRANSFER,

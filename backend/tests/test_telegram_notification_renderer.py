@@ -43,7 +43,8 @@ def test_telegram_download_completed_uses_user_summary_in_zh_cn():
     assert "资源：" in message
     assert "时间：2026\\-06\\-02 20:30" in message
     assert "查看详情" in message
-    assert "https://ae\\.example\\.com/media/tmdb:tv:273240?season\\_number\\=1" in message
+    assert "https://ae\\.example\\.com/media/tmdb:tv:273240?season\\=1" in message
+    assert "season\\_number" not in message
     assert "download.completed" not in message
     assert "task-1" not in message
     assert "meta:" not in message

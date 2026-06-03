@@ -169,7 +169,7 @@ def _detail_url(event: Event, public_base_url: str) -> str:
     path = f"/media/{quote(str(event.media_id), safe=':')}"
     query = ""
     if event.media and event.media.season_number:
-        query = f"?{urlencode({'season_number': event.media.season_number})}"
+        query = f"?{urlencode({'season': event.media.season_number})}"
     return f"{base}{path}{query}"
 
 
