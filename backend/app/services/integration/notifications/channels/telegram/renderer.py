@@ -35,7 +35,7 @@ class TelegramEventMeta(BaseModel):
 
 def escape_markdown(value: str) -> str:
     escaped = value or ""
-    for char in "\\_[]()~`>#+-=|{}.!":
+    for char in "\\_*[]()~`>#+-=|{}.!":
         escaped = escaped.replace(char, f"\\{char}")
     return escaped
 
@@ -149,7 +149,7 @@ def _message_param(event: Event, name: str) -> str:
 def _reason_line(event: Event, meta: TelegramEventMeta, locale: str) -> str:
     if event.level == EventLevel.info and not event.type.value.endswith(".failed"):
         return ""
-    reason = meta.error or meta.reason or _message_param(event, "reason")
+    reason = meta.error or meta.reason or _message_param(event, "reason") or _message_param(event, "error")
     reason_key = meta.error_key or _message_param(event, "reason_key")
     if reason_key:
         reason = render_message(str(reason_key), {str(key): str(value) for key, value in meta.error_params.items()}, locale=locale)
@@ -187,6 +187,7 @@ def _title_key(event: Event) -> str:
         EventType.DANMU_GENERATE_FAILED: "telegram.titles.danmuGenerateFailed",
         EventType.MEDIA_DELETED: "telegram.titles.mediaDeleted",
         EventType.LIBRARY_FILE_MISSING: "telegram.titles.libraryFileMissing",
+        EventType.INDEXER_SITE_UNHEALTHY: "telegram.titles.indexerSiteUnhealthy",
         EventType.FOLLOW_RELEASED: "telegram.titles.followReleased",
         EventType.FOLLOW_DIGITAL_RELEASED: "telegram.titles.followDigitalReleased",
         EventType.FOLLOW_PHYSICAL_RELEASED: "telegram.titles.followPhysicalReleased",

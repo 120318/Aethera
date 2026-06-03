@@ -13,6 +13,9 @@ export const EVENT_TYPE_MAP = {
   library: {
     'file.missing': { subjectKey: 'events.subject.libraryFile', actionKey: 'events.action.missing', icon: 'pi pi-exclamation-triangle', tone: 'warn' },
   },
+  indexer: {
+    'site.unhealthy': { subjectKey: 'events.subject.indexerSite', actionKey: 'events.action.unhealthy', icon: 'pi pi-exclamation-triangle', tone: 'warn' },
+  },
   media_server_sync: {
     completed: { subjectKey: 'events.subject.mediaServerSync', actionKey: 'events.action.completed', icon: 'pi pi-check-circle', tone: 'success' },
     failed: { subjectKey: 'events.subject.mediaServerSync', actionKey: 'events.action.failed', icon: 'pi pi-times-circle', tone: 'danger' },

@@ -1,9 +1,9 @@
 import logging
 from datetime import datetime
 
-from app.schemas.exception.exceptions import DownloadException
+from app.schemas.exception.exceptions import DownloadException, TransferException
 from app.schemas.domain.command import CommandCreateRequest, CommandInitiator, CommandType, TaskTransferCommandRequestPayload
-from app.schemas.domain.download import BatchJobResult, TaskData, TaskStatus
+from app.schemas.domain.download import BatchJobResult, TaskData, TaskErrorStage, TaskStatus
 from app.services.application.commands.service import CommandConflictException, command_service
 from app.services.domain.download import download_service
 from app.services.domain.transfer.execution import missing_transfer_source_paths
@@ -17,6 +17,19 @@ def _source_visibility_grace_elapsed(task: TaskData, now: datetime | None = None
     if not task.updated_at:
         return True
     return ((now or datetime.now()) - task.updated_at).total_seconds() >= SOURCE_VISIBILITY_GRACE_SECONDS
+
+
+async def _mark_precheck_transfer_failed(task: TaskData, exc: TransferException) -> None:
+    try:
+        await download_service.update_task_state(
+            task.id,
+            TaskStatus.FINISHED,
+            error_key=exc.message_key,
+            error_params={str(key): str(value) for key, value in exc.params.items()},
+            error_stage=TaskErrorStage.TRANSFER,
+        )
+    except DownloadException as update_exc:
+        logger.error("Failed to mark scheduled transfer precheck failure for task %s: %s", task.id, update_exc)
 
 
 class ScheduledTransferCommandService:
@@ -56,6 +69,10 @@ class ScheduledTransferCommandService:
                 completed += 1
             except CommandConflictException:
                 logger.info("Scheduled transfer command already exists for task %s", task.id)
+            except TransferException as exc:
+                logger.error("Scheduled transfer precheck failed for task %s: %s", task.id, exc)
+                await _mark_precheck_transfer_failed(task, exc)
+                errors += 1
             except (DownloadException, RuntimeError, ValueError) as exc:
                 logger.error("Failed to enqueue scheduled transfer for task %s: %s", task.id, exc)
                 errors += 1

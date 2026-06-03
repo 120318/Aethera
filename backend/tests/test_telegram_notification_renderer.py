@@ -74,3 +74,22 @@ def test_telegram_failed_event_uses_locale_and_reason():
     assert "Reason: Transfer failed: source missing" in message
     assert "View details" not in message
     assert "media.import.failed" not in message
+
+
+def test_telegram_escapes_markdown_v2_stars():
+    event = Event(
+        type=EventType.DOWNLOAD_COMPLETED,
+        level=EventLevel.info,
+        media=MediaIdentity(
+            media_id=MediaID.parse("tmdb:movie:123"),
+            title="Star * Movie",
+            year=2026,
+        ),
+        ts=datetime(2026, 6, 2, 20, 30),
+        meta=json.dumps({"resource_title": "Release * Group"}, ensure_ascii=False),
+    )
+
+    message = format_telegram_event(event, locale="en-US", public_base_url="")
+
+    assert "Star \\* Movie" in message
+    assert "Release \\* Group" in message

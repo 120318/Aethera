@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from sqlalchemy import delete, desc, func, insert, not_, or_, select
+from sqlalchemy import delete, desc, func, not_, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.sql.models import EventAcknowledgementORM, EventORM
@@ -321,12 +321,13 @@ class EventRepository:
             event_ids = session.execute(stmt).scalars().all()
             if not event_ids:
                 return 0
-            session.execute(
-                insert(EventAcknowledgementORM),
-                [{"event_id": event_id, "acknowledged_at": acknowledged_at} for event_id in event_ids],
+            result = session.execute(
+                sqlite_insert(EventAcknowledgementORM)
+                .values([{"event_id": event_id, "acknowledged_at": acknowledged_at} for event_id in event_ids])
+                .on_conflict_do_nothing(index_elements=[EventAcknowledgementORM.event_id])
             )
             session.commit()
-            return len(event_ids)
+            return int(result.rowcount or 0)
 
     def prune_to_limit(self, max_records: int) -> int:
         limit = int(max_records or 0)

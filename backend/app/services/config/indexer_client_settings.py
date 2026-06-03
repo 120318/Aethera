@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import datetime
 
 from app.db.repositories.indexer_site_health_repository import IndexerSiteHealthRepository
 from app.db.repositories.settings_sqlite_repository import SettingsSqliteRepository
 from app.schemas.config import IndexerConfig, IndexerProviderConfig
+from app.schemas.constants.event_types import EventTypes
+from app.schemas.domain.event import EventCreate, EventEntityRef, EventLevel, EventSource
 from app.schemas.exception import ConfigurationException
 from app.schemas.runtime.indexer_runtime import IndexerSiteSearchOutcome
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
+from app.services.audit.event_service import event_service
+
+
+INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD = 3
+logger = logging.getLogger("app.services.config.indexer_client_settings")
 
 
 class IndexerSiteHealthState:
@@ -20,6 +28,37 @@ class IndexerSiteHealthState:
 
     def _upsert(self, status: IndexerSiteHealthStatus) -> IndexerSiteHealthStatus:
         return self._repo.upsert(status)
+
+    def _emit_unhealthy_event(self, status: IndexerSiteHealthStatus) -> None:
+        try:
+            event_service.emit(
+                EventCreate(
+                    type=EventTypes.INDEXER_SITE_UNHEALTHY,
+                    level=EventLevel.warning,
+                    source=EventSource.base,
+                    message_params={
+                        "indexer_id": status.indexer_id,
+                        "indexer_name": status.indexer_name,
+                        "site_id": status.site_id,
+                        "site_name": status.site_name,
+                        "client_type": status.client_type,
+                        "consecutive_failures": str(status.consecutive_failures),
+                        "error": status.last_error_message or "",
+                    },
+                    entities=[
+                        EventEntityRef(type="indexer", id=status.indexer_id),
+                        EventEntityRef(type="indexer_site", id=status.site_id),
+                    ],
+                    correlation_id=f"indexer:{status.indexer_id}:site:{status.site_id}:unhealthy",
+                )
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to emit indexer site unhealthy event for %s/%s: %s",
+                status.indexer_id,
+                status.site_id,
+                exc,
+            )
 
     def record_outcomes(self, outcomes: list[IndexerSiteSearchOutcome]) -> None:
         for outcome in outcomes:
@@ -93,10 +132,13 @@ class IndexerSiteHealthState:
             last_failure_at=now,
             consecutive_failures=consecutive_failures,
             last_error_message=error_message,
-            notify_pending=consecutive_failures >= 3,
+            notify_pending=consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD,
             client_type=client_type,
         )
-        return self._upsert(status)
+        saved = self._upsert(status)
+        if previous_failures < INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD <= consecutive_failures:
+            self._emit_unhealthy_event(saved)
+        return saved
 
     def list_by_indexer(self, indexer_id: str) -> list[IndexerSiteHealthStatus]:
         return self._repo.list_by_indexer(indexer_id)

@@ -1,3 +1,5 @@
+from app.schemas.constants.event_types import EventTypes
+from app.schemas.domain.event import EventLevel
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
 from app.services.config.indexer_client_settings import IndexerSiteHealthState
 
@@ -38,6 +40,32 @@ def test_indexer_site_failure_marks_notify_pending_after_threshold():
 
     assert status.consecutive_failures == 4
     assert status.notify_pending is True
+
+
+def test_indexer_site_failure_emits_unhealthy_event_once_at_threshold(monkeypatch):
+    emitted_events = []
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.emit",
+        lambda event: emitted_events.append(event),
+    )
+    state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
+
+    for failure_count in range(1, 5):
+        state.record_failure(
+            indexer_id="jackett",
+            indexer_name="Jackett",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message=f"failure {failure_count}",
+        )
+
+    assert len(emitted_events) == 1
+    event = emitted_events[0]
+    assert event.type == EventTypes.INDEXER_SITE_UNHEALTHY
+    assert event.level == EventLevel.warning
+    assert event.message_params["indexer_name"] == "Jackett"
+    assert event.message_params["site_name"] == "Audiences"
+    assert event.message_params["consecutive_failures"] == "3"
 
 
 def test_indexer_site_success_clears_notify_pending_and_allows_future_threshold():

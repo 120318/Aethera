@@ -61,6 +61,28 @@ def test_acknowledge_event_is_idempotent():
     assert svc.acknowledge_event(ev.id) is True
 
 
+def test_acknowledge_attention_events_is_idempotent():
+    svc = EventService()
+    media_id = MediaID.parse(f"douban:movie:{uuid.uuid4().hex}")
+    svc.emit_media(
+        MediaEventCreate(
+            type=EventTypes.MEDIA_IMPORT_FAILED,
+            level=EventLevel.error,
+            media=MediaIdentity(media_id=media_id, title="text1", year=2024),
+        )
+    )
+    svc.emit_media(
+        MediaEventCreate(
+            type=EventTypes.LIBRARY_FILE_MISSING,
+            level=EventLevel.warning,
+            media=MediaIdentity(media_id=media_id, title="text1", year=2024),
+        )
+    )
+
+    assert svc.acknowledge_attention_events() == 2
+    assert svc.acknowledge_attention_events() == 0
+
+
 def test_list_events_filters():
     svc = EventService()
     media_id_1 = MediaID.parse(f"douban:movie:{uuid.uuid4().hex}")

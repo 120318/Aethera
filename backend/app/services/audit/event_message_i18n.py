@@ -21,6 +21,7 @@ EVENT_KEY_BY_TYPE = {
     EventType.DANMU_GENERATE_FAILED: "eventMessages.danmuGenerateFailed",
     EventType.MEDIA_DELETED: "eventMessages.mediaDeleted",
     EventType.LIBRARY_FILE_MISSING: "eventMessages.libraryFileMissing",
+    EventType.INDEXER_SITE_UNHEALTHY: "eventMessages.indexerSiteUnhealthy",
     EventType.SUBSCRIPTION_ENDED_MOVIE_COMPLETED: "eventMessages.subscriptionEndedMovieCompleted",
     EventType.SUBSCRIPTION_ENDED_MOVIE_DOWNLOADING_COMPLETED: "eventMessages.subscriptionEndedMovieDownloadingCompleted",
     EventType.SUBSCRIPTION_ENDED_MOVIE_TARGET_COMPLETED: "eventMessages.subscriptionEndedMovieTargetCompleted",

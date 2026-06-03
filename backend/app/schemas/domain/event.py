@@ -41,6 +41,7 @@ class EventType(str, Enum):
     DANMU_GENERATE_FAILED = "danmu.generate.failed"
     MEDIA_DELETED = "media.deleted"
     LIBRARY_FILE_MISSING = "library.file.missing"
+    INDEXER_SITE_UNHEALTHY = "indexer.site.unhealthy"
     SUBSCRIPTION_ENDED_MOVIE_COMPLETED = "subscription.ended.movie_completed"
     SUBSCRIPTION_ENDED_MOVIE_DOWNLOADING_COMPLETED = "subscription.ended.movie_downloading_completed"
     SUBSCRIPTION_ENDED_MOVIE_TARGET_COMPLETED = "subscription.ended.movie_target_completed"

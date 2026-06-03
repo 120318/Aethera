@@ -6,6 +6,7 @@ export const DEFAULT_NOTIFICATION_EVENT_PATTERNS = [
   'media.import.completed',
   'media.import.failed',
   'library.file.missing',
+  'indexer.site.unhealthy',
   'follow.*',
   'subscription.ended.*',
   'media_server_sync.failed',
