@@ -22,6 +22,7 @@ from app.schemas.domain.event import (
     MediaEventCreate,
 )
 from app.services.application.events.dispatch import event_dispatch_service
+from app.services.audit.action_catalog import ACTION_NAME_NOTIFICATION_SEND
 from app.services.audit.action_service import action_service
 from app.services.audit.event_message_i18n import attach_event_message_i18n, event_message_key, event_message_params
 from app.services.audit.search_text_support import build_event_search_text
@@ -33,6 +34,9 @@ NON_BUSINESS_EVENT_PREFIXES = (
     "addon.run.",
     "notification.",
     "scheduler.",
+)
+INTERNAL_EVENT_CENTER_ACTION_NAMES = (
+    ACTION_NAME_NOTIFICATION_SEND.value,
 )
 
 
@@ -195,6 +199,7 @@ class EventService:
             sources=sources,
             addon_id=addon_id,
             action_id=action_id,
+            excluded_type_prefixes=NON_BUSINESS_EVENT_PREFIXES,
         )
         return total, [attach_event_message_i18n(event) for event in events]
 
@@ -202,24 +207,28 @@ class EventService:
         active_action_count, active_actions = action_service.list_actions(
             limit=50,
             statuses=[ActionStatus.queued, ActionStatus.running],
+            excluded_action_names=INTERNAL_EVENT_CENTER_ACTION_NAMES,
         )
         _attention_total, events = self.repo.list_filtered_page(
             limit=50,
             offset=0,
             levels=[EventLevel.warning, EventLevel.error],
             acknowledged=False,
+            excluded_type_prefixes=NON_BUSINESS_EVENT_PREFIXES,
         )
         warning_event_count, _warning_sample = self.repo.list_filtered_page(
             limit=1,
             offset=0,
             levels=[EventLevel.warning],
             acknowledged=False,
+            excluded_type_prefixes=NON_BUSINESS_EVENT_PREFIXES,
         )
         error_event_count, _error_sample = self.repo.list_filtered_page(
             limit=1,
             offset=0,
             levels=[EventLevel.error],
             acknowledged=False,
+            excluded_type_prefixes=NON_BUSINESS_EVENT_PREFIXES,
         )
         if error_event_count > 0:
             bell_state = EventCenterBellState.error
@@ -271,6 +280,7 @@ class EventService:
             task_id=task_id,
             subscription_id=subscription_id,
             action_id=action_id,
+            excluded_type_prefixes=NON_BUSINESS_EVENT_PREFIXES,
         )
 
         events = [

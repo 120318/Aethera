@@ -50,6 +50,14 @@ export function syncDownloadState(download, value) {
   download.default_tag = next.default_tag ?? 'Aethera'
 }
 
+export function syncSchedulerState(scheduler, value) {
+  const next = value || {}
+  scheduler.subscription_sweep_interval_seconds = Number(next.subscription_sweep_interval_seconds ?? 300)
+  scheduler.subscription_resource_discovery_mode = next.subscription_resource_discovery_mode || 'rss_with_search_backfill'
+  scheduler.subscription_search_interval_seconds = Number(next.subscription_search_interval_seconds ?? 600)
+  scheduler.subscription_search_backfill_interval_seconds = Number(next.subscription_search_backfill_interval_seconds ?? 3600)
+}
+
 export function syncGeneralState(general, value) {
   const next = value || {}
   general.locale = next.locale || 'zh-CN'
@@ -65,6 +73,19 @@ export function buildNextGeneralSystemConfig(config, general, download) {
       ...(config?.download || {}),
       default_tag: String(download.default_tag ?? '').trim(),
     },
+  }
+}
+
+export function buildNextSchedulerConfig(config, scheduler) {
+  const sweepInterval = Number(scheduler.subscription_sweep_interval_seconds ?? 300)
+  const searchInterval = Number(scheduler.subscription_search_interval_seconds ?? 600)
+  const backfillInterval = Number(scheduler.subscription_search_backfill_interval_seconds ?? 3600)
+  return {
+    ...(config || {}),
+    subscription_sweep_interval_seconds: Math.max(60, sweepInterval || 300),
+    subscription_resource_discovery_mode: scheduler.subscription_resource_discovery_mode || 'rss_with_search_backfill',
+    subscription_search_interval_seconds: Math.max(60, searchInterval || 600),
+    subscription_search_backfill_interval_seconds: Math.max(60, backfillInterval || 3600),
   }
 }
 

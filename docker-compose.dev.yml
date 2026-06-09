@@ -1,5 +1,10 @@
 services:
   backend:
+    logging: &aethera-dev-logging
+      driver: json-file
+      options:
+        max-size: ${AETHERA_DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${AETHERA_DOCKER_LOG_MAX_FILES:-3}
     build:
       context: ./backend
       dockerfile: Dockerfile.dev
@@ -29,6 +34,7 @@ services:
       - UVICORN_WORKERS=${AETHERA_DEV_UVICORN_WORKERS:-4}
 
   frontend:
+    logging: *aethera-dev-logging
     build:
       context: ./frontend
       dockerfile: Dockerfile.dev
@@ -61,6 +67,7 @@ services:
       - backend
 
   sqlite-web:
+    logging: *aethera-dev-logging
     image: coleifer/sqlite-web
     command: sqlite_web /data/aethera.db --host 0.0.0.0 --port 8080
     volumes:

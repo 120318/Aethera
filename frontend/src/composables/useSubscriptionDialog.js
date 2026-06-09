@@ -239,7 +239,7 @@ export function useSubscriptionDialog(props, emit) {
         }))
       : []
     activeTab.value = 'basic'
-    runAfterSave.value = false
+    runAfterSave.value = !state?.active && form.active
   }
 
   async function applyDefaultActiveFilter() {
@@ -447,7 +447,6 @@ export function useSubscriptionDialog(props, emit) {
       }, {
         dedupeKey: `media:${props.mediaId}:${seasonNumber || ''}:subscription.run`,
       })
-      notification.success(t('subscription.refreshTaskSubmitted'))
       if (command) emit('command-submitted', command)
     } catch (error) {
       notification.error(error?.response?.data?.message || error?.message || t('subscription.submitRefreshTaskFailed'))
@@ -496,6 +495,15 @@ export function useSubscriptionDialog(props, emit) {
   })
 
   watch(canRunAfterSave, (enabled) => { if (!enabled) runAfterSave.value = false })
+  watch(() => form.active, (active) => {
+    if (!active) {
+      runAfterSave.value = false
+      return
+    }
+    if (!props.initialState?.active) {
+      runAfterSave.value = true
+    }
+  })
   watch(() => [...(form.filters.resource_kind || [])], () => { form.filters.resource_form = normalizeResourceFormsForKinds(form.filters.resource_form, form.filters.resource_kind) })
   watch(() => [...(form.target_filters.resource_kind || [])], () => { form.target_filters.resource_form = normalizeResourceFormsForKinds(form.target_filters.resource_form, form.target_filters.resource_kind) })
   watch(() => props.visible, async (visible) => { if (visible) await initializeDialog() })

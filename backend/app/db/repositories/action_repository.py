@@ -24,6 +24,7 @@ class ActionRepository:
         kinds: list[ActionKind] | None = None,
         statuses: list[ActionStatus] | None = None,
         action_names: list[str] | None = None,
+        excluded_action_names: tuple[str, ...] = (),
         triggers: list[ActionTrigger] | None = None,
         sources: list[ActionSource] | None = None,
         keyword: str | None = None,
@@ -45,6 +46,8 @@ class ActionRepository:
             stmt = stmt.where(ActionORM.status.in_([status.value for status in statuses]))
         if action_names:
             stmt = stmt.where(ActionORM.action_name.in_(action_names))
+        if excluded_action_names:
+            stmt = stmt.where(ActionORM.action_name.not_in(excluded_action_names))
         if triggers:
             stmt = stmt.where(ActionORM.trigger.in_([trigger.value for trigger in triggers]))
         if sources:
@@ -66,6 +69,7 @@ class ActionRepository:
         kinds: list[ActionKind] | None = None,
         statuses: list[ActionStatus] | None = None,
         action_names: list[str] | None = None,
+        excluded_action_names: tuple[str, ...] = (),
         triggers: list[ActionTrigger] | None = None,
         sources: list[ActionSource] | None = None,
         keyword: str | None = None,
@@ -81,6 +85,7 @@ class ActionRepository:
             kinds=kinds,
             statuses=statuses,
             action_names=action_names,
+            excluded_action_names=excluded_action_names,
             triggers=triggers,
             sources=sources,
             keyword=keyword,
@@ -259,6 +264,7 @@ class ActionRepository:
         kinds: list[ActionKind] | None = None,
         statuses: list[ActionStatus] | None = None,
         action_names: list[str] | None = None,
+        excluded_action_names: tuple[str, ...] = (),
         triggers: list[ActionTrigger] | None = None,
         sources: list[ActionSource] | None = None,
         keyword: str | None = None,
@@ -274,6 +280,7 @@ class ActionRepository:
                 kinds=kinds,
                 statuses=statuses,
                 action_names=action_names,
+                excluded_action_names=excluded_action_names,
                 triggers=triggers,
                 sources=sources,
                 keyword=keyword,
@@ -295,6 +302,7 @@ class ActionRepository:
         kinds: list[ActionKind] | None = None,
         statuses: list[ActionStatus] | None = None,
         action_names: list[str] | None = None,
+        excluded_action_names: tuple[str, ...] = (),
         triggers: list[ActionTrigger] | None = None,
         sources: list[ActionSource] | None = None,
         keyword: str | None = None,
@@ -310,6 +318,7 @@ class ActionRepository:
                 kinds=kinds,
                 statuses=statuses,
                 action_names=action_names,
+                excluded_action_names=excluded_action_names,
                 triggers=triggers,
                 sources=sources,
                 keyword=keyword,

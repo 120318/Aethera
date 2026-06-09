@@ -1,5 +1,6 @@
 import os
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -90,10 +91,11 @@ async def test_delete_media_library_files_emits_delete_event_with_file_paths_whe
 
 
 @pytest.mark.asyncio
-async def test_delete_media_resources_leaves_profile_lifecycle_to_scheduler(monkeypatch):
+async def test_delete_media_resources_refreshes_profile_lifecycle(monkeypatch):
     media_id = MediaID.parse("tmdb:movie:1")
     service = MediaResourceDeletionService()
     archive_mock = AsyncMock()
+    lifecycle_mock = AsyncMock(return_value=True)
 
     monkeypatch.setattr(
         "app.services.application.workflows.media_resource_deletion.service.library_service.delete_media_library_files",
@@ -107,6 +109,10 @@ async def test_delete_media_resources_leaves_profile_lifecycle_to_scheduler(monk
         "app.services.application.workflows.media_resource_deletion.service.download_service.get_tasks",
         AsyncMock(return_value=[]),
     )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_resource_deletion.service.media_service.mark_profile_inactive_if_unmanaged",
+        lifecycle_mock,
+    )
 
     deleted_tasks_count, deleted_library_files_count = await service.delete_media_resources(
         media_id,
@@ -118,3 +124,46 @@ async def test_delete_media_resources_leaves_profile_lifecycle_to_scheduler(monk
     assert deleted_tasks_count == 0
     assert deleted_library_files_count == 1
     archive_mock.assert_awaited_once_with(media_id)
+    lifecycle_mock.assert_awaited_once_with(media_id)
+
+
+@pytest.mark.asyncio
+async def test_delete_tv_season_resources_archives_orphan_media_entry(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:254486")
+    service = MediaResourceDeletionService()
+    archive_mock = AsyncMock()
+    lifecycle_mock = AsyncMock(return_value=True)
+
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_resource_deletion.service.library_service.delete_media_library_files",
+        AsyncMock(return_value=0),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_resource_deletion.service.library_service.archive_media_entry",
+        archive_mock,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_resource_deletion.service.library_service.get_media_library_snapshot",
+        AsyncMock(return_value=SimpleNamespace(files=[], present_episodes=set())),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_resource_deletion.service.download_service.get_tasks",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_resource_deletion.service.media_service.mark_profile_inactive_if_unmanaged",
+        lifecycle_mock,
+    )
+
+    deleted_tasks_count, deleted_library_files_count = await service.delete_media_resources(
+        media_id,
+        season_number=1,
+        mode="tasks_and_library",
+        delete_files=True,
+        force=False,
+    )
+
+    assert deleted_tasks_count == 0
+    assert deleted_library_files_count == 0
+    archive_mock.assert_awaited_once_with(media_id)
+    lifecycle_mock.assert_awaited_once_with(media_id)

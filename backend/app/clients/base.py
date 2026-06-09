@@ -86,6 +86,15 @@ class IndexerClient(BaseClient):
         """Internal helper."""
         pass
 
+    async def fetch_recent_torznab(
+        self,
+        indexer: str,
+        category: str | None = None,
+    ) -> list[ResourceSearchResult]:
+        """Internal helper."""
+        _ = indexer, category
+        return []
+
     async def list_sites(self) -> list[SiteInfo]:
         return await self.get_indexers()
 

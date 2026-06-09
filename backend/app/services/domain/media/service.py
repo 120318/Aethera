@@ -70,12 +70,6 @@ class MediaService:
     async def info_from_source(self, lookup: MediaSourceLookup) -> MediaFullInfo | None:
         return await self.profile_service.info_from_source(lookup)
 
-    async def cached_info(self, media_id: MediaID) -> MediaFullInfo | None:
-        return await self.profile_service.cached_info(media_id)
-
-    async def season_detail_for_library_view(self, media_id: MediaID, *, season_number: int) -> MediaFullInfo | None:
-        return await self.profile_service.info(media_id, season_number=season_number)
-
     async def simple_info(self, media_id: MediaID) -> MediaSimpleInfo | None:
         return await self.profile_service.simple_info(media_id)
 

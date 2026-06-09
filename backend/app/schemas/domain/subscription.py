@@ -42,6 +42,7 @@ class Subscription(BaseModel):
     active: bool = True
     created_at: float = Field(default_factory=lambda: time.time())
     last_run_at: float | None = None
+    last_search_at: float | None = None
     follow_reminded_air_date: str | None = None
     follow_reminded_digital_release_date: str | None = None
     follow_reminded_physical_release_date: str | None = None

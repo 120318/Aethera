@@ -15,6 +15,8 @@ export function useMediaManagement() {
   const items = ref([])
   const summaryLoading = ref(false)
   const loading = ref(false)
+  const initialLoading = ref(false)
+  const refreshing = ref(false)
   const total = ref(0)
   const first = ref(0)
   const rows = ref(10)
@@ -54,7 +56,10 @@ export function useMediaManagement() {
 
   async function loadItems() {
     const requestId = ++loadRequestId
-    loading.value = true
+    const hasExistingItems = items.value.length > 0
+    initialLoading.value = !hasExistingItems
+    refreshing.value = hasExistingItems
+    loading.value = initialLoading.value
     try {
       const params = {
         limit: rows.value,
@@ -72,6 +77,8 @@ export function useMediaManagement() {
       total.value = data?.total || 0
     } finally {
       if (requestId === loadRequestId) {
+        initialLoading.value = false
+        refreshing.value = false
         loading.value = false
       }
     }
@@ -154,6 +161,8 @@ export function useMediaManagement() {
     total,
     summaryLoading,
     loading,
+    initialLoading,
+    refreshing,
     filters,
     first,
     rows,

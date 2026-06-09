@@ -97,5 +97,5 @@ export async function submitLibraryFileDelete({
 }
 
 export async function handleMediaSubscriptionClick({ handleSubscriptionToggle }) {
-  await handleSubscriptionToggle()
+  return handleSubscriptionToggle()
 }

@@ -22,11 +22,7 @@ Default URLs:
 
 ## Local Environment
 
-The repository tracks `docker-compose.dev.example.yml` as the portable development baseline. To keep machine-specific ports, paths, or reverse-proxy wiring local, copy it to `docker-compose.dev.yml`; that file is ignored by Git:
-
-```bash
-cp docker-compose.dev.example.yml docker-compose.dev.yml
-```
+The repository tracks `docker-compose.dev.yml` as the portable development baseline. Keep machine-specific ports, paths, or reverse-proxy wiring in `docker-compose.dev.override.yml`; that override file is ignored by Git and is loaded automatically when present.
 
 Generate `.env` from `.env.dev.example` when `PUID`/`PGID` should match the runtime data directories:
 

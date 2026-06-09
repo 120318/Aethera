@@ -13,12 +13,20 @@ from types import TracebackType
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import aiohttp
+
 from app.clients.base import IndexerClient
+from app.clients.torznab import (
+    build_torznab_recent_params,
+    build_torznab_search_params,
+    format_size,
+    parse_torznab_caps_xml,
+    parse_torznab_xml,
+    truncate_text,
+)
 from app.schemas.config import IndexerProviderConfig
 from app.schemas.constants.indexer import SITE_SEARCH_TIMEOUT_SECONDS
 from app.schemas.domain.resource_search import JackettSearchResponse, JackettSearchResult, ResourceSearchResult
 from app.schemas.integration.site_models import SiteInfo, SiteSearchCapabilities
-from app.clients.torznab import build_torznab_search_params, format_size, parse_torznab_caps_xml, parse_torznab_xml, truncate_text
 
 logger = logging.getLogger("app.clients.jackett")
 
@@ -396,6 +404,41 @@ class JackettClient(IndexerClient):
                 search_param,
                 exc,
             )
+            raise RuntimeError(message) from exc
+
+    async def fetch_recent_torznab(
+        self,
+        indexer: str,
+        category: str | None = None,
+    ) -> list[ResourceSearchResult]:
+        self._ensure_session()
+        params = build_torznab_recent_params(api_key=self.api_key, category=category)
+        url = f"{self.base_url}/api/v2.0/indexers/{indexer}/results/torznab"
+        try:
+            async with self.session.get(url, params=params, timeout=self.search_timeout) as resp:
+                if resp.status != 200:
+                    body = (await resp.text()).strip()
+                    body_preview = body[:200] if body else ""
+                    detail = f" status={resp.status}"
+                    if body_preview:
+                        detail += f" body={body_preview}"
+                    raise RuntimeError(f"jackett_recent_http_error:{indexer}{detail}")
+                text = await resp.text()
+                return [
+                    result.model_copy(update={"matched_by_id": False})
+                    for result in self._parse_torznab_xml(text)
+                ]
+        except asyncio.TimeoutError as exc:
+            message = f"jackett_recent_timeout:{indexer}"
+            logger.warning("Jackett torznab recent timeout: indexer=%s", indexer)
+            raise RuntimeError(message) from exc
+        except aiohttp.ClientError as exc:
+            message = f"jackett_recent_client_error:{indexer}:{exc}"
+            logger.warning("Jackett torznab recent client error: indexer=%s error=%s", indexer, exc)
+            raise RuntimeError(message) from exc
+        except ValueError as exc:
+            message = f"jackett_recent_parse_error:{indexer}:{exc}"
+            logger.warning("Jackett torznab recent parse error: indexer=%s error=%s", indexer, exc)
             raise RuntimeError(message) from exc
 
     async def search_indexer(self, indexer: str, query: str, category: str | None = None) -> list[JackettSearchResult]:

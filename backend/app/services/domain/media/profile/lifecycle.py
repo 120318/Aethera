@@ -61,6 +61,9 @@ class MediaProfileLifecycle:
         return bool(profile and profile.is_active)
 
     async def _has_media_references(self, media_id: MediaID) -> bool:
+        subscriptions = await subscription_query_service.list_states()
+        if any(subscription.media_id == media_id and (subscription.active or subscription.followed) for subscription in subscriptions):
+            return True
         if await self.task_repo.find_by_media_id(media_id):
             return True
         if await self.episode_repo.find_by_media_id(media_id):

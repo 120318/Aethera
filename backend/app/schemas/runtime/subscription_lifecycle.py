@@ -100,6 +100,7 @@ class SubscriptionRunRecord(BaseModel):
     sub_id: str
     target: MediaTarget
     checked_at: float = Field(default_factory=lambda: time.time())
+    searched_at: float | None = None
     warnings: list[SubscriptionSearchWarning] = Field(default_factory=list)
     upgrade_snapshot: UpgradeCompletionSnapshot | None = None
 

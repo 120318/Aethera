@@ -4,6 +4,7 @@ import asyncio
 import pytest
 
 from app.clients.base import IndexerClient
+from app.clients.torznab import build_torznab_recent_params
 from app.schemas.config import JackettConfig
 from app.schemas.domain.media import MediaExecutionSnapshot
 from app.schemas.domain.media_types import MediaType
@@ -58,6 +59,7 @@ class RecordingIndexerClient(IndexerClient):
             )
         )
         self.calls: list[tuple[str, str]] = []
+        self.recent_calls: list[tuple[str, str | None]] = []
 
     async def test_connection(self) -> bool:
         return True
@@ -104,6 +106,29 @@ class RecordingIndexerClient(IndexerClient):
             )
         ]
 
+    async def fetch_recent_torznab(
+        self,
+        indexer: str,
+        category: str | None = None,
+    ) -> list[ResourceSearchResult]:
+        self.recent_calls.append((indexer, category))
+        return [
+            ResourceSearchResult(
+                id=f"{indexer}-recent",
+                title="Example Show S01E02 2160p WEB-DL",
+                site=indexer,
+                category=category or "tv",
+                size="1 GB",
+                seeders=10,
+                leechers=0,
+                publish_date=datetime.now(UTC),
+                download_url="https://example.com/download/recent",
+                detail_url=f"https://example.com/detail/{indexer}/recent",
+                result_id=f"{indexer}-recent",
+                matched_by_id=False,
+            )
+        ]
+
 
 @pytest.mark.asyncio
 async def test_search_media_respects_site_level_disable_settings():
@@ -121,6 +146,32 @@ async def test_search_media_respects_site_level_disable_settings():
     assert results[0].site == scoped_site_id("fake-indexer", "site-a")
     assert results[0].site_name == "Site A"
     assert client.calls == [("site-a", "q")]
+
+
+def test_torznab_recent_params_do_not_include_query():
+    params = build_torznab_recent_params(api_key="key", category="tv")
+
+    assert params == {"apikey": "key", "t": "search", "cat": "5000"}
+    assert "q" not in params
+    assert "imdbid" not in params
+
+
+@pytest.mark.asyncio
+async def test_indexer_gateway_fetches_recent_contexts_with_site_metadata():
+    client = RecordingIndexerClient()
+    gateway = IndexerGateway(client=client)
+    contexts = await gateway.list_search_contexts(None)
+
+    result = await gateway.fetch_recent_contexts(contexts, media_type=MediaType.tv)
+
+    assert result.searched is True
+    assert result.failed is False
+    assert client.recent_calls == [("site-a", "tv")]
+    assert len(result.results) == 1
+    assert result.results[0].site == scoped_site_id("fake-indexer", "site-a")
+    assert result.results[0].site_name == "Site A"
+    assert result.results[0].indexer_id == "fake-indexer"
+    assert result.results[0].matched_by_id is False
 
 
 class MediaTypeFilteringClient(RecordingIndexerClient):

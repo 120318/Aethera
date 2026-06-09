@@ -183,6 +183,9 @@ class SubscriptionStore:
             return aggregate
         cycle = aggregate.active_cycle.model_copy(update={
             "last_checked_at": record.checked_at,
+            "last_search_at": record.searched_at
+            if record.searched_at is not None
+            else aggregate.active_cycle.last_search_at,
             "warnings": list(record.warnings),
             "completion_snapshot": record.upgrade_snapshot if record.upgrade_snapshot is not None else aggregate.active_cycle.completion_snapshot,
             "updated_at": time.time(),
@@ -272,6 +275,7 @@ def _build_state(
             [value for value in [settings.updated_at if settings else None, cycle.updated_at if cycle else None, time.time()] if value is not None]
         ),
         last_run_at=cycle.last_checked_at if cycle else None,
+        last_search_at=cycle.last_search_at if cycle else None,
         follow_reminded_air_date=settings.follow_reminded_air_date if settings else None,
         follow_reminded_digital_release_date=settings.follow_reminded_digital_release_date if settings else None,
         follow_reminded_physical_release_date=settings.follow_reminded_physical_release_date if settings else None,

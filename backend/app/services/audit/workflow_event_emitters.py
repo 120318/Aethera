@@ -73,6 +73,7 @@ def emit_media_server_sync_events(
     error: str = "",
 ) -> None:
     target_paths = _sync_event_paths(anchor_file, transfer_results)
+    nfo_count, image_count = _sync_artifact_counts(media, anchor_file, transfer_results)
     for path in target_paths:
         event_service.emit_media(
             MediaEventCreate(
@@ -92,6 +93,8 @@ def emit_media_server_sync_events(
                 media_server_id=media_server_id,
                 file_path=path,
                 file_count=len(target_paths),
+                nfo_count=nfo_count,
+                image_count=image_count,
                 trigger=trigger,
                 error=error,
             ),
@@ -103,3 +106,62 @@ def _sync_event_paths(anchor_file: str, transfer_results: list[MediaServerSyncTa
     if not paths and anchor_file:
         paths = [anchor_file]
     return sorted(set(paths))
+
+
+def _sync_artifact_counts(
+    media: MediaFullInfo,
+    anchor_file: str,
+    transfer_results: list[MediaServerSyncTargetFile],
+) -> tuple[int, int]:
+    if not anchor_file:
+        return (0, 0)
+    media_root_dir = _media_root_dir(media, anchor_file)
+    nfo_paths = _expected_nfo_paths(media, anchor_file, transfer_results, media_root_dir)
+    image_paths: set[Path] = set()
+    root = Path(media_root_dir)
+    if media.poster_path:
+        image_paths.add(root / "poster.jpg")
+    if media.backdrop_path:
+        image_paths.add(root / "fanart.jpg")
+    if media.logo_path:
+        image_paths.add(root / "logo.png")
+    return (
+        sum(1 for path in nfo_paths if path.exists()),
+        sum(1 for path in image_paths if path.exists()),
+    )
+
+
+def _media_root_dir(media: MediaFullInfo, anchor_file: str) -> Path:
+    anchor = Path(anchor_file)
+    if media.media_type.value != "tv":
+        return anchor.parent
+    parent = anchor.parent
+    if parent.name.lower().startswith("season"):
+        return parent.parent
+    return parent
+
+
+def _expected_nfo_paths(
+    media: MediaFullInfo,
+    anchor_file: str,
+    transfer_results: list[MediaServerSyncTargetFile],
+    media_root_dir: Path,
+) -> set[Path]:
+    anchor = Path(anchor_file)
+    if media.media_type.value != "tv":
+        paths = {media_root_dir / "movie.nfo"}
+        if anchor.suffix and anchor.suffix.lower() not in {".bdmv", ".ifo", ".vob"}:
+            paths.add(anchor.with_suffix(".nfo"))
+        return paths
+
+    paths: set[Path] = {media_root_dir / "tvshow.nfo"}
+    for target in transfer_results:
+        if not target.destination_path:
+            continue
+        target_path = Path(target.destination_path)
+        season_dir = target_path.parent
+        if season_dir != media_root_dir:
+            paths.add(season_dir / "season.nfo")
+        if target.episode_number:
+            paths.add(target_path.with_suffix(".nfo"))
+    return paths

@@ -1,5 +1,7 @@
 import os
+import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, Mock
 
@@ -9,20 +11,30 @@ pytestmark = [pytest.mark.drift, pytest.mark.health]
 
 os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
-from app.schemas.media_id import MediaID
+from app.schemas.config import SchedulerConfig
 from app.schemas.domain.download import TaskContext, TaskData, TaskStatus
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media import EpisodeInfo, MediaExecutionSnapshot, MediaFullInfo, MediaSeasonInfo
+from app.schemas.domain.media_subscription_state import MediaSubscriptionState
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_attributes import ResourceAttributes
-from app.schemas.domain.resource_search import Resource, ResourceSearchResult
+from app.schemas.domain.resource_search import MediaSearchQuery, Resource, ResourceSearchResult
 from app.schemas.domain.subscription import Subscription
 from app.schemas.domain.subscription_filters import SubscriptionFilters, UpgradePolicy
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata, TorrentPayload
+from app.schemas.media_id import MediaID
+from app.schemas.domain.subscription_run_result import SubscriptionRunResponse
+from app.schemas.runtime.subscription_runtime import SubscriptionPlanningStatus, SubscriptionRunPlan, SubscriptionRunPlanningResult
 from app.services.domain.download import download_service
 from app.services.domain.resource.selection import ResourceSelectionPlan, partition_search_results, select_resources
+from app.services.application.workflows.resource_search import resource_search_service
 from app.services.application.workflows.subscription.run import SubscriptionRunApplicationService
 from app.services.domain.subscription.resource_run_plan_service import resource_run_plan_service
+
+
+@asynccontextmanager
+async def _acquired_scheduler_lock():
+    yield True
 
 
 def _subscription() -> Subscription:
@@ -165,6 +177,313 @@ def _video_metadata(title: str, episodes: list[int]) -> TorrentMetadata:
         attrs=ResourceAttributes(title=title, seasons=[1], episodes=episodes, sources=["WEB-DL"], resource_form="Video File"),
         coverage_kind="exact_episodes",
     )
+
+
+@pytest.mark.asyncio
+async def test_subscription_sweep_uses_recent_feed_strategy_by_default(monkeypatch):
+    service = SubscriptionRunApplicationService()
+    search_run = AsyncMock(return_value=object())
+    rss_run = AsyncMock(return_value=object())
+    monkeypatch.setattr(service, "_acquire_subscription_sweep", lambda: _acquired_scheduler_lock())
+    monkeypatch.setattr(service, "_run_all_with_search", search_run)
+    monkeypatch.setattr(service, "_run_all_with_recent_feed", rss_run)
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.run.settings_service.get_scheduler_config",
+        lambda: SchedulerConfig(),
+    )
+
+    await service.run_all()
+
+    rss_run.assert_awaited_once()
+    search_run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_subscription_sweep_uses_recent_feed_first_when_rss_mode_starts(monkeypatch):
+    service = SubscriptionRunApplicationService()
+    search_run = AsyncMock(return_value=object())
+    rss_run = AsyncMock(return_value=object())
+    monkeypatch.setattr(service, "_acquire_subscription_sweep", lambda: _acquired_scheduler_lock())
+    monkeypatch.setattr(service, "_run_all_with_search", search_run)
+    monkeypatch.setattr(service, "_run_all_with_recent_feed", rss_run)
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.run.settings_service.get_scheduler_config",
+        lambda: SchedulerConfig(
+            subscription_resource_discovery_mode="rss_with_search_backfill",
+            subscription_search_backfill_interval_seconds=3600,
+        ),
+    )
+
+    await service.run_all()
+
+    rss_run.assert_awaited_once()
+    search_run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_search_sweep_only_runs_due_subscriptions(monkeypatch):
+    service = SubscriptionRunApplicationService()
+    now = time.time()
+    due_state = MediaSubscriptionState(sub_id="due", media_id=MediaID.parse("tmdb:tv:1"), media=_media(), active=True, last_search_at=now - 1200)
+    fresh_state = MediaSubscriptionState(sub_id="fresh", media_id=MediaID.parse("tmdb:tv:2"), media=_media(), active=True, last_search_at=now)
+    run_one = AsyncMock(return_value=SubscriptionRunResponse(checked=1, added=1))
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.run.subscription_query_service.list_states",
+        AsyncMock(return_value=[due_state, fresh_state]),
+    )
+    monkeypatch.setattr(service, "_build_runtime_subscription", AsyncMock(return_value=_subscription()))
+    monkeypatch.setattr(service, "run_one", run_one)
+
+    result = await service._run_all_with_search(SchedulerConfig(subscription_search_interval_seconds=600))
+
+    assert result.checked == 1
+    assert result.added == 1
+    run_one.assert_awaited_once()
+    assert run_one.await_args.kwargs["active_search"] is True
+
+
+@pytest.mark.asyncio
+async def test_search_sweep_limits_due_subscriptions_per_sweep(monkeypatch):
+    service = SubscriptionRunApplicationService()
+    now = time.time()
+    older_state = MediaSubscriptionState(
+        sub_id="older",
+        media_id=MediaID.parse("tmdb:tv:1"),
+        media=_media(),
+        active=True,
+        last_search_at=now - 7200,
+    )
+    newer_state = MediaSubscriptionState(
+        sub_id="newer",
+        media_id=MediaID.parse("tmdb:tv:2"),
+        media=_media(),
+        active=True,
+        last_search_at=now - 3600,
+    )
+    built_subs = {
+        "older": _subscription().model_copy(update={"sub_id": "older"}),
+        "newer": _subscription().model_copy(update={"sub_id": "newer"}),
+    }
+    run_one = AsyncMock(return_value=SubscriptionRunResponse(checked=1, added=0))
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.run.subscription_query_service.list_states",
+        AsyncMock(return_value=[newer_state, older_state]),
+    )
+    monkeypatch.setattr(service, "_build_runtime_subscription", AsyncMock(side_effect=lambda state: built_subs[state.sub_id]))
+    monkeypatch.setattr(service, "run_one", run_one)
+
+    await service._run_all_with_search(
+        SchedulerConfig(
+            subscription_search_interval_seconds=600,
+            subscription_search_max_per_sweep=1,
+        )
+    )
+
+    run_one.assert_awaited_once()
+    assert run_one.await_args.args[0].sub_id == "older"
+    assert run_one.await_args.kwargs["active_search"] is True
+
+
+@pytest.mark.asyncio
+async def test_search_sweep_runs_new_subscriptions_immediately(monkeypatch):
+    service = SubscriptionRunApplicationService()
+    state = MediaSubscriptionState(sub_id="new", media_id=MediaID.parse("tmdb:tv:1"), media=_media(), active=True)
+    run_one = AsyncMock(return_value=SubscriptionRunResponse(checked=1, added=0))
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.run.subscription_query_service.list_states",
+        AsyncMock(return_value=[state]),
+    )
+    monkeypatch.setattr(service, "_build_runtime_subscription", AsyncMock(return_value=_subscription()))
+    monkeypatch.setattr(service, "run_one", run_one)
+
+    await service._run_all_with_search(SchedulerConfig(subscription_search_interval_seconds=600))
+
+    run_one.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_search_sweep_skips_due_search_when_future_episode_is_not_aired_and_targets_are_satisfied(monkeypatch):
+    service = SubscriptionRunApplicationService()
+    now = time.time()
+    media = _media(
+        aired_episode_count=2,
+        next_episode_to_air=EpisodeInfo(season_number=1, episode_number=3, air_date=_future_date()),
+    )
+    state = MediaSubscriptionState(sub_id="future", media_id=MediaID.parse("tmdb:tv:1"), media=media, active=True, last_search_at=now - 7200)
+    run_one = AsyncMock(return_value=SubscriptionRunResponse(checked=1, added=0))
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.run.subscription_query_service.list_states",
+        AsyncMock(return_value=[state]),
+    )
+    monkeypatch.setattr(service, "_build_runtime_subscription", AsyncMock(return_value=_subscription().model_copy(update={"media": media})))
+    monkeypatch.setattr(service, "_refresh_runtime_media_snapshot", AsyncMock(return_value=_subscription().model_copy(update={"media": media})))
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.run.resource_run_plan_service.build_subscription_plan",
+        AsyncMock(return_value=SubscriptionRunPlanningResult(status=SubscriptionPlanningStatus.SATISFIED)),
+    )
+    monkeypatch.setattr(service, "run_one", run_one)
+
+    result = await service._run_all_with_search(SchedulerConfig(subscription_search_interval_seconds=600))
+
+    assert result.checked == 0
+    assert result.added == 0
+    run_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_search_sweep_keeps_due_search_when_future_episode_exists_but_aired_targets_are_missing(monkeypatch):
+    service = SubscriptionRunApplicationService()
+    now = time.time()
+    media = _media(
+        aired_episode_count=2,
+        next_episode_to_air=EpisodeInfo(season_number=1, episode_number=3, air_date=_future_date()),
+    )
+    state = MediaSubscriptionState(sub_id="missing", media_id=MediaID.parse("tmdb:tv:1"), media=media, active=True, last_search_at=now - 7200)
+    plan = SubscriptionRunPlan(
+        sub_id="missing",
+        media=media,
+        season_number=1,
+        correlation_id="corr",
+        target_episodes={2},
+    )
+    run_one = AsyncMock(return_value=SubscriptionRunResponse(checked=1, added=0))
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.run.subscription_query_service.list_states",
+        AsyncMock(return_value=[state]),
+    )
+    monkeypatch.setattr(service, "_build_runtime_subscription", AsyncMock(return_value=_subscription().model_copy(update={"sub_id": "missing", "media": media})))
+    monkeypatch.setattr(service, "_refresh_runtime_media_snapshot", AsyncMock(return_value=_subscription().model_copy(update={"sub_id": "missing", "media": media})))
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.run.resource_run_plan_service.build_subscription_plan",
+        AsyncMock(return_value=SubscriptionRunPlanningResult(status=SubscriptionPlanningStatus.READY, plan=plan)),
+    )
+    monkeypatch.setattr(service, "run_one", run_one)
+
+    await service._run_all_with_search(SchedulerConfig(subscription_search_interval_seconds=600))
+
+    run_one.assert_awaited_once()
+    assert run_one.await_args.kwargs["active_search"] is True
+
+
+@pytest.mark.asyncio
+async def test_rss_sweep_uses_recent_feed_and_limits_due_searches(monkeypatch):
+    service = SubscriptionRunApplicationService()
+    now = time.time()
+    fresh_state = MediaSubscriptionState(sub_id="fresh", media_id=MediaID.parse("tmdb:tv:1"), media=_media(), active=True, last_search_at=now)
+    older_due_state = MediaSubscriptionState(sub_id="older-due", media_id=MediaID.parse("tmdb:tv:2"), media=_media(), active=True, last_search_at=now - 7200)
+    newer_due_state = MediaSubscriptionState(sub_id="newer-due", media_id=MediaID.parse("tmdb:tv:3"), media=_media(), active=True, last_search_at=now - 3700)
+    recent_candidate = ResourceSearchResult(
+        id="recent-1",
+        title="Test Show S01E01",
+        site="site-a",
+        category="tv",
+        size="1 GB",
+        seeders=1,
+        leechers=0,
+        publish_date=datetime.now(UTC),
+        download_url="https://example.com/recent-1",
+        result_id="recent-1",
+    )
+    built_subs = {
+        "fresh": _subscription().model_copy(update={"sub_id": "fresh"}),
+        "older-due": _subscription().model_copy(update={"sub_id": "older-due"}),
+        "newer-due": _subscription().model_copy(update={"sub_id": "newer-due"}),
+    }
+    run_one = AsyncMock(return_value=SubscriptionRunResponse(checked=1, added=0))
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.run.subscription_query_service.list_states",
+        AsyncMock(return_value=[fresh_state, newer_due_state, older_due_state]),
+    )
+    monkeypatch.setattr(service, "_fetch_recent_candidates_for_sweep", AsyncMock(return_value=[recent_candidate]))
+    monkeypatch.setattr(service, "_build_runtime_subscription", AsyncMock(side_effect=lambda state: built_subs[state.sub_id]))
+    monkeypatch.setattr(service, "run_one", run_one)
+
+    await service._run_all_with_recent_feed(
+        SchedulerConfig(
+            subscription_search_backfill_interval_seconds=3600,
+            subscription_search_max_per_sweep=1,
+        )
+    )
+
+    assert run_one.await_count == 3
+    first_call, second_call, third_call = run_one.await_args_list
+    assert first_call.args[0].sub_id == "fresh"
+    assert first_call.kwargs["recent_candidates"] == [recent_candidate]
+    assert first_call.kwargs["active_search"] is False
+    assert second_call.args[0].sub_id == "newer-due"
+    assert second_call.kwargs["recent_candidates"] == [recent_candidate]
+    assert second_call.kwargs["active_search"] is False
+    assert third_call.args[0].sub_id == "older-due"
+    assert third_call.kwargs["active_search"] is True
+    assert "recent_candidates" not in third_call.kwargs
+
+
+def test_recent_candidates_are_filtered_by_media_title_and_sites():
+    service = SubscriptionRunApplicationService()
+    media = _media(episodes_count=4, aired_episode_count=4)
+    plan = SubscriptionRunPlan(
+        sub_id="sub-1",
+        media=media,
+        season_number=1,
+        correlation_id="corr-1",
+        episode_mode=True,
+        sites=["indexer-a::site-a"],
+        filters=None,
+        quality_profile=None,
+        target_episodes={1},
+        required_scores={},
+        existing_disc_numbers=set(),
+    )
+    query = MediaSearchQuery(media=media, indexers=plan.sites)
+    candidates = [
+        ResourceSearchResult(
+            id="match-title",
+            title="Test Show S01E01 1080p WEB-DL",
+            site="indexer-a::site-a",
+            category="tv",
+            size="1 GB",
+            seeders=10,
+            leechers=0,
+            publish_date=datetime.now(UTC),
+            download_url="https://example.com/match",
+            result_id="match-title",
+            matched_by_id=False,
+        ),
+        ResourceSearchResult(
+            id="wrong-title",
+            title="Other Show S01E01 1080p WEB-DL",
+            site="indexer-a::site-a",
+            category="tv",
+            size="1 GB",
+            seeders=10,
+            leechers=0,
+            publish_date=datetime.now(UTC),
+            download_url="https://example.com/wrong-title",
+            result_id="wrong-title",
+            matched_by_id=False,
+        ),
+        ResourceSearchResult(
+            id="wrong-site",
+            title="Test Show S01E01 1080p WEB-DL",
+            site="indexer-a::site-b",
+            category="tv",
+            size="1 GB",
+            seeders=10,
+            leechers=0,
+            publish_date=datetime.now(UTC),
+            download_url="https://example.com/wrong-site",
+            result_id="wrong-site",
+            matched_by_id=False,
+        ),
+    ]
+
+    results = service._filter_recent_candidates(query=query, plan=plan, candidates=candidates)
+
+    assert [result.id for result in results] == ["match-title"]
+    assert results[0].result_id != "match-title"
+    cached_result = resource_search_service.get_by_result_id(results[0].result_id)
+    assert cached_result is not None
+    assert cached_result.title == "Test Show S01E01 1080p WEB-DL"
 
 
 @pytest.mark.asyncio

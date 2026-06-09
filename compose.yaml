@@ -5,6 +5,11 @@ services:
   aethera:
     image: ${AETHERA_IMAGE:-n120318/aethera}:${AETHERA_TAG:-latest}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${AETHERA_DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${AETHERA_DOCKER_LOG_MAX_FILES:-3}
     environment:
       - TZ=Asia/Shanghai
       - BACKEND_MODE=prod

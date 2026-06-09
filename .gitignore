@@ -51,7 +51,6 @@ build/
 *.magnet
 
 # Local secrets / overrides
-docker-compose.dev.yml
 docker-compose.dev.override.yml
 *.conf.local
 *.config.local
