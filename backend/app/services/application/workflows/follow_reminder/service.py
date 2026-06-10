@@ -124,10 +124,13 @@ class FollowReminderService:
                 if not mid:
                     continue
 
-                media = await media_service.resolve_execution_snapshot(
-                    mid,
-                    season_number=sub.season_number if mid.media_type == MediaType.tv else None,
-                )
+                if mid.media_type == MediaType.movie:
+                    media = await media_service.resolve_follow_release_media(mid)
+                else:
+                    media = await media_service.resolve_execution_snapshot(
+                        mid,
+                        season_number=sub.season_number,
+                    )
                 if not media:
                     continue
 

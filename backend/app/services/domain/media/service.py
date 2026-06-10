@@ -73,6 +73,9 @@ class MediaService:
     async def simple_info(self, media_id: MediaID) -> MediaSimpleInfo | None:
         return await self.profile_service.simple_info(media_id)
 
+    async def resolve_follow_release_media(self, media_id: MediaID) -> MediaFullInfo | None:
+        return await self.profile_service.info(media_id)
+
     def apply_season_context[T: MediaFullInfo | MediaSimpleInfo](self, media: T, season_number: int | None) -> T:
         return apply_media_season_context(media, season_number)
 

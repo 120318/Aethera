@@ -9,6 +9,7 @@ from app.schemas.domain.library import LibraryFile, LibraryPackageSummary
 from app.schemas.domain.media import MediaExecutionSnapshot, MediaSimpleInfo
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_attributes import ResourceAttributes
+from app.schemas.exception.base import AppException
 from app.schemas.media_id import MediaID
 from app.schemas.runtime.library_resource_list import (
     LibraryListAttributes,
@@ -85,13 +86,21 @@ class LibraryResourceListService:
         execution_media = None
         if active_season_number is not None:
             phase_started_at = time.perf_counter()
-            execution_media = await media_service.resolve_execution_snapshot(
-                media_id,
-                season_number=active_season_number,
-                require_tv_season=True,
-                require_episode_count=True,
-                include_schedule_snapshot=True,
-            )
+            try:
+                execution_media = await media_service.resolve_execution_snapshot(
+                    media_id,
+                    season_number=active_season_number,
+                    require_tv_season=True,
+                    require_episode_count=True,
+                    include_schedule_snapshot=True,
+                )
+            except AppException as exc:
+                logger.info(
+                    "Build library resource list without execution snapshot: media=%s season=%s error=%s",
+                    media_id,
+                    active_season_number,
+                    exc,
+                )
             self._record_elapsed(timings, "execution_snapshot", phase_started_at)
 
         phase_started_at = time.perf_counter()

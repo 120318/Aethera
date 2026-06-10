@@ -51,15 +51,15 @@ async def test_follow_reminder_emits_movie_theatrical_digital_and_physical_event
     async def fake_list():
         return [sub]
 
-    async def fake_execution_snapshot(media_id, *, season_number=None):
-        assert season_number is None
+    async def fake_info(media_id):
+        assert media_id == media.media_id
         return media
 
     async def fake_patch_by_sub_id(sub_id, patch):
         patches.append((sub_id, patch))
 
     monkeypatch.setattr("app.services.application.workflows.follow_reminder.service.subscription_query_service.list_states", fake_list)
-    monkeypatch.setattr("app.services.application.workflows.follow_reminder.service.media_service.resolve_execution_snapshot", fake_execution_snapshot)
+    monkeypatch.setattr("app.services.application.workflows.follow_reminder.service.media_service.resolve_follow_release_media", fake_info)
     monkeypatch.setattr("app.services.application.workflows.follow_reminder.service.event_service.emit_media", lambda event, meta=None: emitted.append((event, meta)))
     monkeypatch.setattr("app.services.application.workflows.follow_reminder.service.subscription_command_service.patch_settings_by_sub_id", fake_patch_by_sub_id)
 
@@ -100,15 +100,15 @@ async def test_follow_reminder_emits_only_available_movie_release(monkeypatch):
     async def fake_list():
         return [sub]
 
-    async def fake_execution_snapshot(media_id, *, season_number=None):
-        assert season_number is None
+    async def fake_info(media_id):
+        assert media_id == media.media_id
         return media
 
     async def fake_patch_by_sub_id(sub_id, patch):
         return None
 
     monkeypatch.setattr("app.services.application.workflows.follow_reminder.service.subscription_query_service.list_states", fake_list)
-    monkeypatch.setattr("app.services.application.workflows.follow_reminder.service.media_service.resolve_execution_snapshot", fake_execution_snapshot)
+    monkeypatch.setattr("app.services.application.workflows.follow_reminder.service.media_service.resolve_follow_release_media", fake_info)
     monkeypatch.setattr("app.services.application.workflows.follow_reminder.service.event_service.emit_media", lambda event, meta=None: emitted.append((event, meta)))
     monkeypatch.setattr("app.services.application.workflows.follow_reminder.service.subscription_command_service.patch_settings_by_sub_id", fake_patch_by_sub_id)
 

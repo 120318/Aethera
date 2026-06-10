@@ -486,6 +486,71 @@ def test_recent_candidates_are_filtered_by_media_title_and_sites():
     assert cached_result.title == "Test Show S01E01 1080p WEB-DL"
 
 
+def test_recent_candidates_do_not_match_short_title_substrings():
+    service = SubscriptionRunApplicationService()
+    media = _media(episodes_count=1, aired_episode_count=1).model_copy(update={"title": "It", "imdb_id": None})
+    plan = SubscriptionRunPlan(
+        sub_id="sub-1",
+        media=media,
+        season_number=1,
+        correlation_id="corr-1",
+        episode_mode=True,
+        sites=None,
+        filters=None,
+        quality_profile=None,
+        target_episodes={1},
+        required_scores={},
+        existing_disc_numbers=set(),
+    )
+    query = MediaSearchQuery(media=media)
+    candidates = [
+        ResourceSearchResult(
+            id="wrong-substring",
+            title="Interstellar 2014 1080p WEB-DL",
+            site="site-a",
+            category="movie",
+            size="1 GB",
+            seeders=10,
+            leechers=0,
+            publish_date=datetime.now(UTC),
+            download_url="https://example.com/wrong-substring",
+            result_id="wrong-substring",
+            matched_by_id=False,
+        ),
+        ResourceSearchResult(
+            id="right-token",
+            title="It 2017 1080p WEB-DL",
+            site="site-a",
+            category="movie",
+            size="1 GB",
+            seeders=10,
+            leechers=0,
+            publish_date=datetime.now(UTC),
+            download_url="https://example.com/right-token",
+            result_id="right-token",
+            matched_by_id=False,
+        ),
+    ]
+
+    results = service._filter_recent_candidates(query=query, plan=plan, candidates=candidates)
+
+    assert [result.title for result in results] == ["It 2017 1080p WEB-DL"]
+
+
+def test_active_search_due_ignores_last_run_when_never_searched():
+    service = SubscriptionRunApplicationService()
+    state = MediaSubscriptionState(
+        sub_id="new",
+        media_id=MediaID.parse("tmdb:tv:1"),
+        media=_media(),
+        active=True,
+        last_run_at=time.time(),
+        last_search_at=None,
+    )
+
+    assert service._active_search_due(state, 3600) is True
+
+
 @pytest.mark.asyncio
 async def test_compute_target_episodes_excludes_present_and_downloading_episodes(monkeypatch):
     service = SubscriptionRunApplicationService()

@@ -298,13 +298,24 @@ class SubscriptionRunApplicationService:
             return True
         if result_imdb_id and expected_imdb_id and result_imdb_id == expected_imdb_id:
             return True
-        media_title = self._normalize_recent_match_text(query.title)
-        resource_title = self._normalize_recent_match_text(result.title)
-        return bool(media_title and media_title in resource_title)
+        return self._recent_title_matches(query.title, result.title)
 
     @staticmethod
-    def _normalize_recent_match_text(value: str | None) -> str:
-        return re.sub(r"[\W_]+", "", str(value or "").lower(), flags=re.UNICODE)
+    def _recent_title_tokens(value: str | None) -> list[str]:
+        return re.findall(r"[^\W_]+", str(value or "").lower(), flags=re.UNICODE)
+
+    def _recent_title_matches(self, media_title: str | None, resource_title: str | None) -> bool:
+        media_tokens = self._recent_title_tokens(media_title)
+        resource_tokens = self._recent_title_tokens(resource_title)
+        if not media_tokens or not resource_tokens:
+            return False
+        if len(media_tokens) == 1:
+            return media_tokens[0] in resource_tokens
+        window_size = len(media_tokens)
+        return any(
+            resource_tokens[index:index + window_size] == media_tokens
+            for index in range(0, len(resource_tokens) - window_size + 1)
+        )
 
     def _build_search_warnings(
         self,
@@ -463,10 +474,9 @@ class SubscriptionRunApplicationService:
         return SubscriptionRunResponse(checked=total_checked, added=total_added)
 
     def _active_search_due(self, state: MediaSubscriptionState, interval_seconds: int) -> bool:
-        last_search_at = state.last_search_at if state.last_search_at is not None else state.last_run_at
-        if last_search_at is None:
+        if state.last_search_at is None:
             return True
-        return (time.time() - last_search_at) >= max(1, int(interval_seconds or 600))
+        return (time.time() - state.last_search_at) >= max(1, int(interval_seconds or 600))
 
     async def _select_active_search_states(
         self,
@@ -477,7 +487,7 @@ class SubscriptionRunApplicationService:
         ordered_states = sorted(
             states,
             key=lambda state: (
-                state.last_search_at if state.last_search_at is not None else state.last_run_at or 0,
+                state.last_search_at if state.last_search_at is not None else 0,
                 state.created_at,
                 state.sub_id or "",
             ),

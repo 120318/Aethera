@@ -13,6 +13,7 @@ from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media import MediaExecutionSnapshot, MediaFullInfo, MediaSeasonInfo, MediaSimpleInfo, MediaTarget
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_attributes import ResourceAttributes
+from app.schemas.exception import DownloadException
 from app.schemas.media_id import MediaID
 from app.schemas.runtime.library_resource_list import LibraryResourceAction
 from app.services.application.views.library.resource_list import LibraryResourceListService, _LibraryActionAvailabilityContext
@@ -108,6 +109,67 @@ async def test_library_list_uses_active_season_episode_count(monkeypatch):
     response = await list_library_resources(media_id, season_number=2)
 
     assert response.total_episodes == 8
+    assert len(response.resources) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_list_continues_when_execution_snapshot_is_unavailable(monkeypatch):
+    media_id = MediaID.parse("douban:tv:123")
+    simple_media = MediaSimpleInfo(
+        media_id=media_id,
+        provider=media_id.provider,
+        media_type=MediaType.tv,
+        id=media_id.id,
+        title="Example Show",
+        year=2026,
+        season_number=2,
+        episodes_count=24,
+    )
+    library_file = LibraryFile(
+        id="file-1",
+        task_id="task-1",
+        directory_id="dir-1",
+        media_id=media_id,
+        path="/library/example-s02e01.mkv",
+        file_name="example-s02e01.mkv",
+        file_size=1024,
+        created_at=1.0,
+    )
+
+    async def fake_simple_info(requested_media_id):
+        assert requested_media_id == media_id
+        return simple_media
+
+    async def fake_execution_snapshot(*args, **kwargs):
+        raise DownloadException("backendErrors.mediaExecutionSnapshotEpisodeCountMissing")
+
+    async def fake_library_files(requested_media_id, season=None):
+        assert requested_media_id == media_id
+        assert season == 2
+        return [library_file]
+
+    async def fake_active_commands(*args, **kwargs):
+        return []
+
+    def fake_action_context(self, library_files, context):
+        assert library_files == [library_file]
+        return (False, False, False)
+
+    monkeypatch.setattr("app.services.application.views.library.resource_list.media_service.simple_info", fake_simple_info)
+    monkeypatch.setattr("app.services.application.views.library.resource_list.media_service.resolve_execution_snapshot", fake_execution_snapshot)
+    monkeypatch.setattr("app.services.application.views.library.resource_list.library_service.get_files_by_media", fake_library_files)
+    monkeypatch.setattr(
+        "app.services.application.views.library.resource_list.command_service.list_media_active_commands",
+        fake_active_commands,
+    )
+    monkeypatch.setattr(
+        "app.services.application.views.library.resource_list.LibraryResourceListService._resolve_action_context",
+        fake_action_context,
+    )
+
+    response = await list_library_resources(media_id, season_number=2)
+
+    assert response.total_episodes == 24
     assert len(response.resources) == 1
 
 
