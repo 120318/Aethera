@@ -266,6 +266,11 @@ class ResourceSearchService:
     ) -> None:
         self.cache.cache_latest_media_results(media_id, results, season_number)
 
+    def cache_results(self, results: list[ResourceSearchResult]) -> list[ResourceSearchResult]:
+        normalized_results = self.cache.normalize_results(results)
+        self.cache.save_results(normalized_results)
+        return normalized_results
+
     def _read_site_cache(
         self,
         context: IndexerSearchContext,

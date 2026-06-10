@@ -7,6 +7,7 @@ from app.clients.base import IndexerClient
 from app.clients.factory import ClientFactory, ClientType
 from app.schemas.config import IndexerProviderConfig
 from app.schemas.domain.media_types import MediaType
+from app.schemas.domain.resource_search import ResourceSearchResult
 from app.schemas.integration.site_models import (
     IndexerSiteSetting,
     SiteInfo,
@@ -14,7 +15,7 @@ from app.schemas.integration.site_models import (
     effective_media_types_from_caps,
 )
 from app.schemas.constants.indexer import SITE_SEARCH_TIMEOUT_SECONDS
-from app.schemas.runtime.indexer_runtime import IndexerSearchContext
+from app.schemas.runtime.indexer_runtime import IndexerSearchContext, IndexerSiteSearchOutcome
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
 from app.services.config.settings_service import settings_service
 from app.services.integration.indexer.site_scope import split_scoped_site_id
@@ -97,6 +98,55 @@ class IndexerGateway:
             category=category,
             season_number=season_number,
             capabilities_by_site={context.site.id: context.capabilities},
+        )
+
+    async def fetch_recent_contexts(
+        self,
+        contexts: list[IndexerSearchContext],
+        *,
+        media_type: MediaType | None = None,
+    ) -> IndexerSiteSearchResult:
+        if not contexts:
+            return IndexerSiteSearchResult(results=[], failed=False, searched=False, outcomes=[])
+        grouped: dict[str, list[IndexerSearchContext]] = {}
+        for context in contexts:
+            if not self.is_context_enabled(context):
+                continue
+            if not self.context_supports_media_type(context, media_type):
+                continue
+            grouped.setdefault(context.indexer_id, []).append(context)
+
+        grouped_results = await asyncio.gather(*(
+            self._fetch_recent_context_group(indexer_id, indexer_contexts, media_type=media_type)
+            for indexer_id, indexer_contexts in grouped.items()
+        ))
+        results: list[ResourceSearchResult] = []
+        outcomes: list[IndexerSiteSearchOutcome] = []
+        had_failures = False
+        searched = False
+        for item in grouped_results:
+            results.extend(item.results)
+            outcomes.extend(item.outcomes)
+            had_failures = had_failures or item.failed
+            searched = searched or item.searched
+        return IndexerSiteSearchResult(results=results, failed=had_failures, searched=searched, outcomes=outcomes)
+
+    async def _fetch_recent_context_group(
+        self,
+        indexer_id: str,
+        contexts: list[IndexerSearchContext],
+        *,
+        media_type: MediaType | None,
+    ) -> IndexerSiteSearchResult:
+        client = self._client_by_id(indexer_id)
+        if client is None:
+            logger.warning("Indexer recent feed skipped because client is unavailable: indexer=%s", indexer_id)
+            return IndexerSiteSearchResult(results=[], failed=True, searched=False, outcomes=[])
+        category = media_type.value if media_type else None
+        return await self._site_searcher.fetch_recent_sites(
+            client,
+            [context.site for context in contexts],
+            category=category,
         )
 
     async def list_search_contexts(

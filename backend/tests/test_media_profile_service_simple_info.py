@@ -333,11 +333,15 @@ async def test_is_managed_media_only_reads_active_profile(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mark_profile_inactive_checks_references_without_subscription_state(monkeypatch):
+async def test_mark_profile_inactive_checks_references_when_subscription_is_absent(monkeypatch):
     service = MediaProfileService(provider_service=None, schedule_service=MediaScheduleService())
     media_id = MediaID.parse("tmdb:movie:1")
     profile = _ready_profile(media_id)
 
+    monkeypatch.setattr(
+        "app.services.domain.media.profile.lifecycle.subscription_query_service.list_states",
+        AsyncMock(return_value=[]),
+    )
     monkeypatch.setattr(service.profile_repo, "find_by_media_id", AsyncMock(return_value=profile))
     monkeypatch.setattr(service.profile_repo, "upsert_profile", AsyncMock(return_value=True))
     monkeypatch.setattr(service.lifecycle.task_repo, "find_by_media_id", AsyncMock(return_value=None))
@@ -346,6 +350,24 @@ async def test_mark_profile_inactive_checks_references_without_subscription_stat
 
     assert await service.mark_profile_inactive_if_unmanaged(media_id) is True
     service.profile_repo.upsert_profile.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mark_profile_inactive_keeps_followed_media_active(monkeypatch):
+    service = MediaProfileService(provider_service=None, schedule_service=MediaScheduleService())
+    media_id = MediaID.parse("tmdb:movie:1")
+    profile = _ready_profile(media_id)
+    subscription = type("SubscriptionState", (), {"media_id": media_id, "active": False, "followed": True})()
+
+    monkeypatch.setattr(
+        "app.services.domain.media.profile.lifecycle.subscription_query_service.list_states",
+        AsyncMock(return_value=[subscription]),
+    )
+    monkeypatch.setattr(service.profile_repo, "find_by_media_id", AsyncMock(return_value=profile))
+    monkeypatch.setattr(service.profile_repo, "upsert_profile", AsyncMock(return_value=True))
+
+    assert await service.mark_profile_inactive_if_unmanaged(media_id) is False
+    service.profile_repo.upsert_profile.assert_not_awaited()
 
 
 @pytest.mark.asyncio

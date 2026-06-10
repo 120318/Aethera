@@ -309,7 +309,13 @@ export function useMediaDetailPage() {
     detail,
     filterPresetName,
   }))
-  const handleSubscriptionClick = async () => handleMediaSubscriptionClick({ handleSubscriptionToggle })
+  const handleSubscriptionClick = async () => {
+    const result = await handleMediaSubscriptionClick({ handleSubscriptionToggle })
+    if (result?.command) {
+      handleCommandSubmitted(result.command)
+    }
+    return result
+  }
 
   function hydrateActiveCommands(commands = [], mediaIdValue = mediaId.value, seasonNumber = selectedSeasonNumber.value) {
     operations.hydrateActiveCommands(commands, {

@@ -10,17 +10,18 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 import aiohttp
 
 from app.clients.base import IndexerClient
-from app.schemas.config import IndexerProviderConfig
-from app.schemas.constants.indexer import SITE_SEARCH_TIMEOUT_SECONDS
-from app.schemas.domain.resource_search import ResourceSearchResult
-from app.schemas.integration.site_models import SiteInfo, SiteSearchCapabilities
-from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
 from app.clients.torznab import (
+    build_torznab_recent_params,
     build_torznab_search_params,
     parse_torznab_caps_xml,
     parse_torznab_xml,
     resolve_torznab_search_param,
 )
+from app.schemas.config import IndexerProviderConfig
+from app.schemas.constants.indexer import SITE_SEARCH_TIMEOUT_SECONDS
+from app.schemas.domain.resource_search import ResourceSearchResult
+from app.schemas.integration.site_models import SiteInfo, SiteSearchCapabilities
+from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
 
 logger = logging.getLogger("app.clients.prowlarr")
 
@@ -353,6 +354,40 @@ class ProwlarrClient(IndexerClient):
                 search_param,
                 exc,
             )
+            raise RuntimeError(message) from exc
+
+    async def fetch_recent_torznab(
+        self,
+        indexer: str,
+        category: str | None = None,
+    ) -> list[ResourceSearchResult]:
+        self._ensure_session()
+        params = build_torznab_recent_params(api_key=self.api_key, category=category)
+        url = f"{self.base_url}/{indexer}/api"
+        try:
+            async with self.session.get(url, params=params, headers=self._headers(), timeout=self.search_timeout) as resp:
+                if resp.status != 200:
+                    body = (await resp.text()).strip()
+                    detail = f" status={resp.status}"
+                    if body:
+                        detail += f" body={body[:200]}"
+                    raise RuntimeError(f"prowlarr_recent_http_error:{indexer}{detail}")
+                text = await resp.text()
+                return [
+                    result.model_copy(update={"site": str(indexer), "site_name": str(indexer), "matched_by_id": False})
+                    for result in parse_torznab_xml(text, default_site=str(indexer))
+                ]
+        except asyncio.TimeoutError as exc:
+            message = f"prowlarr_recent_timeout:{indexer}"
+            logger.warning("Prowlarr torznab recent timeout: indexer=%s", indexer)
+            raise RuntimeError(message) from exc
+        except aiohttp.ClientError as exc:
+            message = f"prowlarr_recent_client_error:{indexer}:{exc}"
+            logger.warning("Prowlarr torznab recent client error: indexer=%s error=%s", indexer, exc)
+            raise RuntimeError(message) from exc
+        except ValueError as exc:
+            message = f"prowlarr_recent_parse_error:{indexer}:{exc}"
+            logger.warning("Prowlarr torznab recent parse error: indexer=%s error=%s", indexer, exc)
             raise RuntimeError(message) from exc
 
     def _torznab_search_type(

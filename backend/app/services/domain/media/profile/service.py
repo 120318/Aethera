@@ -398,13 +398,6 @@ class MediaProfileService:
             )
         return with_cached_season_metadata(enriched, effective_season), "miss"
 
-    async def cached_info(self, media_id: MediaID) -> MediaFullInfo | None:
-        profile = await self.profile_repo.find_by_media_id(media_id)
-        if not profile or not self.read_model.has_complete_detail(profile):
-            return None
-        scoped_profile, selected_scope = await self._profile_scope_context(profile)
-        return self.read_model.snapshot_to_full(media_id, scoped_profile, selected_scope=selected_scope)
-
     async def info_from_source(self, lookup: MediaSourceLookup) -> MediaFullInfo | None:
         mapping = self._resolve_source_mapping(lookup)
         if mapping and mapping.media_id.media_type == lookup.media_type:

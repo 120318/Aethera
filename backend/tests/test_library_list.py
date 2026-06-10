@@ -10,9 +10,10 @@ from app.schemas.domain.command import (
     LibraryFileMediaServerSyncCommandRecordPayload,
 )
 from app.schemas.domain.library import LibraryFile
-from app.schemas.domain.media import MediaFullInfo, MediaSeasonInfo, MediaSimpleInfo, MediaTarget
+from app.schemas.domain.media import MediaExecutionSnapshot, MediaFullInfo, MediaSeasonInfo, MediaSimpleInfo, MediaTarget
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_attributes import ResourceAttributes
+from app.schemas.exception import DownloadException
 from app.schemas.media_id import MediaID
 from app.schemas.runtime.library_resource_list import LibraryResourceAction
 from app.services.application.views.library.resource_list import LibraryResourceListService, _LibraryActionAvailabilityContext
@@ -64,9 +65,22 @@ async def test_library_list_uses_active_season_episode_count(monkeypatch):
         assert requested_media_id == media_id
         return simple_media
 
-    async def fake_cached_info(requested_media_id):
+    async def fake_execution_snapshot(
+        requested_media_id,
+        *,
+        season_number=None,
+        require_tv_season=False,
+        require_episode_count=False,
+        include_schedule_snapshot=False,
+    ):
         assert requested_media_id == media_id
-        return full_media
+        assert season_number == 2
+        assert require_tv_season is True
+        assert require_episode_count is True
+        assert include_schedule_snapshot is True
+        return MediaExecutionSnapshot.model_validate(
+            full_media.model_copy(update={"episodes_count": 8})
+        )
 
     async def fake_library_files(requested_media_id, season=None):
         assert requested_media_id == media_id
@@ -81,7 +95,7 @@ async def test_library_list_uses_active_season_episode_count(monkeypatch):
         return (False, False, False)
 
     monkeypatch.setattr("app.services.application.views.library.resource_list.media_service.simple_info", fake_simple_info)
-    monkeypatch.setattr("app.services.application.views.library.resource_list.media_service.cached_info", fake_cached_info)
+    monkeypatch.setattr("app.services.application.views.library.resource_list.media_service.resolve_execution_snapshot", fake_execution_snapshot)
     monkeypatch.setattr("app.services.application.views.library.resource_list.library_service.get_files_by_media", fake_library_files)
     monkeypatch.setattr(
         "app.services.application.views.library.resource_list.command_service.list_media_active_commands",
@@ -99,7 +113,68 @@ async def test_library_list_uses_active_season_episode_count(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_library_list_fetches_season_detail_when_cached_profile_is_missing(monkeypatch):
+async def test_library_list_continues_when_execution_snapshot_is_unavailable(monkeypatch):
+    media_id = MediaID.parse("douban:tv:123")
+    simple_media = MediaSimpleInfo(
+        media_id=media_id,
+        provider=media_id.provider,
+        media_type=MediaType.tv,
+        id=media_id.id,
+        title="Example Show",
+        year=2026,
+        season_number=2,
+        episodes_count=24,
+    )
+    library_file = LibraryFile(
+        id="file-1",
+        task_id="task-1",
+        directory_id="dir-1",
+        media_id=media_id,
+        path="/library/example-s02e01.mkv",
+        file_name="example-s02e01.mkv",
+        file_size=1024,
+        created_at=1.0,
+    )
+
+    async def fake_simple_info(requested_media_id):
+        assert requested_media_id == media_id
+        return simple_media
+
+    async def fake_execution_snapshot(*args, **kwargs):
+        raise DownloadException("backendErrors.mediaExecutionSnapshotEpisodeCountMissing")
+
+    async def fake_library_files(requested_media_id, season=None):
+        assert requested_media_id == media_id
+        assert season == 2
+        return [library_file]
+
+    async def fake_active_commands(*args, **kwargs):
+        return []
+
+    def fake_action_context(self, library_files, context):
+        assert library_files == [library_file]
+        return (False, False, False)
+
+    monkeypatch.setattr("app.services.application.views.library.resource_list.media_service.simple_info", fake_simple_info)
+    monkeypatch.setattr("app.services.application.views.library.resource_list.media_service.resolve_execution_snapshot", fake_execution_snapshot)
+    monkeypatch.setattr("app.services.application.views.library.resource_list.library_service.get_files_by_media", fake_library_files)
+    monkeypatch.setattr(
+        "app.services.application.views.library.resource_list.command_service.list_media_active_commands",
+        fake_active_commands,
+    )
+    monkeypatch.setattr(
+        "app.services.application.views.library.resource_list.LibraryResourceListService._resolve_action_context",
+        fake_action_context,
+    )
+
+    response = await list_library_resources(media_id, season_number=2)
+
+    assert response.total_episodes == 24
+    assert len(response.resources) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_list_fetches_season_execution_snapshot(monkeypatch):
     media_id = MediaID.parse("douban:tv:123")
     simple_media = MediaSimpleInfo(
         media_id=media_id,
@@ -140,14 +215,22 @@ async def test_library_list_fetches_season_detail_when_cached_profile_is_missing
         assert requested_media_id == media_id
         return simple_media
 
-    async def fake_cached_info(requested_media_id):
-        assert requested_media_id == media_id
-        return None
-
-    async def fake_info(requested_media_id, *, season_number=None):
+    async def fake_execution_snapshot(
+        requested_media_id,
+        *,
+        season_number=None,
+        require_tv_season=False,
+        require_episode_count=False,
+        include_schedule_snapshot=False,
+    ):
         assert requested_media_id == media_id
         assert season_number == 2
-        return full_media
+        assert require_tv_season is True
+        assert require_episode_count is True
+        assert include_schedule_snapshot is True
+        return MediaExecutionSnapshot.model_validate(
+            full_media.model_copy(update={"episodes_count": 8})
+        )
 
     async def fake_library_files(requested_media_id, season=None):
         assert requested_media_id == media_id
@@ -162,8 +245,7 @@ async def test_library_list_fetches_season_detail_when_cached_profile_is_missing
         return (False, False, False)
 
     monkeypatch.setattr("app.services.application.views.library.resource_list.media_service.simple_info", fake_simple_info)
-    monkeypatch.setattr("app.services.application.views.library.resource_list.media_service.cached_info", fake_cached_info)
-    monkeypatch.setattr("app.services.application.views.library.resource_list.media_service.season_detail_for_library_view", fake_info)
+    monkeypatch.setattr("app.services.application.views.library.resource_list.media_service.resolve_execution_snapshot", fake_execution_snapshot)
     monkeypatch.setattr("app.services.application.views.library.resource_list.library_service.get_files_by_media", fake_library_files)
     monkeypatch.setattr(
         "app.services.application.views.library.resource_list.command_service.list_media_active_commands",
@@ -218,7 +300,6 @@ async def test_library_list_uses_movie_media_for_danmu_actions(monkeypatch):
         assert library_files == [library_file]
         assert context["media_id"] == media_id
         assert context["season_number"] is None
-        assert context["full_media"] is None
         return _LibraryActionAvailabilityContext(
             media_server_open_enabled_directory_ids=set(),
             media_server_sync_enabled_directory_ids=set(),
@@ -292,7 +373,6 @@ async def test_library_list_resolves_movie_danmu_actions_from_simple_media(monke
         media_id=media_id,
         active_season_number=None,
         total_episodes=0,
-        full_media=None,
         active_commands=[],
         library_files=files,
     )

@@ -45,6 +45,7 @@ class MediaSubscriptionCycleORM(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     started_at: Mapped[float] = mapped_column(Float, nullable=False)
     last_checked_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_search_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     ended_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     ended_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     ended_trigger: Mapped[str | None] = mapped_column(Text, nullable=True)

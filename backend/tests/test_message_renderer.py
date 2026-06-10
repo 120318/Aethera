@@ -120,6 +120,8 @@ def test_media_server_sync_message_includes_target_file_name():
             media_id=_media().media_id,
             media_server_id="jellyfin",
             file_path="/library/Partner (2026)/Partner.2026.mkv",
+            nfo_count=2,
+            image_count=1,
             trigger="manual",
         ),
     )
@@ -127,6 +129,8 @@ def test_media_server_sync_message_includes_target_file_name():
     message = render_message(event_message_key(event.type), params, locale="zh-CN")
 
     assert "Partner.2026.mkv" in message
+    assert "NFO 2 个" in message
+    assert "图片 1 个" in message
 
 
 def test_danmu_event_message_includes_video_file_name():

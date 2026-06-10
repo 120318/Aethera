@@ -90,6 +90,7 @@ class SubscriptionQueryService:
             active=state.active,
             created_at=state.created_at,
             last_run_at=state.last_run_at,
+            last_search_at=state.last_search_at,
             follow_reminded_air_date=state.follow_reminded_air_date,
             follow_reminded_digital_release_date=state.follow_reminded_digital_release_date,
             follow_reminded_physical_release_date=state.follow_reminded_physical_release_date,

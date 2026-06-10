@@ -147,7 +147,9 @@
               <span v-tooltip.top="pilotDisabledReason || null" class="inline-flex">
                 <Button
                   :label="quickDownloadLabel" icon="pi pi-bolt"
-                  severity="primary" :loading="pilotInProgress" :disabled="loading || !canMutateSubscription || pilotDisabled || pilotInProgress"
+                  :severity="pilotButtonSeverity"
+                  :outlined="pilotButtonOutlined"
+                  :loading="pilotInProgress" :disabled="loading || !canMutateSubscription || pilotDisabled || pilotInProgress"
                   @click="$emit('pilot')"
                 />
               </span>
@@ -157,7 +159,7 @@
               />
               <Button
                 :label="subscription?.active ? $t('mediaDetail.cancelSubscription') : $t('mediaDetail.subscribe')" :icon="subscription?.active ? 'pi pi-times' : 'pi pi-star'"
-                :severity="subscription?.active ? 'danger' : 'secondary'" outlined :loading="checkingSubscription"
+                :severity="subscriptionButtonSeverity" :outlined="subscriptionButtonOutlined" :loading="checkingSubscription"
                 :disabled="!canMutateSubscription || checkingSubscription" @click="$emit('subscription-click')"
               />
               <Button
@@ -249,6 +251,12 @@ const { t } = useI18n()
 const releaseDialogVisible = ref(false)
 const releaseTypeOrder = [1, 2, 3, 4, 5, 6]
 const releaseDetailChinaRegion = 'CN'
+const isTvMedia = computed(() => String(props.mediaId || '').includes(':tv:'))
+const subscriptionActive = computed(() => !!props.subscription?.active)
+const pilotButtonSeverity = computed(() => (isTvMedia.value && !subscriptionActive.value ? 'secondary' : 'primary'))
+const pilotButtonOutlined = computed(() => isTvMedia.value && !subscriptionActive.value)
+const subscriptionButtonSeverity = computed(() => (subscriptionActive.value ? 'danger' : 'primary'))
+const subscriptionButtonOutlined = computed(() => subscriptionActive.value)
 const isTvScheduleDetail = computed(() => props.cards?.localResources?.schedule?.media_type === 'tv')
 const detailDialogTitle = computed(() => (isTvScheduleDetail.value ? t('mediaDetail.overviewText.airingDetails') : t('mediaDetail.overviewText.releaseDetails')))
 const detailDialogEmptyText = computed(() => (isTvScheduleDetail.value ? t('mediaDetail.overviewText.airingDetailsEmpty') : t('mediaDetail.overviewText.releaseDetailsEmpty')))

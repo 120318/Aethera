@@ -100,6 +100,7 @@ class MediaSubscriptionState(BaseModel):
     created_at: float = Field(default_factory=lambda: time.time())
     updated_at: float = Field(default_factory=lambda: time.time())
     last_run_at: float | None = None
+    last_search_at: float | None = None
     follow_reminded_air_date: str | None = None
     follow_reminded_digital_release_date: str | None = None
     follow_reminded_physical_release_date: str | None = None
@@ -119,6 +120,7 @@ class MediaSubscriptionStatePatch(BaseModel):
     target_filter_config_id: str | None = None
     upgrade_completion_snapshot: UpgradeCompletionSnapshot | None = None
     last_run_at: float | None = None
+    last_search_at: float | None = None
     follow_reminded_air_date: str | None = None
     follow_reminded_digital_release_date: str | None = None
     follow_reminded_physical_release_date: str | None = None
@@ -158,6 +160,7 @@ class MediaSubscriptionStateView(BaseModel):
     target_filter_config_id: str | None = None
     last_run_at: float | None = None
     last_checked_at: float | None = None
+    last_search_at: float | None = None
     cycle_status: str | None = None
     ended_reason: SubscriptionEndReason | None = None
     ended_at: float | None = None
@@ -218,6 +221,7 @@ def build_subscription_state_view(
         target_filter_config_id=state.target_filter_config_id if state else None,
         last_run_at=state.last_run_at if state else None,
         last_checked_at=state.last_run_at if state else None,
+        last_search_at=state.last_search_at if state else None,
         cycle_status=cycle.status.value if cycle else None,
         ended_reason=cycle.ended_reason if cycle else None,
         ended_at=cycle.ended_at if cycle else None,

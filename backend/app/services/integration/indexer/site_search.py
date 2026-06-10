@@ -151,6 +151,103 @@ class IndexerSiteSearcher:
                     error=error_message,
                 )
 
+    async def fetch_recent_sites(
+        self,
+        client: IndexerClient,
+        sites: list[SiteInfo],
+        *,
+        category: str | None = None,
+    ) -> IndexerSiteSearchResult:
+        if not sites:
+            return IndexerSiteSearchResult(results=[], failed=False, searched=False, outcomes=[])
+        semaphore = asyncio.Semaphore(self._concurrency)
+        outcomes = await asyncio.gather(*(
+            self.fetch_recent_site(client, site, semaphore, category=category)
+            for site in sites
+        ))
+
+        results: list[ResourceSearchResult] = []
+        had_failures = False
+        for outcome in outcomes:
+            if outcome.success:
+                if outcome.results:
+                    results.extend(self._normalize_site_results(client, outcome.site, outcome.results))
+                continue
+            had_failures = True
+            error_message = outcome.error or "unknown error"
+            logger.warning(
+                "Indexer site recent feed failed: indexer=%s site=%s error=%s",
+                client.config.id,
+                outcome.site.id,
+                error_message,
+            )
+        return IndexerSiteSearchResult(results=results, failed=had_failures, searched=True, outcomes=list(outcomes))
+
+    async def fetch_recent_site(
+        self,
+        client: IndexerClient,
+        site: SiteInfo,
+        semaphore: asyncio.Semaphore,
+        *,
+        category: str | None = None,
+    ) -> IndexerSiteSearchOutcome:
+        async with semaphore:
+            try:
+                results = await asyncio.wait_for(
+                    client.fetch_recent_torznab(site.id, category=category),
+                    timeout=self._timeout,
+                )
+                results = [
+                    result.model_copy(update={"matched_by_id": False})
+                    for result in results
+                ]
+                logger.debug(
+                    "Indexer site recent feed result: client=%s site=%s count=%s",
+                    client.config.id,
+                    site.id,
+                    len(results),
+                )
+                return IndexerSiteSearchOutcome(
+                    indexer_id=client.config.id,
+                    indexer_name=client.config.name,
+                    indexer_type=client.config.type,
+                    site=site,
+                    success=True,
+                    results=results,
+                )
+            except asyncio.TimeoutError as exc:
+                error_message = str(exc).strip() or f"site_recent_timeout:{site.id}"
+                logger.debug(
+                    "Indexer site recent feed failed: client=%s site=%s error=%s",
+                    client.config.id,
+                    site.id,
+                    error_message,
+                )
+                return IndexerSiteSearchOutcome(
+                    indexer_id=client.config.id,
+                    indexer_name=client.config.name,
+                    indexer_type=client.config.type,
+                    site=site,
+                    success=False,
+                    error=error_message,
+                )
+            except RuntimeError as exc:
+                error_message = str(exc).strip() or f"site_recent_error:{site.id}"
+                logger.debug(
+                    "Indexer site recent feed failed: client=%s site=%s error=%s",
+                    client.config.id,
+                    site.id,
+                    error_message,
+                )
+                return IndexerSiteSearchOutcome(
+                    indexer_id=client.config.id,
+                    indexer_name=client.config.name,
+                    indexer_type=client.config.type,
+                    site=site,
+                    success=False,
+                    error=error_message,
+                )
+
     def _normalize_site_results(
         self,
         client: IndexerClient,

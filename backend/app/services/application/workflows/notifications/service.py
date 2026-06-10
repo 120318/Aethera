@@ -15,11 +15,10 @@ from app.schemas.domain.action import (
     ActionTrigger,
 )
 from app.schemas.domain.action_meta import NotificationSendQueuedActionMeta
-from app.schemas.domain.event import Event, EventCreate, EventLevel, EventSource, EventType
+from app.schemas.domain.event import Event
 from app.services.application.events.consumer import event_matches_patterns
 from app.services.audit.action_catalog import ACTION_NAME_NOTIFICATION_SEND
 from app.services.audit.action_service import action_service
-from app.services.audit.event_service import event_service
 from app.services.config.settings_service import settings_service
 from app.services.platform.notification_channel_service import notification_channel_service
 
@@ -44,23 +43,8 @@ class NotificationApplicationService:
                     event.type,
                 )
                 action_service.mark_failed(action.id, error=str(exc))
-                self._emit_notification_event(
-                    channel=channel,
-                    trigger_event=event,
-                    action_id=action.id,
-                    event_type=EventType.NOTIFICATION_FAILED,
-                    level=EventLevel.error,
-                    reason=str(exc),
-                )
                 continue
             action_service.mark_completed(action.id)
-            self._emit_notification_event(
-                channel=channel,
-                trigger_event=event,
-                action_id=action.id,
-                event_type=EventType.NOTIFICATION_SENT,
-                level=EventLevel.info,
-            )
 
     def _should_send(self, channel: NotificationChannelConfig, event: Event) -> bool:
         if not channel.enabled:
@@ -96,41 +80,6 @@ class NotificationApplicationService:
                 trigger_event_id=event.id,
             ),
         )
-
-    def _emit_notification_event(
-        self,
-        *,
-        channel: NotificationChannelConfig,
-        trigger_event: Event,
-        action_id: str,
-        event_type: EventType,
-        level: EventLevel,
-        reason: str = "",
-    ) -> None:
-        channel_label = channel.name or channel.type
-        try:
-            event_service.emit(
-                EventCreate(
-                    type=event_type,
-                    level=level,
-                    task_id=trigger_event.task_id,
-                    subscription_id=trigger_event.subscription_id,
-                    source=EventSource.addon,
-                    addon_id=channel.id,
-                    addon_name="notifications",
-                    correlation_id=trigger_event.correlation_id,
-                    action_id=action_id,
-                    message_params={
-                        "channel": channel_label,
-                        "channel_type": channel.type,
-                        "trigger_event_id": trigger_event.id,
-                        "trigger_event_type": trigger_event.type.value,
-                        "reason": reason,
-                    },
-                )
-            )
-        except Exception:
-            logger.exception("Failed to emit notification result event for channel=%s", channel_label)
 
 
 notification_application_service = NotificationApplicationService()

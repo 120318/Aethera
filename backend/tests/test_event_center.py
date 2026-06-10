@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from app.schemas.domain.action import ActionKind, ActionRecord, ActionStatus
 from app.schemas.domain.event import Event, EventCenterBellState, EventLevel, EventType
+from app.services.audit.action_service import ActionService
 from app.services.audit.event_service import EventService
 
 
@@ -37,23 +38,42 @@ class _FakeEventRepository:
 def test_event_center_uses_warning_error_events_and_running_actions(monkeypatch):
     service = EventService()
     service.repo = _FakeEventRepository()
+    captured = {}
+
+    def list_actions(**kwargs):
+        captured.update(kwargs)
+        return (
+            1,
+            [ActionRecord(id="action-1", kind=ActionKind.command, action_name="task.transfer", status=ActionStatus.running)],
+        )
+
     monkeypatch.setattr(
         "app.services.audit.event_service.action_service",
-        SimpleNamespace(
-            list_actions=lambda **_kwargs: (
-                1,
-                [ActionRecord(id="action-1", kind=ActionKind.addon, action_name="notification.send", status=ActionStatus.running)],
-            )
-        ),
+        SimpleNamespace(list_actions=list_actions),
     )
 
     center = service.get_center()
 
+    assert captured["excluded_action_names"] == ("notification.send",)
     assert center.summary.bell_state == EventCenterBellState.error
     assert center.summary.error_event_count == 1
     assert center.summary.warning_event_count == 1
     assert center.summary.active_action_count == 1
     assert [event.id for event in center.events] == ["event-error", "event-warning"]
+
+
+def test_action_service_forwards_excluded_action_names():
+    captured = {}
+    service = ActionService()
+    service.repo = SimpleNamespace(
+        list_filtered_page=lambda **kwargs: (captured.update(kwargs) or (0, [])),
+    )
+
+    total, actions = service.list_actions(excluded_action_names=("notification.send",))
+
+    assert total == 0
+    assert actions == []
+    assert captured["excluded_action_names"] == ("notification.send",)
 
 
 def test_event_center_hides_acknowledged_warning_error_events(monkeypatch):

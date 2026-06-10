@@ -36,6 +36,8 @@ export function useMediaManagementPage() {
     items,
     summaryLoading,
     loading,
+    initialLoading,
+    refreshing,
     filters,
     total,
     first,
@@ -216,6 +218,8 @@ export function useMediaManagementPage() {
   return {
     summaryLoading,
     loading,
+    initialLoading,
+    refreshing,
     items,
     filters,
     total,

@@ -59,6 +59,19 @@ def build_torznab_search_params(
     return params
 
 
+def build_torznab_recent_params(
+    *,
+    api_key: str,
+    category: str | None = None,
+    search_type: str = "search",
+) -> dict[str, str]:
+    params: dict[str, str] = {"apikey": api_key, "t": search_type}
+    category_map = {"movie": "2000", "tv": "5000", "anime": "5070"}
+    if category in category_map:
+        params["cat"] = category_map[category]
+    return params
+
+
 def resolve_torznab_search_param(query: str, search_param: str) -> str:
     if search_param != "auto":
         return search_param

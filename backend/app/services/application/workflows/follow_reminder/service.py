@@ -33,8 +33,9 @@ def _parse_ymd(d: str | None) -> date | None:
 
 
 def _should_emit_reminder(today: date, air_date: date, window_days: int, reminded_air_date: str | None) -> bool:
-    _ = window_days
     if air_date > today:
+        return False
+    if (today - air_date).days > max(0, int(window_days)):
         return False
     if reminded_air_date:
         prev = _parse_ymd(reminded_air_date)
@@ -123,7 +124,13 @@ class FollowReminderService:
                 if not mid:
                     continue
 
-                media = await media_service.cached_info(mid)
+                if mid.media_type == MediaType.movie:
+                    media = await media_service.resolve_follow_release_media(mid)
+                else:
+                    media = await media_service.resolve_execution_snapshot(
+                        mid,
+                        season_number=sub.season_number,
+                    )
                 if not media:
                     continue
 

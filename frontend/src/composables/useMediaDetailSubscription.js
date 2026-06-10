@@ -132,29 +132,41 @@ export function useMediaDetailSubscription(options = {}) {
       if (loadDetailOverview) {
         await loadDetailOverview(mediaId.value, activeSeasonNumber.value)
       }
+      let runCommand = null
+      if (enabling && nextState?.active) {
+        try {
+          runCommand = await submitSubscriptionRunCommand()
+        } catch (error) {
+          notification.error(error?.response?.data?.message || error?.message || t('subscription.submitRefreshTaskFailed'))
+        }
+      }
       notification.success(enabling ? t('subscription.subscribed') : t('mediaDetail.subscriptionCancelled'))
-      return { completed: true }
+      return { completed: true, command: runCommand }
     } finally {
       checkingSubscription.value = false
     }
   }
 
-  async function handleRunSubscription() {
+  async function submitSubscriptionRunCommand() {
     if (!mediaId.value || !subscription.value?.active) return null
     if (!requireSeasonContext(t('mediaDetail.refreshSubscriptionAction'))) return null
+    const seasonNumber = currentMediaType.value === 'tv' ? activeSeasonNumber.value : null
+    return operations.submitCommand({
+      type: 'subscription.run',
+      payload: {
+        target: buildMediaTarget({
+          media_id: mediaId.value,
+          seasonNumber,
+        }),
+      },
+    }, {
+      dedupeKey: `media:${mediaId.value}:${seasonNumber || ''}:subscription.run`,
+    })
+  }
+
+  async function handleRunSubscription() {
     try {
-      const seasonNumber = currentMediaType.value === 'tv' ? activeSeasonNumber.value : null
-      const command = await operations.submitCommand({
-        type: 'subscription.run',
-        payload: {
-          target: buildMediaTarget({
-            media_id: mediaId.value,
-            seasonNumber,
-          }),
-        },
-      }, {
-        dedupeKey: `media:${mediaId.value}:${seasonNumber || ''}:subscription.run`,
-      })
+      const command = await submitSubscriptionRunCommand()
       if (command) notification.success(t('subscription.refreshTaskSubmitted'))
       return command
     } catch (error) {

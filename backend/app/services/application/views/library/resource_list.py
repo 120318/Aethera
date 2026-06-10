@@ -6,9 +6,10 @@ import time
 from app.schemas.domain.command import CommandRecord, CommandTargetType, CommandType
 from app.schemas.config import DanmuAddonConfig, Tag
 from app.schemas.domain.library import LibraryFile, LibraryPackageSummary
-from app.schemas.domain.media import MediaFullInfo, MediaSimpleInfo
+from app.schemas.domain.media import MediaExecutionSnapshot, MediaSimpleInfo
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_attributes import ResourceAttributes
+from app.schemas.exception.base import AppException
 from app.schemas.media_id import MediaID
 from app.schemas.runtime.library_resource_list import (
     LibraryListAttributes,
@@ -82,20 +83,25 @@ class LibraryResourceListService:
         if media:
             media = media_service.apply_season_context(media, season_number)
         active_season_number = media.season_number if media and media.media_type == MediaType.tv else None
-        media_with_seasons = None
+        execution_media = None
         if active_season_number is not None:
             phase_started_at = time.perf_counter()
-            media_with_seasons = await media_service.cached_info(media_id)
-            self._record_elapsed(timings, "cached_info", phase_started_at)
-            if media_with_seasons is None:
-                phase_started_at = time.perf_counter()
-                media_with_seasons = await media_service.season_detail_for_library_view(
+            try:
+                execution_media = await media_service.resolve_execution_snapshot(
                     media_id,
                     season_number=active_season_number,
+                    require_tv_season=True,
+                    require_episode_count=True,
+                    include_schedule_snapshot=True,
                 )
-                self._record_elapsed(timings, "season_detail", phase_started_at)
-            elif media_with_seasons:
-                media_with_seasons = media_service.apply_season_context(media_with_seasons, active_season_number)
+            except AppException as exc:
+                logger.info(
+                    "Build library resource list without execution snapshot: media=%s season=%s error=%s",
+                    media_id,
+                    active_season_number,
+                    exc,
+                )
+            self._record_elapsed(timings, "execution_snapshot", phase_started_at)
 
         phase_started_at = time.perf_counter()
         active_commands, library_files = await asyncio.gather(
@@ -111,8 +117,7 @@ class LibraryResourceListService:
         response = await self._build_response(
             media_id=media_id,
             active_season_number=active_season_number,
-            total_episodes=self._resolve_total_episodes(media, media_with_seasons),
-            full_media=media_with_seasons,
+            total_episodes=self._resolve_total_episodes(media, execution_media),
             active_commands=active_commands,
             library_files=library_files,
         )
@@ -133,7 +138,6 @@ class LibraryResourceListService:
         media_id: MediaID,
         active_season_number: int | None,
         total_episodes: int,
-        full_media: MediaFullInfo | None,
         active_commands: list[CommandRecord],
         library_files: list[LibraryFile],
     ) -> LibraryListResponse:
@@ -145,7 +149,6 @@ class LibraryResourceListService:
             library_files,
             media_id=media_id,
             season_number=active_season_number,
-            full_media=full_media,
         )
         action_context_map = await self._resolve_action_context_map(resources, resource_files_map, action_context)
         return LibraryListResponse(
@@ -164,19 +167,10 @@ class LibraryResourceListService:
     def _resolve_total_episodes(
         self,
         simple_media: MediaSimpleInfo | None,
-        full_media: MediaFullInfo | None,
+        execution_media: MediaExecutionSnapshot | None,
     ) -> int:
-        if full_media is not None:
-            active_season_number = full_media.season_number if full_media.media_type == MediaType.tv else None
-            total_episodes = full_media.episodes_count or 0
-            if active_season_number is not None:
-                matched_season = next(
-                    (season for season in full_media.seasons if season.season_number == active_season_number),
-                    None,
-                )
-                if matched_season and matched_season.episode_count is not None:
-                    return int(matched_season.episode_count or 0)
-            return int(total_episodes)
+        if execution_media is not None:
+            return int(execution_media.episodes_count or 0)
         return int(simple_media.episodes_count or 0) if simple_media else 0
 
     def _build_library_list_attributes(self, attrs: ResourceAttributes, *, tags: list[Tag]) -> LibraryListAttributes:
@@ -315,7 +309,6 @@ class LibraryResourceListService:
         *,
         media_id: MediaID,
         season_number: int | None,
-        full_media: MediaFullInfo | None,
     ) -> _LibraryActionAvailabilityContext:
         task_ids = sorted({file.task_id for file in library_files if file.task_id})
         existing_tasks = await download_service.get_tasks_by_ids(task_ids)
@@ -344,7 +337,6 @@ class LibraryResourceListService:
         danmu_media_available = await self._resolve_danmu_media_available(
             media_id,
             season_number=season_number,
-            full_media=full_media,
             danmu_enabled_directory_ids=danmu_enabled_directory_ids,
             danmu_config=danmu_config,
         )
@@ -361,14 +353,11 @@ class LibraryResourceListService:
         media_id: MediaID,
         *,
         season_number: int | None,
-        full_media: MediaFullInfo | None,
         danmu_enabled_directory_ids: set[str],
         danmu_config: DanmuAddonConfig,
     ) -> bool:
         if not danmu_enabled_directory_ids:
             return False
-        if full_media and danmu_source_resolver.has_fetchable_vendor(full_media, danmu_config):
-            return True
         resolved = await danmu_source_resolver.media_with_fetchable_source(
             media_id,
             season_number=season_number,

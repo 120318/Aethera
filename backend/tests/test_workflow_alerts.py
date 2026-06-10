@@ -24,7 +24,7 @@ def test_default_notification_channel_patterns_target_business_results():
 
 
 @pytest.mark.asyncio
-async def test_notification_send_failure_emits_event_with_event_type_value(monkeypatch):
+async def test_notification_send_failure_marks_action_without_emitting_event(monkeypatch):
     captured = {}
     channel = NotificationChannelConfig(id="channel-1", type="fake", name="Fake", event_patterns=["media.*"])
 
@@ -48,13 +48,14 @@ async def test_notification_send_failure_emits_event_with_event_type_value(monke
         SimpleNamespace(
             create_action=lambda **kwargs: SimpleNamespace(id="action-1"),
             mark_running=lambda *args, **kwargs: None,
-            mark_failed=lambda *args, **kwargs: None,
+            mark_failed=lambda action_id, **kwargs: captured.setdefault("failed", (action_id, kwargs.get("error"))),
             mark_completed=lambda *args, **kwargs: None,
         ),
     )
     monkeypatch.setattr(
         "app.services.application.workflows.notifications.service.event_service",
         SimpleNamespace(emit=lambda event, meta=None: captured.setdefault("event", event)),
+        raising=False,
     )
 
     await NotificationApplicationService().handle_event(
@@ -67,16 +68,12 @@ async def test_notification_send_failure_emits_event_with_event_type_value(monke
         )
     )
 
-    assert captured["event"].type == EventType.NOTIFICATION_FAILED
-    assert captured["event"].level == EventLevel.error
-    assert captured["event"].message_params["channel"] == "Fake"
-    assert captured["event"].message_params["trigger_event_id"] == "event-1"
-    assert captured["event"].message_params["reason"] == "network failed"
-    assert captured["event"].action_id == "action-1"
+    assert captured["failed"] == ("action-1", "network failed")
+    assert "event" not in captured
 
 
 @pytest.mark.asyncio
-async def test_notification_send_success_emits_event(monkeypatch):
+async def test_notification_send_success_marks_action_without_emitting_event(monkeypatch):
     captured = {}
     channel = NotificationChannelConfig(id="channel-1", type="fake", name="Fake", event_patterns=["media.*"])
 
@@ -107,6 +104,7 @@ async def test_notification_send_success_emits_event(monkeypatch):
     monkeypatch.setattr(
         "app.services.application.workflows.notifications.service.event_service",
         SimpleNamespace(emit=lambda event, meta=None: captured.setdefault("event", event)),
+        raising=False,
     )
     await NotificationApplicationService().handle_event(
         Event(
@@ -120,8 +118,4 @@ async def test_notification_send_success_emits_event(monkeypatch):
 
     assert captured["sent"] == ("channel-1", "event-1")
     assert captured["completed"] is True
-    assert captured["event"].type == EventType.NOTIFICATION_SENT
-    assert captured["event"].level == EventLevel.info
-    assert captured["event"].message_params["channel"] == "Fake"
-    assert captured["event"].message_params["trigger_event_type"] == "media.import.completed"
-    assert captured["event"].action_id == "action-1"
+    assert "event" not in captured

@@ -1,10 +1,12 @@
 import asyncio
 import logging
+from typing import Optional
 
 from app.schemas.domain.download import TaskStatus
-from app.schemas.domain.media import MediaFullInfo, MediaSimpleInfo
+from app.schemas.domain.media import MediaExecutionSnapshot, MediaFullInfo, MediaSimpleInfo
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.schedule import MediaScheduleSummary
+from app.schemas.exception import MediaNotFoundException
 from app.schemas.media_id import MediaID
 from app.schemas.runtime.library_overview import LibraryOverviewResponse, LibraryOverviewSnapshot, NextEpisodeToAir
 from app.services.domain.download import download_service
@@ -30,18 +32,27 @@ class LibraryOverviewService:
         return value
 
     async def get_overview(self, media_id: MediaID) -> LibraryOverviewResponse:
-        media = await media_service.cached_info(media_id)
+        media = None
+        if media_id.media_type == MediaType.movie:
+            try:
+                media = await media_service.resolve_execution_snapshot(media_id)
+            except MediaNotFoundException:
+                logger.info("Build library overview without media snapshot: media=%s", media_id)
         schedule = None
-        if media and media.media_type == MediaType.movie:
-            schedule = await media_service.build_schedule_summary_for_media(media)
         snapshot = await self.build_snapshot(media_id, media, schedule=schedule)
         return LibraryOverviewResponse(media_id=media_id, **snapshot.model_dump())
 
-    def resolve_full_media_total_episodes(self, media: MediaFullInfo | None) -> int:
+    def resolve_full_media_total_episodes(self, media: Optional[MediaFullInfo | MediaExecutionSnapshot]) -> int:
         active_season_number = media.season_number if media and media.media_type == MediaType.tv else None
         total_episodes = (media.episodes_count or 0) if media else 0
-        if media and active_season_number is not None:
-            matched_season = next((season for season in media.seasons if season.season_number == active_season_number), None)
+        seasons = []
+        if media:
+            try:
+                seasons = media.seasons
+            except AttributeError:
+                seasons = []
+        if seasons and active_season_number is not None:
+            matched_season = next((season for season in seasons if season.season_number == active_season_number), None)
             if matched_season and matched_season.episode_count is not None:
                 total_episodes = int(matched_season.episode_count or 0)
         return total_episodes
@@ -52,7 +63,7 @@ class LibraryOverviewService:
     async def build_snapshot(
         self,
         media_id: MediaID,
-        media: MediaFullInfo | None = None,
+        media: Optional[MediaFullInfo | MediaExecutionSnapshot] = None,
         schedule: MediaScheduleSummary | None = None,
         library_snapshot: MediaLibrarySnapshot | None = None,
     ) -> LibraryOverviewSnapshot:
@@ -67,7 +78,11 @@ class LibraryOverviewService:
         else:
             active_season_number = media.season_number if media.media_type == MediaType.tv else None
             total_episodes = self.resolve_full_media_total_episodes(media)
-            schedule = schedule or media.schedule
+            if schedule is None:
+                try:
+                    schedule = media.schedule
+                except AttributeError:
+                    schedule = None
 
         snapshot_task = (
             self._loaded_library_snapshot(library_snapshot)

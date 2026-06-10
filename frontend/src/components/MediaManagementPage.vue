@@ -51,7 +51,7 @@
           />
         </div>
 
-        <div v-if="loading" class="flex flex-col">
+        <div v-if="initialLoading" class="flex flex-col">
           <div v-for="index in 6" :key="index" class="list-skeleton-row flex flex-col gap-item py-item border-b border-separator last:border-0">
             <div class="flex flex-col sm:flex-row items-start sm:items-stretch gap-item min-w-0">
               <div class="min-w-0 flex flex-col gap-inline flex-1">
@@ -181,7 +181,7 @@ const managementTabs = computed(() => [
 ])
 
 const {
-  loading,
+  initialLoading,
   summaryLoading,
   directoryIntegrityResult,
   directoryIntegrityLoading,

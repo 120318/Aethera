@@ -33,6 +33,7 @@ class MediaSubscriptionCycleRepository:
             status=row.status,
             started_at=row.started_at,
             last_checked_at=row.last_checked_at,
+            last_search_at=row.last_search_at,
             ended_at=row.ended_at,
             ended_reason=row.ended_reason,
             ended_trigger=row.ended_trigger,

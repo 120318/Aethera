@@ -749,7 +749,7 @@ async def test_execute_pilot_episode_fills_missing_tv_episode_count(monkeypatch)
         lambda _media_id: _Lock(),
     )
     monkeypatch.setattr(
-        "app.services.domain.media.media_service.execution_snapshot_service.profile_service.cached_info",
+        "app.services.domain.media.media_service.execution_snapshot_service._snapshot_from_profile",
         AsyncMock(return_value=media_detail),
     )
     monkeypatch.setattr(

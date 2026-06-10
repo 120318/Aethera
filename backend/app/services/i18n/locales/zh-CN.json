@@ -152,7 +152,7 @@
   "eventMessages.mediaImportFailed": "入库失败「{resource_title}」：{error}",
   "eventMessages.mediaDeleted": "资源已删除，共删除 {path_count} 个路径，首个目标「{first_target}」",
   "eventMessages.mediaImportCompleted": "已完成入库，共导入 {file_count} 个文件，首个文件「{first_target}」",
-  "eventMessages.mediaServerSyncCompleted": "刮削完成「{file_path_name}」",
+  "eventMessages.mediaServerSyncCompleted": "刮削完成「{file_path_name}」：产物 NFO {nfo_count} 个，图片 {image_count} 个",
   "eventMessages.mediaServerSyncFailed": "刮削失败「{file_path_name}」：{error}",
   "eventMessages.notificationFailed": "消息通知发送失败：{channel}，原因：{reason}",
   "eventMessages.notificationSent": "消息通知发送成功：{channel}",

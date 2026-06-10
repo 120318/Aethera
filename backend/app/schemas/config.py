@@ -238,7 +238,11 @@ class SchedulerConfig(BaseModel):
     model_config = ConfigDict(extra='ignore')
     sync_active_downloads_interval_seconds: int = 30
     process_completed_tasks_interval_seconds: int = 60
-    subscription_sweep_interval_seconds: int = 600
+    subscription_sweep_interval_seconds: int = 300
+    subscription_search_interval_seconds: int = 600
+    subscription_resource_discovery_mode: Literal["search", "rss_with_search_backfill"] = "rss_with_search_backfill"
+    subscription_search_backfill_interval_seconds: int = 3600
+    subscription_search_max_per_sweep: int = 1
     schedule_refresh_sweep_interval_seconds: int = 3600
     directory_integrity_audit_interval_seconds: int = 21600
     cleanup_inactive_managed_media_profiles_interval_seconds: int = 86400

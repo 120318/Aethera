@@ -6,6 +6,7 @@ from app.schemas.domain.media import MediaFullInfo
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleEpisode
+from app.schemas.exception import MediaNotFoundException
 from app.schemas.media_id import MediaID
 from app.services.application.views.library.overview import OVERVIEW_ACTIVE_TASK_STATUSES, LibraryOverviewService
 from app.services.domain.library.service import MediaLibrarySnapshot
@@ -13,6 +14,55 @@ from app.services.domain.library.service import MediaLibrarySnapshot
 
 def test_library_overview_active_task_statuses_include_migrating():
     assert TaskStatus.MIGRATING in OVERVIEW_ACTIVE_TASK_STATUSES
+
+
+@pytest.mark.asyncio
+async def test_get_overview_continues_when_movie_snapshot_is_missing(monkeypatch):
+    service = LibraryOverviewService()
+    media_id = MediaID.parse("douban:movie:456")
+    library_file = LibraryFile(
+        id="file-1",
+        task_id="task-1",
+        directory_id="dir-1",
+        media_id=media_id,
+        path="/library",
+        file_name="Example.Movie.2026.mkv",
+        created_at=1,
+    )
+
+    async def fake_resolve_execution_snapshot(media_id):
+        raise MediaNotFoundException()
+
+    async def fake_simple_info(media_id):
+        return None
+
+    async def fake_library_snapshot(media_id, season=None):
+        assert season is None
+        return MediaLibrarySnapshot(files=[library_file], present_episodes=set())
+
+    async def fake_tasks_for_overview(status, media_id):
+        return []
+
+    monkeypatch.setattr(
+        "app.services.application.views.library.overview.media_service.resolve_execution_snapshot",
+        fake_resolve_execution_snapshot,
+    )
+    monkeypatch.setattr("app.services.application.views.library.overview.media_service.simple_info", fake_simple_info)
+    monkeypatch.setattr(
+        "app.services.application.views.library.overview.library_service.get_media_library_snapshot",
+        fake_library_snapshot,
+    )
+    monkeypatch.setattr(
+        "app.services.application.views.library.overview.download_service.list_media_tasks_for_overview",
+        fake_tasks_for_overview,
+    )
+
+    overview = await service.get_overview(media_id)
+
+    assert overview.media_id == media_id
+    assert overview.library_file_count == 1
+    assert overview.collected_count == 1
+    assert overview.active_task_count == 0
 
 
 @pytest.mark.asyncio

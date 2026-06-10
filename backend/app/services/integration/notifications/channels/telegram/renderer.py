@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.domain.event import Event, EventLevel, EventType
 from app.services.i18n.message_renderer import render_message
@@ -31,6 +31,23 @@ class TelegramEventMeta(BaseModel):
     selected_episodes: list[int] = Field(default_factory=list)
     imported_files: list[TelegramImportedFileMeta] = Field(default_factory=list)
     episode_number: int | None = None
+
+    @field_validator(
+        "resource_title",
+        "torrent_name",
+        "file_path",
+        "video_path",
+        "path",
+        "reason",
+        "error",
+        "error_key",
+        mode="before",
+    )
+    @classmethod
+    def _none_to_empty(cls, value) -> str:
+        if value is None:
+            return ""
+        return str(value)
 
 
 def escape_markdown(value: str) -> str:
@@ -130,6 +147,9 @@ def _resource_line(event: Event, meta: TelegramEventMeta, locale: str) -> str:
     resource = (
         meta.torrent_name
         or meta.resource_title
+        or _message_param(event, "torrent_name")
+        or _message_param(event, "resource_title")
+        or _indexer_site_resource(event)
         or _path_name(meta.file_path)
         or _path_name(meta.video_path)
         or _path_name(meta.path)
@@ -144,6 +164,14 @@ def _message_param(event: Event, name: str) -> str:
     if name not in event.message_params:
         return ""
     return str(event.message_params[name])
+
+
+def _indexer_site_resource(event: Event) -> str:
+    if event.type != EventType.INDEXER_SITE_UNHEALTHY:
+        return ""
+    indexer = _message_param(event, "indexer_name") or _message_param(event, "indexer_id")
+    site = _message_param(event, "site_name") or _message_param(event, "site_id")
+    return " / ".join(part for part in (indexer, site) if part)
 
 
 def _reason_line(event: Event, meta: TelegramEventMeta, locale: str) -> str:

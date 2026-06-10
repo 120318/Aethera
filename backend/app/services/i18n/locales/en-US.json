@@ -152,7 +152,7 @@
   "eventMessages.mediaImportFailed": "Import failed for {resource_title}: {error}",
   "eventMessages.mediaDeleted": "Resources deleted, {path_count} paths removed, first target {first_target}",
   "eventMessages.mediaImportCompleted": "Import completed, {file_count} files imported, first file {first_target}",
-  "eventMessages.mediaServerSyncCompleted": "Scraping completed for {file_path_name}",
+  "eventMessages.mediaServerSyncCompleted": "Scraping completed for {file_path_name}: artifacts NFO {nfo_count}, images {image_count}",
   "eventMessages.mediaServerSyncFailed": "Scraping failed for {file_path_name}: {error}",
   "eventMessages.notificationFailed": "Notification failed: {channel}. Reason: {reason}",
   "eventMessages.notificationSent": "Notification sent: {channel}",

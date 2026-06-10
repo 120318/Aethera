@@ -5,10 +5,16 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 COMPOSE_PATH="$ROOT_DIR/docker-compose.dev.yml"
 
 if [ ! -f "$COMPOSE_PATH" ]; then
-  COMPOSE_PATH="$ROOT_DIR/docker-compose.dev.example.yml"
+  echo "Missing docker-compose.dev.yml" >&2
+  exit 1
 fi
 
 COMPOSE_FILES=(-f "$COMPOSE_PATH")
+OVERRIDE_PATH="$ROOT_DIR/docker-compose.dev.override.yml"
+
+if [ -f "$OVERRIDE_PATH" ]; then
+  COMPOSE_FILES+=(-f "$OVERRIDE_PATH")
+fi
 
 export AETHERA_DEV_UID="${AETHERA_DEV_UID:-$(id -u)}"
 export AETHERA_DEV_GID="${AETHERA_DEV_GID:-$(id -g)}"

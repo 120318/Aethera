@@ -16,7 +16,26 @@ class MediaExecutionSnapshotService:
     def __init__(self, profile_service: MediaProfileService) -> None:
         self.profile_service = profile_service
 
-    def _apply_cached_tv_season_context(
+    async def _snapshot_from_profile(
+        self,
+        media_id: MediaID,
+        *,
+        season_number: int | None = None,
+    ) -> MediaFullInfo | None:
+        profile = await self.profile_service.profile_repo.find_by_media_id(media_id)
+        if not profile or not self.profile_service.read_model.has_complete_detail(profile):
+            return None
+        scoped_profile, selected_scope = await self.profile_service._profile_scope_context(
+            profile,
+            season_number=season_number,
+        )
+        return self.profile_service.read_model.snapshot_to_full(
+            media_id,
+            scoped_profile,
+            selected_scope=selected_scope,
+        )
+
+    def _apply_profile_tv_season_context(
         self,
         media: MediaFullInfo,
         season_number: int | None,
@@ -45,12 +64,15 @@ class MediaExecutionSnapshotService:
             raise DownloadException("backendErrors.mediaExecutionSnapshotSeasonNumberRequired")
 
         use_simple_snapshot = media_id.media_type != MediaType.tv or season_number is None
+        if include_schedule_snapshot and media_id.media_type == MediaType.tv and season_number is not None:
+            use_simple_snapshot = False
         media = await self.profile_service.simple_info(media_id)
         if (
             media is not None
             and media_id.media_type == MediaType.tv
             and season_number is not None
             and media.season_number == season_number
+            and not include_schedule_snapshot
         ):
             use_simple_snapshot = True
         if media is not None and media_id.media_type == MediaType.tv and use_simple_snapshot:
@@ -61,13 +83,16 @@ class MediaExecutionSnapshotService:
             if not include_schedule_snapshot and (media_id.media_type != MediaType.tv or not require_episode_count or simple_snapshot.episodes_count):
                 return simple_snapshot
 
-        full_media = await self.profile_service.cached_info(media_id)
+        full_media = await self._snapshot_from_profile(
+            media_id,
+            season_number=season_number if include_schedule_snapshot else None,
+        )
         if full_media is None:
             if simple_snapshot is not None and (media_id.media_type != MediaType.tv or not require_episode_count or simple_snapshot.episodes_count):
                 return simple_snapshot
             raise MediaNotFoundException()
         if media_id.media_type == MediaType.tv:
-            full_media = self._apply_cached_tv_season_context(
+            full_media = self._apply_profile_tv_season_context(
                 full_media,
                 season_number,
                 require_episode_count=require_episode_count,

@@ -29,6 +29,7 @@ class MediaSubscriptionCycle(BaseModel):
     status: SubscriptionCycleStatus = SubscriptionCycleStatus.ACTIVE
     started_at: float = Field(default_factory=lambda: time.time())
     last_checked_at: float | None = None
+    last_search_at: float | None = None
     ended_at: float | None = None
     ended_reason: SubscriptionEndReason | None = None
     ended_trigger: SubscriptionEndTrigger | None = None
@@ -41,6 +42,7 @@ class MediaSubscriptionCycle(BaseModel):
 
 class MediaSubscriptionCyclePatch(BaseModel):
     last_checked_at: float | None = None
+    last_search_at: float | None = None
     ended_at: float | None = None
     ended_reason: SubscriptionEndReason | None = None
     ended_trigger: SubscriptionEndTrigger | None = None

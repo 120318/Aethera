@@ -65,6 +65,21 @@ def automatic_resource_sort_rank(
     )
 
 
+def _resource_selection_rank(
+    result: Resource,
+    quality_profile: QualityProfile | None,
+    covered_count: int,
+    preference_score: int,
+) -> tuple:
+    rank = automatic_resource_sort_rank(result, quality_profile)
+    return (
+        rank[:5],
+        covered_count,
+        preference_score,
+        rank[5:],
+    )
+
+
 def has_valid_seeders(result: Resource) -> bool:
     return int(result.resources.seeders or 0) > 0
 
@@ -88,7 +103,7 @@ def _size_health_rank(result: Resource, attrs: ResourceAttributes) -> int:
             return 3
         if size_bytes >= 6 * gib:
             return 2
-        if size_bytes >= 3 * gib:
+        if size_bytes >= 2 * gib:
             return 1
         return 0
     if attrs.resolution == "1080p":
@@ -267,11 +282,7 @@ async def _select_video_file_resources(
             }
             if not covered:
                 continue
-            rank = (
-                automatic_resource_sort_rank(result, quality_profile),
-                preference_score,
-                len(covered),
-            )
+            rank = _resource_selection_rank(result, quality_profile, len(covered), preference_score)
             if best_rank is None or rank > best_rank:
                 best_resource = result
                 best_known_covered = covered

@@ -93,3 +93,37 @@ def test_telegram_escapes_markdown_v2_stars():
 
     assert "Star \\* Movie" in message
     assert "Release \\* Group" in message
+
+
+def test_telegram_accepts_null_resource_title_meta():
+    event = Event(
+        type=EventType.DOWNLOAD_FAILED,
+        level=EventLevel.error,
+        ts=datetime(2026, 6, 6, 1, 41),
+        meta=json.dumps({"resource_title": None, "error": "failed"}, ensure_ascii=False),
+    )
+
+    message = format_telegram_event(event, locale="zh-CN", public_base_url="")
+
+    assert "下载失败" in message
+    assert "原因：failed" in message
+
+
+def test_telegram_indexer_unhealthy_uses_indexer_and_site_names():
+    event = Event(
+        type=EventType.INDEXER_SITE_UNHEALTHY,
+        level=EventLevel.warning,
+        ts=datetime(2026, 6, 6, 1, 41),
+        message_params={
+            "indexer_name": "Prowlarr",
+            "site_name": "OurBits",
+            "consecutive_failures": "3",
+            "error": "status=429",
+        },
+    )
+
+    message = format_telegram_event(event, locale="zh-CN", public_base_url="")
+
+    assert "索引器站点异常" in message
+    assert "资源：Prowlarr / OurBits" in message
+    assert "原因：status\\=429" in message
