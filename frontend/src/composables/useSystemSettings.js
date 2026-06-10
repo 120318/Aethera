@@ -7,6 +7,8 @@ export function useSystemSettings() {
   const loading = ref(false)
   const loaded = ref(false)
   const systemConfig = reactive({
+    locale: 'zh-CN',
+    public_base_url: '',
     download: {
       default_path: '/data/download',
       movies_category: 'movies',
@@ -41,10 +43,13 @@ export function useSystemSettings() {
     loading.value = true
     try {
       const payload = await getSystemTabConfig()
-      Object.assign(systemConfig.download, payload.download || {})
-      Object.assign(systemConfig.logging, payload.logging || {})
-      Object.assign(systemConfig.auth, payload.auth || {})
-      Object.assign(systemConfig.scheduler, payload.scheduler || {})
+      const systemPayload = payload.system || payload
+      systemConfig.locale = systemPayload.locale || systemConfig.locale
+      systemConfig.public_base_url = systemPayload.public_base_url || ''
+      Object.assign(systemConfig.download, systemPayload.download || {})
+      Object.assign(systemConfig.logging, systemPayload.logging || {})
+      Object.assign(systemConfig.auth, systemPayload.auth || {})
+      Object.assign(systemConfig.scheduler, systemPayload.scheduler || {})
       loaded.value = true
     } catch (error) {
       console.error(t('settings.system.loadSettingsFailed'), error)

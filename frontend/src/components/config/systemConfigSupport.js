@@ -101,9 +101,12 @@ export function buildNextSystemLoggingConfig(config, logging) {
 }
 
 export function buildNextAuthConfig(currentAuth, auth) {
-  return {
+  const nextAuth = {
     ...(currentAuth || {}),
     ...auth,
-    enabled: true,
   }
+  if (typeof nextAuth.enabled !== 'boolean') {
+    nextAuth.enabled = true
+  }
+  return nextAuth
 }

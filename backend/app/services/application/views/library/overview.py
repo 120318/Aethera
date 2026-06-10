@@ -6,6 +6,7 @@ from app.schemas.domain.download import TaskStatus
 from app.schemas.domain.media import MediaExecutionSnapshot, MediaFullInfo, MediaSimpleInfo
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.schedule import MediaScheduleSummary
+from app.schemas.exception import MediaNotFoundException
 from app.schemas.media_id import MediaID
 from app.schemas.runtime.library_overview import LibraryOverviewResponse, LibraryOverviewSnapshot, NextEpisodeToAir
 from app.services.domain.download import download_service
@@ -31,7 +32,12 @@ class LibraryOverviewService:
         return value
 
     async def get_overview(self, media_id: MediaID) -> LibraryOverviewResponse:
-        media = await media_service.resolve_execution_snapshot(media_id) if media_id.media_type == MediaType.movie else None
+        media = None
+        if media_id.media_type == MediaType.movie:
+            try:
+                media = await media_service.resolve_execution_snapshot(media_id)
+            except MediaNotFoundException:
+                logger.info("Build library overview without media snapshot: media=%s", media_id)
         schedule = None
         snapshot = await self.build_snapshot(media_id, media, schedule=schedule)
         return LibraryOverviewResponse(media_id=media_id, **snapshot.model_dump())
