@@ -2,9 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.addons.descriptors import _notification_event_patterns
 from app.schemas.config import NotificationChannelConfig
 from app.schemas.domain.event import Event, EventActor, EventLevel, EventType
-from app.addons.descriptors import _notification_event_patterns
 from app.schemas.domain.media import MediaIdentity
 from app.schemas.media_id import MediaID
 from app.services.application.workflows.notifications.service import NotificationApplicationService
