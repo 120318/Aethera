@@ -311,12 +311,13 @@ class CommandService:
         if command.type != CommandType.TASK_CREATE:
             return
         payload = command.payload
+        actor = EventActor.user if command.initiator == CommandInitiator.MANUAL else EventActor.system
         event_service.emit_media(
             MediaEventCreate(
                 type=EventTypes.DOWNLOAD_FAILED,
                 level=EventLevel.error,
                 media=payload.media,
-                actor=EventActor.system,
+                actor=actor,
                 source=EventSource.base,
                 entities=[
                     EventEntityRef(type="command", id=command.id),

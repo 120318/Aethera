@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.addons.registry import AddonDescriptor, AddonJobSpec, AddonRegistry
 from app.schemas.config import AddonsConfig, NotificationChannelConfig
+from app.schemas.domain.event_catalog import NOTIFICATION_EVENT_PATTERNS
 from app.services.application.workflows.danmu import danmu_application_service
 from app.services.application.workflows.notifications import notification_application_service
 from app.services.platform.auth_provider_service import auth_provider_service
@@ -25,7 +26,7 @@ def _notification_channel_ready(channel: NotificationChannelConfig) -> bool:
 
 
 def _notification_event_patterns() -> list[str]:
-    return ["*"]
+    return list(NOTIFICATION_EVENT_PATTERNS)
 
 
 def _danmu_enabled(config: AddonsConfig) -> bool:

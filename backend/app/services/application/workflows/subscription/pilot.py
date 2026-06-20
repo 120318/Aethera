@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from app.schemas.domain.command import CommandCreateRequest, CommandInitiator, CommandType, PilotEpisodeCommandRequestPayload
-from app.schemas.domain.download import DownloadTaskCreateInput
+from app.schemas.domain.download import DownloadTaskCreateInput, TaskSource
 from app.schemas.domain.media import MediaExecutionSnapshot, MediaTarget
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_search import MediaSearchQuery
@@ -268,6 +268,7 @@ class PilotDownloadApplicationService:
                     selected_files=selected_files,
                 ),
                 resource.resources,
+                source=TaskSource.MANUAL,
             )
             created_tasks += 1
             try:

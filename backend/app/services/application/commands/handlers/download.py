@@ -7,6 +7,7 @@ from app.schemas.exception.base import AppException
 from app.schemas.exception.exceptions import ResourceNotFoundException, SystemException
 from app.schemas.domain.command import (
     CommandCreateRequest,
+    CommandInitiator,
     CommandRecord,
     CommandResult,
     CommandTargetType,
@@ -23,7 +24,7 @@ from app.schemas.domain.command import (
 )
 from app.schemas.domain.media import MediaTarget
 from app.schemas.runtime.command_runtime import CommandActionContext
-from app.schemas.domain.download import DownloadTaskCreateInput, TaskData
+from app.schemas.domain.download import DownloadTaskCreateInput, TaskData, TaskSource
 from app.services.domain.download.downloader_change import TaskDownloaderChangeRequest
 from app.services.application.commands.target_labels import format_media_target_label
 from app.services.application.workflows.danmu import danmu_application_service
@@ -35,6 +36,10 @@ from app.services.domain.media import media_service
 from app.services.domain.transfer import transfer_service
 
 logger = logging.getLogger("app.services.command.download")
+
+
+def _task_source_from_initiator(initiator: CommandInitiator) -> TaskSource:
+    return TaskSource.MANUAL if initiator == CommandInitiator.MANUAL else TaskSource.SYSTEM
 
 
 def _task_media_target(task: TaskData) -> MediaTarget:
@@ -137,6 +142,7 @@ class TaskCreateCommandHandler:
                 selected_files=payload.selected_files,
             ),
             search_result,
+            source=_task_source_from_initiator(command.initiator),
         )
         try:
             await media_service.upsert_active_profile_from_identity(payload.media)

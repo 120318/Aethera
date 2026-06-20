@@ -16,6 +16,7 @@ from app.schemas.domain.action import (
 )
 from app.schemas.domain.action_meta import NotificationSendQueuedActionMeta
 from app.schemas.domain.event import Event
+from app.schemas.domain.event_catalog import is_manual_notification_suppressed
 from app.services.application.events.consumer import event_matches_patterns
 from app.services.audit.action_catalog import ACTION_NAME_NOTIFICATION_SEND
 from app.services.audit.action_service import action_service
@@ -54,6 +55,8 @@ class NotificationApplicationService:
         if not notification_channel_service.get_channel(channel.type).is_configured(channel):
             return False
         if not event_matches_patterns(event.type, channel.event_patterns):
+            return False
+        if is_manual_notification_suppressed(event):
             return False
         if channel.levels and event.level.value not in channel.levels:
             return False

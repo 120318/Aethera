@@ -40,6 +40,11 @@ class TaskEpisodeCoverageSource(str, Enum):
     UNKNOWN = "unknown"
 
 
+class TaskSource(str, Enum):
+    MANUAL = "manual"
+    SYSTEM = "system"
+
+
 class TaskEpisodeCoverage(BaseModel):
     season_number: int | None = None
     episode_numbers: list[int] = Field(default_factory=list)
@@ -59,6 +64,7 @@ class TaskContext(BaseModel):
 
     # Internal note.
     indexer: str | None = None
+    source: TaskSource = TaskSource.MANUAL
     download_url: str
     page_url: str | None = None
 
