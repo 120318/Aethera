@@ -72,6 +72,7 @@ class TaskScheduler:
         self._manual_runners: dict[str, Callable[[ActionTrigger], Awaitable[None]]] = {}
         self._latest_actions: dict[str, SchedulerLatestAction] = {}
         self._addon_job_signatures = {}
+        self._system_job_signatures = {}
 
     async def _sync_active_downloads(self):
         """Synchronize active download task state."""
@@ -369,6 +370,9 @@ class TaskScheduler:
         max_instances: int,
     ) -> None:
         runner = functools.partial(self._run_system_job, func, job_id, name)
+        signature = self._system_job_signature(job_id, name, trigger, max_instances)
+        if self.scheduler.get_job(job_id) and self._system_job_signatures.get(job_id) == signature:
+            return
         if self.scheduler.get_job(job_id):
             self.scheduler.remove_job(job_id)
         self.scheduler.add_job(
@@ -387,6 +391,11 @@ class TaskScheduler:
             enabled=True,
         )
         self._manual_runners[job_id] = runner
+        self._system_job_signatures[job_id] = signature
+
+    def _system_job_signature(self, job_id: str, name: str, trigger, max_instances: int):
+        interval_seconds = int(trigger.interval.total_seconds()) if isinstance(trigger, IntervalTrigger) else None
+        return (job_id, name, interval_seconds, max_instances)
 
     def trigger_job(self, job_id: str) -> bool:
         if job_id not in self._manual_runners:

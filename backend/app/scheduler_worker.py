@@ -64,6 +64,7 @@ class SchedulerWorker:
     async def _write_runtime_snapshot(self, running: bool) -> None:
         current_snapshot = await self.repo.get_snapshot()
         if running and task_scheduler.scheduler.running:
+            task_scheduler.sync_system_jobs()
             task_scheduler.sync_addon_jobs()
         items = list(task_scheduler.list_job_runtime_info())
         snapshot = SchedulerRuntimeSnapshot(

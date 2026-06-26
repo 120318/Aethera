@@ -1,6 +1,7 @@
 import os
 import uuid
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -11,6 +12,7 @@ pytestmark = [pytest.mark.health]
 from app.core.scheduler import SCHEDULER_MISFIRE_GRACE_SECONDS, TaskScheduler
 from app.addons.registry import AddonDescriptor, AddonJobSpec
 from app.schemas.config import SchedulerConfig
+from app.schemas.runtime.scheduler_runtime import SchedulerRuntimeSnapshot
 
 
 def test_scheduler_config_defaults_schedule_refresh_to_one_hour():
@@ -89,6 +91,72 @@ def test_scheduler_sync_system_jobs_updates_subscription_sweep_interval(monkeypa
     scheduler.sync_system_jobs()
     job = scheduler.scheduler.get_job("subscription_sweep")
     assert int(job.trigger.interval.total_seconds()) == 600
+
+
+def test_scheduler_sync_system_jobs_does_not_replace_unchanged_jobs(monkeypatch):
+    scheduler = TaskScheduler()
+    add_job = Mock(wraps=scheduler.scheduler.add_job)
+
+    monkeypatch.setattr(
+        "app.core.scheduler.settings_service.get_scheduler_config",
+        lambda: SimpleNamespace(
+            sync_active_downloads_interval_seconds=30,
+            process_completed_tasks_interval_seconds=60,
+            subscription_sweep_interval_seconds=120,
+            schedule_refresh_sweep_interval_seconds=3600,
+            cleanup_inactive_managed_media_profiles_interval_seconds=3600,
+            directory_integrity_audit_interval_seconds=21600,
+            cleanup_expired_sessions_interval_seconds=3600,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.core.scheduler.media_server_sync_config.get_incremental_sync_scheduler_interval_seconds",
+        lambda: 900,
+    )
+    monkeypatch.setattr(scheduler.scheduler, "add_job", add_job)
+
+    scheduler.sync_system_jobs()
+    scheduler.sync_system_jobs()
+
+    assert add_job.call_count == 8
+
+
+@pytest.mark.asyncio
+async def test_scheduler_worker_heartbeat_syncs_system_and_addon_jobs(monkeypatch):
+    from app.scheduler_worker import SchedulerWorker
+
+    worker = SchedulerWorker()
+    saved = {}
+
+    class FakeRepo:
+        async def get_snapshot(self):
+            return SchedulerRuntimeSnapshot(pending_manual_triggers=["job-1"])
+
+        async def save_snapshot(self, snapshot):
+            saved["snapshot"] = snapshot
+            return True
+
+    fake_scheduler = SimpleNamespace(running=True)
+    sync_system_jobs = Mock()
+    sync_addon_jobs = Mock()
+
+    monkeypatch.setattr(
+        "app.scheduler_worker.task_scheduler",
+        SimpleNamespace(
+            scheduler=fake_scheduler,
+            sync_system_jobs=sync_system_jobs,
+            sync_addon_jobs=sync_addon_jobs,
+            list_job_runtime_info=lambda: [],
+        ),
+    )
+    worker.repo = FakeRepo()
+
+    await worker._write_runtime_snapshot(running=True)
+
+    sync_system_jobs.assert_called_once_with()
+    sync_addon_jobs.assert_called_once_with()
+    assert saved["snapshot"].running is True
+    assert saved["snapshot"].pending_manual_triggers == ["job-1"]
 
 
 def test_scheduler_syncs_addon_jobs_when_config_changes(monkeypatch):
