@@ -310,7 +310,7 @@ class SubscriptionRunApplicationService:
         if not media_tokens or not resource_tokens:
             return False
         if len(media_tokens) == 1:
-            return media_tokens[0] in resource_tokens
+            return resource_tokens[:1] == media_tokens
         window_size = len(media_tokens)
         return any(
             resource_tokens[index:index + window_size] == media_tokens

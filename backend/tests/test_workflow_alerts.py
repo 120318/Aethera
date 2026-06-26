@@ -5,6 +5,7 @@ import pytest
 from app.addons.descriptors import _notification_event_patterns
 from app.schemas.config import NotificationChannelConfig
 from app.schemas.domain.event import Event, EventActor, EventLevel, EventType
+from app.schemas.domain.event_catalog import is_manual_notification_suppressed
 from app.schemas.domain.media import MediaIdentity
 from app.schemas.media_id import MediaID
 from app.services.application.workflows.notifications.service import NotificationApplicationService
@@ -24,12 +25,32 @@ def test_default_notification_channel_patterns_target_business_results():
     assert "subscription.*" not in channel.event_patterns
 
 
-def test_notification_addon_does_not_subscribe_to_all_events():
+def test_notification_addon_subscribes_broadly_for_custom_channel_rules():
     patterns = _notification_event_patterns()
 
-    assert "*" not in patterns
-    assert "notification.*" not in patterns
-    assert "media.import.completed" in patterns
+    assert patterns == ["*"]
+
+
+def test_manual_notification_suppression_keeps_task_change_failures_notifiable():
+    assert is_manual_notification_suppressed(
+        Event(id="event-1", type=EventType.DOWNLOAD_FAILED, level=EventLevel.error, actor=EventActor.user)
+    )
+    assert not is_manual_notification_suppressed(
+        Event(
+            id="event-2",
+            type=EventType.DOWNLOAD_TASK_STORAGE_CHANGE_FAILED,
+            level=EventLevel.error,
+            actor=EventActor.user,
+        )
+    )
+    assert not is_manual_notification_suppressed(
+        Event(
+            id="event-3",
+            type=EventType.DOWNLOAD_TASK_DOWNLOADER_CHANGE_FAILED,
+            level=EventLevel.error,
+            actor=EventActor.user,
+        )
+    )
 
 
 @pytest.mark.asyncio

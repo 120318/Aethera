@@ -7,7 +7,7 @@ import pytest
 
 from app.clients.qbittorrent import QBittorrentClient
 from app.schemas.config import DownloadConfig, QBittorrentConfig, SystemConfig
-from app.schemas.domain.download import DownloadFileInfo, DownloadTaskCreateInput, TaskContext, TaskData, TaskStatus
+from app.schemas.domain.download import DownloadFileInfo, DownloadTaskCreateInput, TaskContext, TaskData, TaskSource, TaskStatus
 from app.schemas.domain.media import MediaExecutionSnapshot
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_attributes import ResourceAttributes
@@ -321,6 +321,7 @@ async def test_create_download_expands_existing_torrent_selection(monkeypatch):
         status=TaskStatus.COMPLETED,
         context=TaskContext(
             download_url="https://example.com/file.torrent",
+            source=TaskSource.SYSTEM,
             media=media,
             directory_id="dir-1",
             selected_files=[0, 1, 2],
@@ -412,6 +413,7 @@ async def test_create_download_expands_existing_torrent_selection(monkeypatch):
 
     assert task.id == "task-1"
     assert updated["task"].context.selected_files == [0, 1, 2, 3, 4]
+    assert updated["task"].context.source == TaskSource.SYSTEM
     assert updated["task"].status == TaskStatus.DOWNLOADING
     assert updated["task"].progress == pytest.approx(0.7)
     assert priorities == [("abc123", [0, 1, 2, 3, 4], 1)]

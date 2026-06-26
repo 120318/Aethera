@@ -119,16 +119,6 @@
             />
           </div>
           <div class="ui-dialog-section">
-            <label for="system-subscription-sweep-interval" class="ui-dialog-item-title block">{{ $t('settings.system.subscriptionSweepInterval') }}</label>
-            <InputNumber
-              v-model="scheduler.subscription_sweep_interval_seconds"
-              input-id="system-subscription-sweep-interval"
-              class="w-full"
-              :min="60"
-            />
-            <p class="m-none mt-inline text-tiny text-muted">{{ $t('settings.system.subscriptionSweepIntervalHint') }}</p>
-          </div>
-          <div class="ui-dialog-section">
             <label for="system-subscription-search-interval" class="ui-dialog-item-title block">{{ $t('settings.system.subscriptionSearchInterval') }}</label>
             <InputNumber
               v-model="scheduler.subscription_search_interval_seconds"
