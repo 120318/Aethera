@@ -1,5 +1,4 @@
 export const DEFAULT_NOTIFICATION_EVENT_PATTERNS = [
-  'download.completed',
   'download.failed',
   'download.task.downloader_change_failed',
   'download.task.storage_change_failed',

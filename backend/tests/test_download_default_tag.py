@@ -7,7 +7,7 @@ import pytest
 
 from app.clients.qbittorrent import QBittorrentClient
 from app.schemas.config import DownloadConfig, QBittorrentConfig, SystemConfig
-from app.schemas.domain.download import DownloadFileInfo, DownloadTaskCreateInput, TaskContext, TaskData, TaskStatus
+from app.schemas.domain.download import DownloadFileInfo, DownloadTaskCreateInput, TaskContext, TaskData, TaskSource, TaskStatus
 from app.schemas.domain.media import MediaExecutionSnapshot
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_attributes import ResourceAttributes
@@ -321,6 +321,7 @@ async def test_create_download_expands_existing_torrent_selection(monkeypatch):
         status=TaskStatus.COMPLETED,
         context=TaskContext(
             download_url="https://example.com/file.torrent",
+            source=TaskSource.SYSTEM,
             media=media,
             directory_id="dir-1",
             selected_files=[0, 1, 2],
@@ -412,9 +413,75 @@ async def test_create_download_expands_existing_torrent_selection(monkeypatch):
 
     assert task.id == "task-1"
     assert updated["task"].context.selected_files == [0, 1, 2, 3, 4]
+    assert updated["task"].context.source == TaskSource.SYSTEM
     assert updated["task"].status == TaskStatus.DOWNLOADING
     assert updated["task"].progress == pytest.approx(0.7)
     assert priorities == [("abc123", [0, 1, 2, 3, 4], 1)]
+
+
+@pytest.mark.asyncio
+async def test_expand_existing_torrent_selection_promotes_manual_task_for_system_source():
+    media_id = MediaID.parse("tmdb:tv:1")
+    media = MediaExecutionSnapshot(
+        media_id=media_id,
+        title="Test Show",
+        year=2024,
+        media_type=MediaType.tv,
+        season_number=1,
+        episodes_count=2,
+    )
+    files = [
+        TorrentFileItem(index=0, filename="Test.Show.S01E01.mkv", size=1),
+        TorrentFileItem(index=1, filename="Test.Show.S01E02.mkv", size=1),
+    ]
+    task = TaskData(
+        id="task-1",
+        media_id=media_id,
+        torrent_hash="abc123",
+        status=TaskStatus.COMPLETED,
+        context=TaskContext(
+            download_url="https://example.com/file.torrent",
+            source=TaskSource.MANUAL,
+            media=media,
+            directory_id="dir-1",
+            selected_files=[0],
+        ),
+        metadata=TorrentMetadata(hash="abc123", name="Test.Show.S01", size=2, files=files),
+    )
+    updated = {}
+
+    class FakeRepo:
+        async def update_task(self, updated_task):
+            updated["task"] = updated_task
+            return True
+
+    class FakeClient:
+        async def set_file_priority(self, torrent_hash, file_ids, priority):
+            return True
+
+        async def get_torrent_files(self, torrent_hash):
+            return [
+                DownloadFileInfo(index=0, name="Test.Show.S01E01.mkv", size=1, progress=1.0, priority=1),
+                DownloadFileInfo(index=1, name="Test.Show.S01E02.mkv", size=1, progress=0.0, priority=1),
+            ]
+
+    service = DownloadCreationService(
+        FakeRepo(),
+        SimpleNamespace(),
+        lambda **kwargs: SimpleNamespace(**kwargs),
+        SimpleNamespace(),
+    )
+
+    result = await service._expand_existing_task_selection(
+        task=task,
+        hash_tasks=[task],
+        requested_files=[1],
+        source=TaskSource.SYSTEM,
+        client=FakeClient(),
+    )
+
+    assert result.context.selected_files == [0, 1]
+    assert updated["task"].context.source == TaskSource.SYSTEM
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Protocol
 
 from app.schemas.config import DownloaderConfig
-from app.schemas.domain.download import DownloadFileInfo, DownloadTaskCreateInput, TaskContext, TaskData, TaskStatus
+from app.schemas.domain.download import DownloadFileInfo, DownloadTaskCreateInput, TaskContext, TaskData, TaskSource, TaskStatus
 from app.schemas.domain.resource_search import ResourceSearchResult
 from app.schemas.domain.torrent import TorrentFileItem
 from app.schemas.exception import ConfigurationException
@@ -64,9 +64,10 @@ class DownloadCreationService:
             ) from exc
 
     @staticmethod
-    def build_task_context(req: DownloadTaskCreateInput, search_result, parsed_attributes=None) -> TaskContext:
+    def build_task_context(req: DownloadTaskCreateInput, search_result, source: TaskSource, parsed_attributes=None) -> TaskContext:
         return TaskContext(
             indexer=search_result.indexer_name or search_result.indexer_id or search_result.site,
+            source=source,
             download_url=search_result.download_url,
             page_url=search_result.detail_url or search_result.torrent_url,
             resource_title=search_result.title,
@@ -134,6 +135,7 @@ class DownloadCreationService:
         task: TaskData,
         hash_tasks: list[TaskData],
         requested_files: list[int] | None,
+        source: TaskSource,
         client: DownloadClient,
     ) -> TaskData:
         files = task.metadata.files if task.metadata else []
@@ -150,6 +152,8 @@ class DownloadCreationService:
 
         merged = sorted(existing | requested)
         task.context.selected_files = merged
+        if source == TaskSource.SYSTEM:
+            task.context.source = TaskSource.SYSTEM
         task.status = self._task_status_after_selection_expansion(task.status)
         await self.sync_existing_torrent_selection(
             client,
@@ -304,7 +308,7 @@ class DownloadCreationService:
         if progress >= 0.999 and task.status in {TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.PAUSED}:
             task.status = TaskStatus.FINISHED
 
-    async def create_download(self, req: DownloadTaskCreateInput, search_result: ResourceSearchResult) -> TaskData:
+    async def create_download(self, req: DownloadTaskCreateInput, search_result: ResourceSearchResult, source: TaskSource = TaskSource.MANUAL) -> TaskData:
         if not search_result or search_result.result_id != req.result_id:
             raise InvalidRequestException("backendErrors.resultIdInvalidOrExpired")
         logger.debug("Preparing download request: media=%s result_id=%s title=%s", req.media.media_id, req.result_id, search_result.title)
@@ -338,6 +342,7 @@ class DownloadCreationService:
                     task=existing_task,
                     hash_tasks=existing_hash_tasks,
                     requested_files=req.selected_files,
+                    source=source,
                     client=client,
                 )
             if existing_hash_tasks:
@@ -359,7 +364,7 @@ class DownloadCreationService:
                         first_task.torrent_hash,
                     )
                     raise DownloadTaskAlreadyExistsException()
-                context = self.build_task_context(req, search_result, payload.metadata.attrs if payload.metadata else None)
+                context = self.build_task_context(req, search_result, source, payload.metadata.attrs if payload.metadata else None)
                 task = TaskData(
                     id=str(uuid.uuid4()),
                     media_id=req.media.media_id,
@@ -395,7 +400,7 @@ class DownloadCreationService:
                 download_target.download_path,
             )
 
-            context = self.build_task_context(req, search_result, payload.metadata.attrs if payload.metadata else None)
+            context = self.build_task_context(req, search_result, source, payload.metadata.attrs if payload.metadata else None)
             task = TaskData(
                 id=str(uuid.uuid4()),
                 media_id=req.media.media_id,

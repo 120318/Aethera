@@ -486,7 +486,7 @@ def test_recent_candidates_are_filtered_by_media_title_and_sites():
     assert cached_result.title == "Test Show S01E01 1080p WEB-DL"
 
 
-def test_recent_candidates_do_not_match_short_title_substrings():
+def test_recent_candidates_do_not_match_loose_single_word_titles():
     service = SubscriptionRunApplicationService()
     media = _media(episodes_count=1, aired_episode_count=1).model_copy(update={"title": "It", "imdb_id": None})
     plan = SubscriptionRunPlan(
@@ -518,7 +518,33 @@ def test_recent_candidates_do_not_match_short_title_substrings():
             matched_by_id=False,
         ),
         ResourceSearchResult(
-            id="right-token",
+            id="wrong-middle-token",
+            title="Before It Ends 2026 1080p WEB-DL",
+            site="site-a",
+            category="movie",
+            size="1 GB",
+            seeders=10,
+            leechers=0,
+            publish_date=datetime.now(UTC),
+            download_url="https://example.com/wrong-middle-token",
+            result_id="wrong-middle-token",
+            matched_by_id=False,
+        ),
+        ResourceSearchResult(
+            id="right-prefixed-token",
+            title="[GROUP] It 2017 1080p WEB-DL",
+            site="site-a",
+            category="movie",
+            size="1 GB",
+            seeders=10,
+            leechers=0,
+            publish_date=datetime.now(UTC),
+            download_url="https://example.com/right-prefixed-token",
+            result_id="right-prefixed-token",
+            matched_by_id=False,
+        ),
+        ResourceSearchResult(
+            id="right-prefix-token",
             title="It 2017 1080p WEB-DL",
             site="site-a",
             category="movie",
@@ -526,15 +552,15 @@ def test_recent_candidates_do_not_match_short_title_substrings():
             seeders=10,
             leechers=0,
             publish_date=datetime.now(UTC),
-            download_url="https://example.com/right-token",
-            result_id="right-token",
+            download_url="https://example.com/right-prefix-token",
+            result_id="right-prefix-token",
             matched_by_id=False,
         ),
     ]
 
     results = service._filter_recent_candidates(query=query, plan=plan, candidates=candidates)
 
-    assert [result.title for result in results] == ["It 2017 1080p WEB-DL"]
+    assert [result.title for result in results] == ["[GROUP] It 2017 1080p WEB-DL", "It 2017 1080p WEB-DL"]
 
 
 def test_active_search_due_ignores_last_run_when_never_searched():

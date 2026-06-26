@@ -37,6 +37,7 @@ from app.services.domain.subscription.store import subscription_store
 from app.services.domain.subscription.upgrade_baseline_service import subscription_upgrade_baseline_service
 from app.services.application.workflows.resource_search import resource_search_service
 from app.services.config.settings_service import settings_service
+from app.services.domain.resource.parser import resource_parser
 from app.services.integration.indexer.site_scope import split_scoped_site_id
 from app.services.platform.domain_lock_service import domain_lock_service
 
@@ -304,13 +305,23 @@ class SubscriptionRunApplicationService:
     def _recent_title_tokens(value: str | None) -> list[str]:
         return re.findall(r"[^\W_]+", str(value or "").lower(), flags=re.UNICODE)
 
+    @staticmethod
+    def _recent_resource_title(value: str | None) -> str | None:
+        title = str(value or "").strip()
+        if not title:
+            return None
+        attrs = resource_parser.parse(title)
+        if attrs.groups:
+            return re.sub(r"^\s*[\[【][^\[\]【】]+?[\]】]\s*", "", title, count=1)
+        return title
+
     def _recent_title_matches(self, media_title: str | None, resource_title: str | None) -> bool:
         media_tokens = self._recent_title_tokens(media_title)
-        resource_tokens = self._recent_title_tokens(resource_title)
+        resource_tokens = self._recent_title_tokens(self._recent_resource_title(resource_title))
         if not media_tokens or not resource_tokens:
             return False
         if len(media_tokens) == 1:
-            return media_tokens[0] in resource_tokens
+            return resource_tokens[:1] == media_tokens
         window_size = len(media_tokens)
         return any(
             resource_tokens[index:index + window_size] == media_tokens

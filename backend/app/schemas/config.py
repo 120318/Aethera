@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Annotated, Literal
 
 from app.schemas.domain.filter_config import FilterConfig
+from app.schemas.domain.event_catalog import DEFAULT_NOTIFICATION_EVENT_PATTERNS
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.quality_profile import QualityProfile
 from app.schemas.integration.site_models import IndexerSiteSetting
@@ -388,22 +389,6 @@ class AuthAddonConfig(BaseModel):
     enabled: bool = False
     default_provider_id: str | None = None
     providers: list[OIDCAuthProviderConfig] = Field(default_factory=list)
-
-
-DEFAULT_NOTIFICATION_EVENT_PATTERNS = [
-    "download.completed",
-    "download.failed",
-    "download.task.downloader_change_failed",
-    "download.task.storage_change_failed",
-    "media.import.completed",
-    "media.import.failed",
-    "library.file.missing",
-    "indexer.site.unhealthy",
-    "follow.*",
-    "subscription.ended.*",
-    "media_server_sync.failed",
-    "danmu.generate.failed",
-]
 
 
 class NotificationChannelConfig(BaseModel):

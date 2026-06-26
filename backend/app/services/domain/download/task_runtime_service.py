@@ -7,7 +7,7 @@ from typing import Awaitable, Callable, Protocol
 
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.exception.exceptions import DownloadException
-from app.schemas.domain.download import BatchJobResult, TaskData, TaskErrorStage, TaskFieldPatch, TaskStatus
+from app.schemas.domain.download import BatchJobResult, TaskData, TaskErrorStage, TaskFieldPatch, TaskSource, TaskStatus
 from app.schemas.domain.event import EventActor, EventEntityRef, EventSource, MediaEventCreate
 from app.schemas.domain.addon_events import DownloadTaskEventMeta
 from app.schemas.domain.library import LibraryTaskFileHealth
@@ -29,6 +29,10 @@ def selected_task_episodes(task: TaskData) -> list[int]:
             continue
         episodes.update(file_item.get_episodes())
     return sorted(episode for episode in episodes if episode > 0)
+
+
+def event_actor_for_task(task: TaskData) -> EventActor:
+    return EventActor.user if task.context.source == TaskSource.MANUAL else EventActor.system
 
 
 class TaskRuntimeRepository(Protocol):
@@ -203,7 +207,7 @@ class TaskRuntimeService:
                         message_params={"downloader_id": task.downloader_id or ""},
                         media=task.context.media,
                         task_id=task.id,
-                        actor=EventActor.system,
+                        actor=event_actor_for_task(task),
                         source=EventSource.base,
                         entities=[
                             EventEntityRef(type="task", id=task.id),

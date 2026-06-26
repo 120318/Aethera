@@ -8,12 +8,13 @@ from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.addon_events import ImportedMediaFile, MediaImportCompletedEventMeta
 from app.schemas.domain.addon_events import MediaImportFailedEventMeta
 from app.schemas.domain.download import TaskData, TaskErrorStage, TaskStatus, TransferFileResult, TransferResult
-from app.schemas.domain.event import EventActor, EventEntityRef, EventLevel, EventSource, MediaEventCreate
+from app.schemas.domain.event import EventEntityRef, EventLevel, EventSource, MediaEventCreate
 from app.schemas.domain.library import LibraryFile
 from app.schemas.exception.base import AppException
 from app.schemas.exception.exceptions import TransferException
 from app.services.audit.event_service import event_service
 from app.services.domain.download import download_service
+from app.services.domain.download.task_runtime_service import event_actor_for_task
 from app.services.domain.library.service import library_service
 from app.services.domain.media import media_service
 from app.services.platform.domain_lock_service import domain_lock_service
@@ -117,7 +118,7 @@ async def emit_media_import_completed(task: TaskData, transfer_results: list[Tra
                 type=EventTypes.MEDIA_IMPORT_COMPLETED,
                 media=media,
                 task_id=task.id,
-                actor=EventActor.system,
+                actor=event_actor_for_task(task),
                 source=EventSource.base,
                 entities=_task_import_entities(task),
             ),
@@ -153,7 +154,7 @@ async def emit_media_import_failed(task: TaskData, error_key: str, error_params:
                 level=EventLevel.error,
                 media=media,
                 task_id=task.id,
-                actor=EventActor.system,
+                actor=event_actor_for_task(task),
                 source=EventSource.base,
                 entities=_task_import_entities(task),
             ),

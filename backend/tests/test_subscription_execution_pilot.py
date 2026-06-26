@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.schemas.exception.exceptions import DownloadException
+from app.schemas.domain.download import TaskSource
 from app.schemas.domain.media import MediaExecutionSnapshot, MediaFullInfo, MediaSeasonInfo, MediaTarget
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.quality_profile import QualityProfile
@@ -795,6 +796,75 @@ async def test_execute_pilot_episode_fills_missing_tv_episode_count(monkeypatch)
     assert created == 1
     assert search_media.await_args.args[0].media.episodes_count == 2
     create_download_mock.assert_awaited_once()
+    assert create_download_mock.await_args.kwargs["source"] == TaskSource.MANUAL
+
+
+@pytest.mark.asyncio
+async def test_execute_pilot_episode_passes_system_task_source(monkeypatch):
+    media = MediaExecutionSnapshot(
+        media_id=MediaID.parse("tmdb:tv:123"),
+        title="Test Show",
+        year=2026,
+        media_type=MediaType.tv,
+        season_number=1,
+        episodes_count=2,
+    )
+    resource = _build_resource("show-pack", [1, 2])
+    payload = SimpleNamespace(metadata=SimpleNamespace(files=[], get_episodes=lambda: {1, 2}, size=1))
+
+    class _Lock:
+        async def __aenter__(self):
+            return True
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.domain_lock_service.acquire_media_acquire",
+        lambda _media_id: _Lock(),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.settings_service.get_default_quality_profile",
+        lambda: QualityProfile(id="qp-default", name="Default"),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.library_service.get_present_episodes",
+        AsyncMock(return_value=set()),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.download_service.list_active_episodes_by_media",
+        AsyncMock(return_value=set()),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.resource_search_service.search_media",
+        AsyncMock(return_value=[resource.resources]),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.partition_search_results",
+        lambda plan, search_results, unmatched_rules=None: ([resource], [], True),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.select_pilot_resources",
+        AsyncMock(return_value=[(payload, [], resource)]),
+    )
+    create_download_mock = AsyncMock(return_value=SimpleNamespace(id="task-1"))
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.download_service.create_download",
+        create_download_mock,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subscription.pilot.media_service.upsert_active_profile_from_identity",
+        AsyncMock(),
+    )
+
+    created = await pilot_download_application_service.execute(
+        media=media,
+        season_number=1,
+        source=TaskSource.SYSTEM,
+    )
+
+    assert created == 1
+    assert create_download_mock.await_args.kwargs["source"] == TaskSource.SYSTEM
 
 
 @pytest.mark.asyncio

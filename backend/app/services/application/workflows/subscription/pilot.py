@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from app.schemas.domain.command import CommandCreateRequest, CommandInitiator, CommandType, PilotEpisodeCommandRequestPayload
-from app.schemas.domain.download import DownloadTaskCreateInput
+from app.schemas.domain.download import DownloadTaskCreateInput, TaskSource
 from app.schemas.domain.media import MediaExecutionSnapshot, MediaTarget
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_search import MediaSearchQuery
@@ -72,6 +72,7 @@ class PilotDownloadApplicationService:
         *,
         media: MediaExecutionSnapshot,
         season_number: int | None = None,
+        source: TaskSource = TaskSource.MANUAL,
     ) -> int:
         async with self._acquire_media_execution_flow(media.media_id, reason="pilot") as acquired:
             active_media = await self._resolve_execution_snapshot(media, season_number)
@@ -154,6 +155,7 @@ class PilotDownloadApplicationService:
                 selected=selected,
                 target_episodes=target_episodes,
                 episode_mode=episode_mode,
+                source=source,
             )
 
     async def _resolve_execution_snapshot(self, media: MediaExecutionSnapshot, season_number: int | None) -> MediaExecutionSnapshot:
@@ -238,6 +240,7 @@ class PilotDownloadApplicationService:
         selected,
         target_episodes: set[int],
         episode_mode: bool,
+        source: TaskSource,
     ) -> int:
         created_tasks = 0
         for payload, selected_files, resource in selected:
@@ -268,6 +271,7 @@ class PilotDownloadApplicationService:
                     selected_files=selected_files,
                 ),
                 resource.resources,
+                source=source,
             )
             created_tasks += 1
             try:

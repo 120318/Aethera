@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.clients.factory import ClientFactory
 from app.db.repositories.task_repository import TaskRepository
-from app.schemas.domain.download import BatchJobResult, DownloadTaskCreateInput, TaskData, TaskEpisodeCoverage, TaskErrorStage, TaskStatus
+from app.schemas.domain.download import BatchJobResult, DownloadTaskCreateInput, TaskData, TaskEpisodeCoverage, TaskErrorStage, TaskSource, TaskStatus
 from app.schemas.domain.resource_search import ResourceSearchResult
 from app.schemas.domain.torrent_status import TorrentStatus
 from app.schemas.media_id import MediaID
@@ -71,8 +71,13 @@ class DownloadService:
     async def list_active_episodes_by_media(self, media_id: MediaID, season: int | None = None) -> set[int]:
         return await self.coverage_service.list_active_episodes_by_media(media_id, season)
 
-    async def create_download(self, req: DownloadTaskCreateInput, search_result: ResourceSearchResult) -> TaskData:
-        return await self.creation_service.create_download(req, search_result)
+    async def create_download(
+        self,
+        req: DownloadTaskCreateInput,
+        search_result: ResourceSearchResult,
+        source: TaskSource = TaskSource.MANUAL,
+    ) -> TaskData:
+        return await self.creation_service.create_download(req, search_result, source)
 
     async def ensure_task_download_path_consistent(self, task: TaskData) -> None:
         await self.task_service.ensure_task_download_path_consistent(task)

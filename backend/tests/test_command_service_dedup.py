@@ -262,6 +262,42 @@ def test_command_create_request_accepts_envelope_payload():
     assert request.payload.task_id == "task-1"
 
 
+@pytest.mark.asyncio
+async def test_public_create_command_route_forces_manual_initiator(monkeypatch):
+    from app.api.v1.commands.create import create_command
+
+    captured = {}
+
+    async def fake_create_command(request):
+        captured["request"] = request
+        return CommandRecord(
+            id="cmd-1",
+            type=CommandType.SUBSCRIPTION_RUN,
+            payload=SubscriptionRunCommandRecordPayload(target=request.payload.target),
+            initiator=request.initiator,
+            target=request.payload.target,
+            uniq_key="command:subscription.run:tmdb:tv:1",
+            target_type=CommandTargetType.MEDIA,
+            target_id=str(request.payload.target.media_id),
+            target_label="Test Show",
+        )
+
+    monkeypatch.setattr("app.api.v1.commands.create.command_service.create_command", fake_create_command)
+
+    response = await create_command(
+        CommandCreateRequest(
+            type=CommandType.SUBSCRIPTION_RUN,
+            initiator=CommandInitiator.SYSTEM,
+            payload=SubscriptionRunCommandRequestPayload(
+                target=MediaTarget(media_id=MediaID.parse("tmdb:tv:1"), season_number=1),
+            ),
+        )
+    )
+
+    assert captured["request"].initiator == CommandInitiator.MANUAL
+    assert response.command.initiator == CommandInitiator.MANUAL
+
+
 def test_command_create_request_rejects_legacy_wide_fields():
     with pytest.raises(ValidationError):
         CommandCreateRequest(
