@@ -369,6 +369,8 @@ class TaskScheduler:
         max_instances: int,
     ) -> None:
         runner = functools.partial(self._run_system_job, func, job_id, name)
+        if self.scheduler.get_job(job_id):
+            self.scheduler.remove_job(job_id)
         self.scheduler.add_job(
             runner,
             trigger=trigger,
@@ -486,11 +488,7 @@ class TaskScheduler:
             )
         return items
 
-    def start(self):
-        """Start the scheduler."""
-        scheduler_cfg = settings_service.get_scheduler_config()
-        self._reset_job_sources()
-
+    def _register_system_jobs(self, scheduler_cfg) -> None:
         self._add_system_job(
             self._sync_active_downloads,
             trigger=IntervalTrigger(seconds=scheduler_cfg.sync_active_downloads_interval_seconds),
@@ -555,6 +553,14 @@ class TaskScheduler:
             max_instances=1,
         )
 
+    def sync_system_jobs(self) -> None:
+        self._register_system_jobs(settings_service.get_scheduler_config())
+
+    def start(self):
+        """Start the scheduler."""
+        scheduler_cfg = settings_service.get_scheduler_config()
+        self._reset_job_sources()
+        self._register_system_jobs(scheduler_cfg)
         self._register_addon_jobs( )
 
         self.scheduler.start()

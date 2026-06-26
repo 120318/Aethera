@@ -152,6 +152,8 @@ class DownloadCreationService:
 
         merged = sorted(existing | requested)
         task.context.selected_files = merged
+        if source == TaskSource.SYSTEM:
+            task.context.source = TaskSource.SYSTEM
         task.status = self._task_status_after_selection_expansion(task.status)
         await self.sync_existing_torrent_selection(
             client,

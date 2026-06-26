@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.schemas.config import DownloadConfig, LoggingConfig, SchedulerConfig, SystemConfig
+from app.core.scheduler import task_scheduler
 from app.services.config.bootstrap_service import bootstrap_service
 from app.services.config.settings_service import settings_service
 from app.services.platform.runtime_restart_service import runtime_restart_service
@@ -35,6 +36,7 @@ async def update_system_config(config: SystemConfig):
 @router.post("/config/system/scheduler", response_model=UpdateConfigResponse)
 async def update_scheduler_config(config: SchedulerSettingsRequest):
     settings_service.update_scheduler_config(config.scheduler)
+    task_scheduler.sync_system_jobs()
     return UpdateConfigResponse()
 
 

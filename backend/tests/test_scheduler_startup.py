@@ -60,6 +60,37 @@ def test_scheduler_start_registers_core_system_jobs(monkeypatch):
     ]
 
 
+def test_scheduler_sync_system_jobs_updates_subscription_sweep_interval(monkeypatch):
+    scheduler = TaskScheduler()
+    intervals = [300, 120]
+
+    def scheduler_config():
+        return SimpleNamespace(
+            sync_active_downloads_interval_seconds=30,
+            process_completed_tasks_interval_seconds=60,
+            subscription_sweep_interval_seconds=intervals[-1],
+            schedule_refresh_sweep_interval_seconds=3600,
+            cleanup_inactive_managed_media_profiles_interval_seconds=3600,
+            directory_integrity_audit_interval_seconds=21600,
+            cleanup_expired_sessions_interval_seconds=3600,
+        )
+
+    monkeypatch.setattr("app.core.scheduler.settings_service.get_scheduler_config", scheduler_config)
+    monkeypatch.setattr(
+        "app.core.scheduler.media_server_sync_config.get_incremental_sync_scheduler_interval_seconds",
+        lambda: 900,
+    )
+
+    scheduler.sync_system_jobs()
+    job = scheduler.scheduler.get_job("subscription_sweep")
+    assert int(job.trigger.interval.total_seconds()) == 120
+
+    intervals.append(600)
+    scheduler.sync_system_jobs()
+    job = scheduler.scheduler.get_job("subscription_sweep")
+    assert int(job.trigger.interval.total_seconds()) == 600
+
+
 def test_scheduler_syncs_addon_jobs_when_config_changes(monkeypatch):
     scheduler = TaskScheduler()
     job = AddonJobSpec(

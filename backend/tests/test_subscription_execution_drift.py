@@ -531,6 +531,19 @@ def test_recent_candidates_do_not_match_loose_single_word_titles():
             matched_by_id=False,
         ),
         ResourceSearchResult(
+            id="right-prefixed-token",
+            title="[GROUP] It 2017 1080p WEB-DL",
+            site="site-a",
+            category="movie",
+            size="1 GB",
+            seeders=10,
+            leechers=0,
+            publish_date=datetime.now(UTC),
+            download_url="https://example.com/right-prefixed-token",
+            result_id="right-prefixed-token",
+            matched_by_id=False,
+        ),
+        ResourceSearchResult(
             id="right-prefix-token",
             title="It 2017 1080p WEB-DL",
             site="site-a",
@@ -547,7 +560,7 @@ def test_recent_candidates_do_not_match_loose_single_word_titles():
 
     results = service._filter_recent_candidates(query=query, plan=plan, candidates=candidates)
 
-    assert [result.title for result in results] == ["It 2017 1080p WEB-DL"]
+    assert [result.title for result in results] == ["[GROUP] It 2017 1080p WEB-DL", "It 2017 1080p WEB-DL"]
 
 
 def test_active_search_due_ignores_last_run_when_never_searched():
