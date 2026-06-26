@@ -380,6 +380,31 @@ async def test_library_list_resolves_movie_danmu_actions_from_simple_media(monke
     assert LibraryResourceAction.DANMU_GENERATE in response.resources[0].actions
 
 
+@pytest.mark.asyncio
+async def test_library_list_skips_danmu_resolution_without_library_files(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:94997")
+    service = LibraryResourceListService()
+    resolver_mock = AsyncMock()
+
+    monkeypatch.setattr(
+        "app.services.application.views.library.resource_list.danmu_source_resolver.media_with_fetchable_source",
+        resolver_mock,
+    )
+    monkeypatch.setattr(
+        "app.services.application.views.library.resource_list.download_service.get_tasks_by_ids",
+        AsyncMock(),
+    )
+
+    context = await service._build_action_availability_context(
+        [],
+        media_id=media_id,
+        season_number=3,
+    )
+
+    assert context.danmu_media_available is False
+    resolver_mock.assert_not_awaited()
+
+
 def test_library_list_groups_original_disc_internal_files():
     media_id = MediaID.parse("tmdb:movie:1")
     attrs = ResourceAttributes(resource_form="BluRay Disc", package_layout="BDMV", disc_number=1, disc_total=2)
