@@ -207,6 +207,7 @@ class PilotEpisodeCommandHandler:
         task_count = await pilot_download_application_service.execute(
             media=payload.media,
             season_number=payload.media.season_number,
+            source=_task_source_from_initiator(command.initiator),
         )
         return CommandResult(result_count=task_count)
 
