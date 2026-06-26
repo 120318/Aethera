@@ -310,6 +310,15 @@ class LibraryResourceListService:
         media_id: MediaID,
         season_number: int | None,
     ) -> _LibraryActionAvailabilityContext:
+        if not library_files:
+            return _LibraryActionAvailabilityContext(
+                media_server_open_enabled_directory_ids=set(),
+                media_server_sync_enabled_directory_ids=set(),
+                danmu_enabled_directory_ids=set(),
+                danmu_media_available=False,
+                existing_task_ids=set(),
+            )
+
         task_ids = sorted({file.task_id for file in library_files if file.task_id})
         existing_tasks = await download_service.get_tasks_by_ids(task_ids)
         open_enabled_media_server_ids = {
@@ -334,12 +343,18 @@ class LibraryResourceListService:
         }
         danmu_config = danmu_application_service.config()
         danmu_enabled_directory_ids = set(danmu_config.directory_ids or []) if danmu_config.enabled else set()
-        danmu_media_available = await self._resolve_danmu_media_available(
-            media_id,
-            season_number=season_number,
-            danmu_enabled_directory_ids=danmu_enabled_directory_ids,
-            danmu_config=danmu_config,
+        has_danmu_candidate_file = any(
+            library_service.is_primary_file(file) and file.directory_id in danmu_enabled_directory_ids
+            for file in library_files
         )
+        danmu_media_available = False
+        if has_danmu_candidate_file:
+            danmu_media_available = await self._resolve_danmu_media_available(
+                media_id,
+                season_number=season_number,
+                danmu_enabled_directory_ids=danmu_enabled_directory_ids,
+                danmu_config=danmu_config,
+            )
         return _LibraryActionAvailabilityContext(
             media_server_open_enabled_directory_ids=media_server_open_enabled_directory_ids,
             media_server_sync_enabled_directory_ids=media_server_sync_enabled_directory_ids,

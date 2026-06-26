@@ -18,6 +18,7 @@ from app.schemas.domain.media import MediaFullInfo
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.vendor import Vendor
 from app.schemas.media_id import MediaID
+from app.services.application.workflows.danmu.source_resolver import DanmuSourceResolver
 from app.services.application.workflows.danmu.service import DanmuApplicationService
 from app.services.application.workflows.danmu.duration_guard import danmu_duration_guard
 from app.services.application.workflows.danmu.formatters import build_ass, build_xml
@@ -219,6 +220,72 @@ class TestDanmuAddonContracts(unittest.TestCase):
                 ["youku"],
             )
         )
+
+    def test_danmu_source_resolver_does_not_refresh_cached_media_without_fetchable_vendor(self):
+        async def run():
+            resolver = DanmuSourceResolver()
+            media_id = MediaID.parse("tmdb:tv:94997")
+            config = AddonsConfig.model_validate({"danmu": {"enabled": True, "directory_ids": ["dir-1"]}}).danmu
+            media = MediaFullInfo(
+                media_id=media_id,
+                provider=media_id.provider,
+                media_type=MediaType.tv,
+                id=media_id.id,
+                title="House of the Dragon",
+                year=2022,
+                season_number=3,
+                vendors=[],
+            )
+
+            with (
+                patch(
+                    "app.services.application.workflows.danmu.source_resolver.media_service.info",
+                    new=AsyncMock(return_value=media),
+                ) as info_mock,
+                patch(
+                    "app.services.application.workflows.danmu.source_resolver.media_service.refresh_profile",
+                    new=AsyncMock(),
+                ) as refresh_mock,
+            ):
+                resolved = await resolver.media_with_fetchable_source(
+                    media_id,
+                    season_number=3,
+                    config=config,
+                )
+
+            self.assertEqual(media, resolved)
+            info_mock.assert_awaited_once_with(media_id, season_number=3)
+            refresh_mock.assert_not_awaited()
+
+        asyncio.run(run())
+
+    def test_danmu_source_resolver_delegates_cache_miss_refresh_to_media_info(self):
+        async def run():
+            resolver = DanmuSourceResolver()
+            media_id = MediaID.parse("tmdb:tv:94997")
+            config = AddonsConfig.model_validate({"danmu": {"enabled": True, "directory_ids": ["dir-1"]}}).danmu
+
+            with (
+                patch(
+                    "app.services.application.workflows.danmu.source_resolver.media_service.info",
+                    new=AsyncMock(return_value=None),
+                ) as info_mock,
+                patch(
+                    "app.services.application.workflows.danmu.source_resolver.media_service.refresh_profile",
+                    new=AsyncMock(),
+                ) as refresh_mock,
+            ):
+                resolved = await resolver.media_with_fetchable_source(
+                    media_id,
+                    season_number=3,
+                    config=config,
+                )
+
+            self.assertIsNone(resolved)
+            info_mock.assert_awaited_once_with(media_id, season_number=3)
+            refresh_mock.assert_not_awaited()
+
+        asyncio.run(run())
 
     def test_provider_entry_id_parsers(self):
         self.assertEqual("1lr0jb5ixi8", IqiyiDanmuProvider()._extract_page_id("http://www.iqiyi.com/v_1lr0jb5ixi8.html"))

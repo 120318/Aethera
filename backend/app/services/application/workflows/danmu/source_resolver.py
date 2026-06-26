@@ -17,15 +17,11 @@ class DanmuSourceResolver:
         season_number: int | None,
         config: DanmuAddonConfig,
     ) -> MediaFullInfo | None:
-        if media_id.media_type.value == "tv" and positive_season_number(season_number) is None:
+        resolved_season = positive_season_number(season_number) if media_id.media_type.value == "tv" else None
+        if media_id.media_type.value == "tv" and resolved_season is None:
             return None
-        media = await media_service.info(media_id, season_number=season_number)
-        if media and self.has_fetchable_vendor(media, config):
-            return media
-        refreshed = await media_service.refresh_profile(media_id, season_number=season_number)
-        if refreshed and self.has_fetchable_vendor(refreshed, config):
-            return await media_service.info(media_id, season_number=season_number) or media
-        return await media_service.info(media_id, season_number=season_number)
+
+        return await media_service.info(media_id, season_number=resolved_season)
 
 
 danmu_source_resolver = DanmuSourceResolver()
