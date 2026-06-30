@@ -75,6 +75,7 @@ def emit_media_server_sync_events(
     target_paths = _sync_event_paths(anchor_file, transfer_results)
     nfo_count, image_count = _sync_artifact_counts(media, anchor_file, transfer_results)
     for path in target_paths:
+        episode_numbers = _sync_event_episode_numbers(path, transfer_results)
         event_service.emit_media(
             MediaEventCreate(
                 type=event_type,
@@ -95,6 +96,8 @@ def emit_media_server_sync_events(
                 file_count=len(target_paths),
                 nfo_count=nfo_count,
                 image_count=image_count,
+                episode_number=episode_numbers[0] if len(episode_numbers) == 1 else None,
+                episode_numbers=episode_numbers,
                 trigger=trigger,
                 error=error,
             ),
@@ -106,6 +109,17 @@ def _sync_event_paths(anchor_file: str, transfer_results: list[MediaServerSyncTa
     if not paths and anchor_file:
         paths = [anchor_file]
     return sorted(set(paths))
+
+
+def _sync_event_episode_numbers(path: str, transfer_results: list[MediaServerSyncTargetFile]) -> list[int]:
+    episodes: set[int] = set()
+    for item in transfer_results:
+        if item.destination_path != path:
+            continue
+        for episode in [item.episode_number, *item.episode_numbers]:
+            if episode and int(episode) > 0:
+                episodes.add(int(episode))
+    return sorted(episodes)
 
 
 def _sync_artifact_counts(
@@ -163,5 +177,7 @@ def _expected_nfo_paths(
         if season_dir != media_root_dir:
             paths.add(season_dir / "season.nfo")
         if target.episode_number:
+            paths.add(target_path.with_suffix(".nfo"))
+        if target.episode_numbers:
             paths.add(target_path.with_suffix(".nfo"))
     return paths

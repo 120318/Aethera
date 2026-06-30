@@ -79,14 +79,15 @@ class MediaServerSyncSeasonRunner:
                 error=str(exc),
             )
             raise
-        emit_media_server_sync_events(
-            EventType.MEDIA_SERVER_SYNC_COMPLETED,
-            media,
-            needs.anchor_file or "",
-            needs.transfer_results,
-            media_server.id,
-            trigger="scheduler",
-        )
+        if self._should_emit_scheduler_completed_event(needs.missing_flags):
+            emit_media_server_sync_events(
+                EventType.MEDIA_SERVER_SYNC_COMPLETED,
+                media,
+                needs.anchor_file or "",
+                needs.transfer_results,
+                media_server.id,
+                trigger="scheduler",
+            )
         if sync_cfg.write_nfo:
             await media_server_sync_artifacts.mark_nfo_artifacts(
                 files,
@@ -126,6 +127,10 @@ class MediaServerSyncSeasonRunner:
             media_root_dir=media_root_dir,
             change_type=MediaServerChangeType.UPDATED,
         )
+
+    @staticmethod
+    def _should_emit_scheduler_completed_event(missing_flags: list[str]) -> bool:
+        return set(missing_flags) != {"stale"}
 
 
 media_server_sync_season_runner = MediaServerSyncSeasonRunner()

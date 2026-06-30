@@ -85,6 +85,8 @@ class MediaServerSyncEventMeta(BaseModel):
     file_count: int = 0
     nfo_count: int = 0
     image_count: int = 0
+    episode_number: int | None = None
+    episode_numbers: list[int] = Field(default_factory=list)
     trigger: str = ""
     error: str = ""
 

@@ -22,6 +22,7 @@ class MediaServerSyncTargetService:
                 MediaServerSyncTargetFile(
                     destination_path=target.destination_path,
                     episode_number=target.episode_number,
+                    episode_numbers=[target.episode_number] if target.episode_number else [],
                 )
                 for target in decision.target_files
             ],
