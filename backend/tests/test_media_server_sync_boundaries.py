@@ -890,3 +890,37 @@ def test_media_server_sync_event_meta_includes_target_episodes(monkeypatch, tmp_
     assert meta.episode_number is None
     assert meta.episode_numbers == [3, 4]
     assert meta.trigger == "import"
+
+
+def test_media_server_sync_event_meta_ignores_movie_episode_attributes(monkeypatch, tmp_path: Path):
+    media = _movie()
+    video = tmp_path / "Movie" / "Movie.2026.mkv"
+    video.parent.mkdir(parents=True)
+    video.write_text("video")
+    emitted = []
+
+    def fake_emit_media(event, meta=None):
+        emitted.append((event, meta))
+
+    monkeypatch.setattr("app.services.audit.workflow_event_emitters.event_service.emit_media", fake_emit_media)
+
+    emit_media_server_sync_events(
+        EventType.MEDIA_SERVER_SYNC_COMPLETED,
+        media,
+        str(video),
+        [
+            MediaServerSyncTargetFile(
+                destination_path=str(video),
+                episode_number=1,
+                episode_numbers=[1],
+            )
+        ],
+        "jellyfin-1",
+        trigger="manual",
+    )
+
+    assert len(emitted) == 1
+    _event, meta = emitted[0]
+    assert meta.file_path == str(video)
+    assert meta.episode_number is None
+    assert meta.episode_numbers == []

@@ -75,7 +75,7 @@ def emit_media_server_sync_events(
     target_paths = _sync_event_paths(anchor_file, transfer_results)
     nfo_count, image_count = _sync_artifact_counts(media, anchor_file, transfer_results)
     for path in target_paths:
-        episode_numbers = _sync_event_episode_numbers(path, transfer_results)
+        episode_numbers = _sync_event_episode_numbers(path, transfer_results) if media.media_type.value == "tv" else []
         event_service.emit_media(
             MediaEventCreate(
                 type=event_type,
