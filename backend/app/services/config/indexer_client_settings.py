@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.db.repositories.indexer_site_health_repository import IndexerSiteHealthRepository
 from app.db.repositories.settings_sqlite_repository import SettingsSqliteRepository
@@ -16,6 +16,7 @@ from app.services.audit.event_service import event_service
 
 
 INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD = 3
+INDEXER_SITE_FAILURE_NOTIFY_COOLDOWN = timedelta(hours=24)
 logger = logging.getLogger("app.services.config.indexer_client_settings")
 
 
@@ -29,7 +30,7 @@ class IndexerSiteHealthState:
     def _upsert(self, status: IndexerSiteHealthStatus) -> IndexerSiteHealthStatus:
         return self._repo.upsert(status)
 
-    def _emit_unhealthy_event(self, status: IndexerSiteHealthStatus) -> None:
+    def _emit_unhealthy_event(self, status: IndexerSiteHealthStatus) -> bool:
         try:
             event_service.emit(
                 EventCreate(
@@ -52,6 +53,7 @@ class IndexerSiteHealthState:
                     correlation_id=f"indexer:{status.indexer_id}:site:{status.site_id}:unhealthy",
                 )
             )
+            return True
         except Exception as exc:
             logger.error(
                 "Failed to emit indexer site unhealthy event for %s/%s: %s",
@@ -59,6 +61,7 @@ class IndexerSiteHealthState:
                 status.site_id,
                 exc,
             )
+            return False
 
     def record_outcomes(self, outcomes: list[IndexerSiteSearchOutcome]) -> None:
         for outcome in outcomes:
@@ -103,6 +106,7 @@ class IndexerSiteHealthState:
             consecutive_failures=0,
             last_error_message=None,
             notify_pending=False,
+            last_notified_at=current.last_notified_at if current else None,
             client_type=client_type,
         )
         return self._upsert(status)
@@ -121,6 +125,10 @@ class IndexerSiteHealthState:
         now = datetime.now()
         previous_failures = current.consecutive_failures if current else 0
         consecutive_failures = previous_failures + 1
+        should_emit = (
+            consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
+            and self._notify_cooldown_elapsed(current.last_notified_at if current else None, now)
+        )
         status = IndexerSiteHealthStatus(
             indexer_id=indexer_id,
             indexer_name=indexer_name,
@@ -133,12 +141,18 @@ class IndexerSiteHealthState:
             consecutive_failures=consecutive_failures,
             last_error_message=error_message,
             notify_pending=consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD,
+            last_notified_at=current.last_notified_at if current else None,
             client_type=client_type,
         )
         saved = self._upsert(status)
-        if previous_failures < INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD <= consecutive_failures:
-            self._emit_unhealthy_event(saved)
+        if should_emit and self._emit_unhealthy_event(saved):
+            saved.last_notified_at = now
+            saved = self._upsert(saved)
         return saved
+
+    @staticmethod
+    def _notify_cooldown_elapsed(last_notified_at: datetime | None, now: datetime) -> bool:
+        return last_notified_at is None or (now - last_notified_at) >= INDEXER_SITE_FAILURE_NOTIFY_COOLDOWN
 
     def list_by_indexer(self, indexer_id: str) -> list[IndexerSiteHealthStatus]:
         return self._repo.list_by_indexer(indexer_id)

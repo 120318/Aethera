@@ -23,6 +23,8 @@ class MediaServerSyncSeasonRunner:
         state: MediaServerSyncState,
         now: float,
         sync_cfg: MediaServerSyncConfig,
+        *,
+        initial_sync: bool | None = None,
     ) -> bool:
         media = await media_service.info(media_id, season_number=season_number)
         if not media:
@@ -79,7 +81,10 @@ class MediaServerSyncSeasonRunner:
                 error=str(exc),
             )
             raise
-        if self._should_emit_scheduler_completed_event(needs.missing_flags):
+        if self._should_emit_scheduler_completed_event(
+            state.last_success_at is None if initial_sync is None else initial_sync,
+            needs.missing_flags,
+        ):
             emit_media_server_sync_events(
                 EventType.MEDIA_SERVER_SYNC_COMPLETED,
                 media,
@@ -129,8 +134,8 @@ class MediaServerSyncSeasonRunner:
         )
 
     @staticmethod
-    def _should_emit_scheduler_completed_event(missing_flags: list[str]) -> bool:
-        return set(missing_flags) != {"stale"}
+    def _should_emit_scheduler_completed_event(initial_sync: bool, missing_flags: list[str]) -> bool:
+        return initial_sync and set(missing_flags) != {"stale"}
 
 
 media_server_sync_season_runner = MediaServerSyncSeasonRunner()

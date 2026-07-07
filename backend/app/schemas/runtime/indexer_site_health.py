@@ -16,6 +16,7 @@ class IndexerSiteHealthStatus(BaseModel):
     consecutive_failures: int = 0
     last_error_message: Optional[str] = None
     notify_pending: bool = False
+    last_notified_at: Optional[datetime] = None
     client_type: str = "jackett"
 
 

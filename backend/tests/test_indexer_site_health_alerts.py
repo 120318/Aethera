@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.event import EventLevel
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
@@ -103,3 +105,107 @@ def test_indexer_site_success_clears_notify_pending_and_allows_future_threshold(
     assert status is not None
     assert status.consecutive_failures == 3
     assert status.notify_pending is True
+
+
+def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch):
+    emitted_events = []
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.emit",
+        lambda event: emitted_events.append(event),
+    )
+    state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
+
+    for _ in range(3):
+        state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+    state.record_success(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+    )
+    for _ in range(3):
+        state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled again",
+        )
+
+    assert len(emitted_events) == 1
+
+
+def test_indexer_site_unhealthy_event_repeats_after_notification_cooldown(monkeypatch):
+    emitted_events = []
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.emit",
+        lambda event: emitted_events.append(event),
+    )
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
+    old_notification = datetime.now() - timedelta(hours=25)
+    repo.upsert(
+        IndexerSiteHealthStatus(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            status="unhealthy",
+            consecutive_failures=7,
+            notify_pending=True,
+            last_notified_at=old_notification,
+        )
+    )
+
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="still disabled",
+    )
+
+    assert len(emitted_events) == 1
+
+
+def test_indexer_site_unhealthy_event_failure_does_not_start_cooldown(monkeypatch):
+    attempts = []
+
+    def fake_emit(event):
+        attempts.append(event)
+        if len(attempts) == 1:
+            raise RuntimeError("event store unavailable")
+
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.emit",
+        fake_emit,
+    )
+    state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
+
+    for _ in range(3):
+        status = state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+
+    assert status.last_notified_at is None
+
+    status = state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="still disabled",
+    )
+
+    assert len(attempts) == 2
+    assert status.last_notified_at is not None
