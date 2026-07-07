@@ -1,6 +1,6 @@
 """Track indexer health notification cooldown.
 
-Revision ID: 0005_indexer_health_notification_cooldown
+Revision ID: 0005_indexer_notify_cooldown
 Revises: 0004_subscription_search_cadence
 Create Date: 2026-07-07
 """
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0005_indexer_health_notification_cooldown"
+revision = "0005_indexer_notify_cooldown"
 down_revision = "0004_subscription_search_cadence"
 branch_labels = None
 depends_on = None

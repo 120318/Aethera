@@ -172,3 +172,40 @@ def test_indexer_site_unhealthy_event_repeats_after_notification_cooldown(monkey
     )
 
     assert len(emitted_events) == 1
+
+
+def test_indexer_site_unhealthy_event_failure_does_not_start_cooldown(monkeypatch):
+    attempts = []
+
+    def fake_emit(event):
+        attempts.append(event)
+        if len(attempts) == 1:
+            raise RuntimeError("event store unavailable")
+
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.emit",
+        fake_emit,
+    )
+    state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
+
+    for _ in range(3):
+        status = state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+
+    assert status.last_notified_at is None
+
+    status = state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="still disabled",
+    )
+
+    assert len(attempts) == 2
+    assert status.last_notified_at is not None

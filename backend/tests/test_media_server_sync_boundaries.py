@@ -14,6 +14,7 @@ from app.schemas.domain.media_types import MediaType
 from app.schemas.media_id import MediaID
 from app.services.application.workflows.media_server_sync.artifacts import media_server_sync_artifacts
 from app.services.application.workflows.media_server_sync.needs import media_server_sync_needs
+from app.services.application.workflows.media_server_sync.service import MediaServerSyncService
 from app.services.application.workflows.media_server_sync.season_runner import MediaServerSyncSeasonRunner
 from app.services.audit.workflow_event_emitters import emit_media_server_sync_events
 from app.services.domain.library.sidecar_files import library_sidecar_files
@@ -985,3 +986,74 @@ def test_media_server_sync_event_meta_ignores_movie_episode_attributes(monkeypat
     assert meta.file_path == str(video)
     assert meta.episode_number is None
     assert meta.episode_numbers == []
+
+
+@pytest.mark.asyncio
+async def test_media_server_sync_initial_sync_snapshot_is_shared_across_tv_seasons(monkeypatch, tmp_path: Path):
+    media = _tv()
+    state = _state(media.media_id, last_success_at=None)
+    files = [
+        LibraryFile(
+            id="file-1",
+            task_id="task-1",
+            directory_id="dir-1",
+            media_id=media.media_id,
+            path=str(tmp_path / "Show" / "Season 01"),
+            file_name="Show.S01E01.mkv",
+            created_at=1.0,
+        )
+    ]
+    initial_sync_values = []
+
+    async def fake_get_files_by_media_and_directory_ids(media_id, directory_ids):
+        return files
+
+    async def fake_sync_one_season(
+        media_server,
+        media_id,
+        season_number,
+        scoped_files,
+        current_state,
+        now,
+        sync_cfg,
+        *,
+        initial_sync=None,
+    ):
+        initial_sync_values.append(initial_sync)
+        current_state.last_success_at = now
+        return True
+
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_server_sync.service.media_server_sync_state.get_or_create_state",
+        lambda media_server_id, media_id: state,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_server_sync.service.media_server_sync_config.directory_ids_for_media_server",
+        lambda media_server_id: ["dir-1"],
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_server_sync.service.library_service.get_files_by_media_and_directory_ids",
+        fake_get_files_by_media_and_directory_ids,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_server_sync.service.library_files_season_numbers",
+        lambda library_files: [1, 2],
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_server_sync.service.library_files_for_season",
+        lambda library_files, season_number: library_files,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_server_sync.service.media_server_sync_season_runner.sync_one_season",
+        fake_sync_one_season,
+    )
+
+    result = await MediaServerSyncService()._sync_one(
+        JellyfinConfig(id="jellyfin-1", name="Jellyfin", url="http://jellyfin", api_key="token"),
+        media.media_id,
+        time.time(),
+        MediaServerSyncConfig(write_nfo=False, download_images=False),
+    )
+
+    assert result.updated
+    assert initial_sync_values == [True, True]

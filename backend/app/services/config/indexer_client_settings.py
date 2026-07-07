@@ -30,7 +30,7 @@ class IndexerSiteHealthState:
     def _upsert(self, status: IndexerSiteHealthStatus) -> IndexerSiteHealthStatus:
         return self._repo.upsert(status)
 
-    def _emit_unhealthy_event(self, status: IndexerSiteHealthStatus) -> None:
+    def _emit_unhealthy_event(self, status: IndexerSiteHealthStatus) -> bool:
         try:
             event_service.emit(
                 EventCreate(
@@ -53,6 +53,7 @@ class IndexerSiteHealthState:
                     correlation_id=f"indexer:{status.indexer_id}:site:{status.site_id}:unhealthy",
                 )
             )
+            return True
         except Exception as exc:
             logger.error(
                 "Failed to emit indexer site unhealthy event for %s/%s: %s",
@@ -60,6 +61,7 @@ class IndexerSiteHealthState:
                 status.site_id,
                 exc,
             )
+            return False
 
     def record_outcomes(self, outcomes: list[IndexerSiteSearchOutcome]) -> None:
         for outcome in outcomes:
@@ -139,12 +141,13 @@ class IndexerSiteHealthState:
             consecutive_failures=consecutive_failures,
             last_error_message=error_message,
             notify_pending=consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD,
-            last_notified_at=now if should_emit else (current.last_notified_at if current else None),
+            last_notified_at=current.last_notified_at if current else None,
             client_type=client_type,
         )
         saved = self._upsert(status)
-        if should_emit:
-            self._emit_unhealthy_event(saved)
+        if should_emit and self._emit_unhealthy_event(saved):
+            saved.last_notified_at = now
+            saved = self._upsert(saved)
         return saved
 
     @staticmethod

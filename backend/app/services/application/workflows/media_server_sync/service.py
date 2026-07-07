@@ -426,6 +426,7 @@ class MediaServerSyncService:
         sync_cfg: MediaServerSyncConfig,
     ) -> MediaServerSyncItemResult:
         state = media_server_sync_state.get_or_create_state(media_server.id, media_id)
+        initial_sync = state.last_success_at is None
         out = MediaServerSyncItemResult(media_server_id=media_server.id, media_id=media_id)
         try:
             directory_ids = media_server_sync_config.directory_ids_for_media_server(media_server.id)
@@ -443,6 +444,7 @@ class MediaServerSyncService:
                     state,
                     now,
                     sync_cfg,
+                    initial_sync=initial_sync,
                 )
                 out.updated = out.updated or season_updated
             return out
