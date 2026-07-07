@@ -796,7 +796,7 @@ async def test_media_server_sync_scheduler_suppresses_completed_event_for_pure_s
 
 
 @pytest.mark.asyncio
-async def test_media_server_sync_scheduler_emits_completed_event_for_missing_artifacts(monkeypatch, tmp_path: Path):
+async def test_media_server_sync_scheduler_suppresses_completed_event_for_previously_synced_missing_artifacts(monkeypatch, tmp_path: Path):
     media = _tv()
     video = tmp_path / "Show" / "Season 01" / "Show.S01E01.mkv"
     video.parent.mkdir(parents=True)
@@ -848,6 +848,67 @@ async def test_media_server_sync_scheduler_emits_completed_event_for_missing_art
         1,
         files,
         _state(media.media_id, last_success_at=time.time()),
+        time.time(),
+        MediaServerSyncConfig(write_nfo=False, download_images=False),
+    )
+
+    assert result
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_media_server_sync_scheduler_emits_completed_event_for_first_scrape_missing_artifacts(monkeypatch, tmp_path: Path):
+    media = _tv()
+    video = tmp_path / "Show" / "Season 01" / "Show.S01E01.mkv"
+    video.parent.mkdir(parents=True)
+    video.write_text("video")
+    files = [
+        LibraryFile(
+            id="file-1",
+            task_id="task-1",
+            directory_id="dir-1",
+            media_id=media.media_id,
+            path=str(video.parent),
+            file_name=video.name,
+            created_at=1.0,
+        )
+    ]
+    target = MediaServerSyncTargetFile(destination_path=str(video), episode_number=1)
+    needs = MediaServerSyncDetectNeeds(
+        should_run=True,
+        missing_flags=["episode_nfo_missing"],
+        transfer_results=[target],
+        anchor_file=str(video),
+        media_root_dir=str(tmp_path / "Show"),
+    )
+    runner = MediaServerSyncSeasonRunner()
+    events = []
+
+    async def fake_info(media_id, season_number=None):
+        return media
+
+    async def fake_layout(media_id, library_files):
+        return LibraryMediaLayout(media_id=media_id, media_type=media.media_type, primary_anchor_file=str(video))
+
+    async def fake_detect(*args, **kwargs):
+        return needs
+
+    async def fake_apply_updates(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.media_service.info", fake_info)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.library_service.get_media_layout_for_files", fake_layout)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.media_server_sync_needs.detect", fake_detect)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.media_server_sync_state.record_success", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.emit_media_server_sync_events", lambda *args, **kwargs: events.append((args, kwargs)))
+    monkeypatch.setattr(runner, "apply_updates", fake_apply_updates)
+
+    result = await runner.sync_one_season(
+        JellyfinConfig(id="jellyfin-1", name="Jellyfin", url="http://jellyfin", api_key="token"),
+        media.media_id,
+        1,
+        files,
+        _state(media.media_id, last_success_at=None),
         time.time(),
         MediaServerSyncConfig(write_nfo=False, download_images=False),
     )

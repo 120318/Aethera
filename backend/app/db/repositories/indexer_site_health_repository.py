@@ -23,6 +23,7 @@ class IndexerSiteHealthRepository:
                 "consecutive_failures": row.consecutive_failures,
                 "last_error_message": row.last_error_message,
                 "notify_pending": bool(row.notify_pending),
+                "last_notified_at": row.last_notified_at,
                 "client_type": row.client_type,
             }
         )
@@ -51,6 +52,7 @@ class IndexerSiteHealthRepository:
             row.consecutive_failures = status.consecutive_failures
             row.last_error_message = status.last_error_message
             row.notify_pending = bool(status.notify_pending)
+            row.last_notified_at = status.last_notified_at.isoformat() if status.last_notified_at else None
             row.client_type = status.client_type
             session.commit()
             return status
