@@ -31,6 +31,7 @@ class TelegramEventMeta(BaseModel):
     selected_episodes: list[int] = Field(default_factory=list)
     imported_files: list[TelegramImportedFileMeta] = Field(default_factory=list)
     episode_number: int | None = None
+    episode_numbers: list[int] = Field(default_factory=list)
 
     @field_validator(
         "resource_title",
@@ -126,6 +127,8 @@ def _event_episodes(event: Event, meta: TelegramEventMeta) -> list[int]:
         return _download_episodes(meta)
     if event.type == EventType.MEDIA_IMPORT_COMPLETED:
         return _imported_episodes(meta)
+    if event.type in {EventType.MEDIA_SERVER_SYNC_COMPLETED, EventType.MEDIA_SERVER_SYNC_FAILED}:
+        return _episode_range([meta.episode_number, *meta.episode_numbers])
     if event.type in {EventType.DANMU_GENERATE_COMPLETED, EventType.DANMU_GENERATE_FAILED}:
         return _episode_range([meta.episode_number])
     return []

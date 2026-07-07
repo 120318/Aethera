@@ -85,6 +85,7 @@ class MediaServerSyncService:
             MediaServerSyncTargetFile(
                 destination_path=item.destination_path,
                 episode_number=item.episode_number,
+                episode_numbers=item.episode_numbers,
             )
             for item in context.imported_files
         ]
@@ -335,6 +336,7 @@ class MediaServerSyncService:
             MediaServerSyncTargetFile(
                 destination_path=str(build_library_file_path(library_file.path, library_file.file_name)),
                 episode_number=self._episode_number_for_library_file(library_file),
+                episode_numbers=self._episode_numbers_for_library_file(library_file),
             )
             for library_file in library_files
             if library_service.is_primary_file(library_file) and library_service.file_exists(library_file)
@@ -356,6 +358,12 @@ class MediaServerSyncService:
         attrs = library_file.resource_attributes
         episodes = list(attrs.episodes or []) if attrs else []
         return int(episodes[0]) if len(episodes) == 1 else None
+
+    @staticmethod
+    def _episode_numbers_for_library_file(library_file: LibraryFile) -> list[int]:
+        attrs = library_file.resource_attributes
+        episodes = list(attrs.episodes or []) if attrs else []
+        return sorted({int(episode) for episode in episodes if int(episode) > 0})
 
     async def _run_server_once(
         self,

@@ -25,6 +25,7 @@ class MediaServerSyncItemResult(BaseModel):
 class MediaServerSyncTargetFile(BaseModel):
     destination_path: str
     episode_number: int | None = None
+    episode_numbers: list[int] = Field(default_factory=list)
 
 
 class MediaServerChangeType(str, Enum):

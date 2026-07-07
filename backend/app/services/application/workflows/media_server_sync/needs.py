@@ -164,10 +164,10 @@ class MediaServerSyncNeedsService:
 
     @staticmethod
     def _unique_transfer_results(results: list[MediaServerSyncTargetFile]) -> list[MediaServerSyncTargetFile]:
-        seen: set[tuple[str, int | None]] = set()
+        seen: set[tuple[str, int | None, tuple[int, ...]]] = set()
         unique: list[MediaServerSyncTargetFile] = []
         for item in results:
-            key = (item.destination_path, item.episode_number)
+            key = (item.destination_path, item.episode_number, tuple(item.episode_numbers))
             if key in seen:
                 continue
             seen.add(key)

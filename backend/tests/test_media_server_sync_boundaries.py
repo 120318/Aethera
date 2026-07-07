@@ -3,16 +3,19 @@ from pathlib import Path
 
 import pytest
 
-from app.schemas.config import MediaServerSyncConfig
+from app.schemas.config import JellyfinConfig, MediaServerSyncConfig
 from app.schemas.domain.library import LibraryFile, LibraryFileArtifactStatus, LibraryMediaLayout, LibraryMediaLayoutEntry
+from app.schemas.domain.event import EventType
 from app.schemas.domain.media import EpisodeInfo, MediaFullInfo, SeasonDetails
 from app.schemas.domain.media_context import MediaCapabilities
-from app.schemas.domain.media_server_sync import MediaServerSyncState
+from app.schemas.domain.media_server_sync import MediaServerSyncDetectNeeds, MediaServerSyncState
 from app.schemas.domain.media_server_sync import MediaServerSyncTargetFile
 from app.schemas.domain.media_types import MediaType
 from app.schemas.media_id import MediaID
 from app.services.application.workflows.media_server_sync.artifacts import media_server_sync_artifacts
 from app.services.application.workflows.media_server_sync.needs import media_server_sync_needs
+from app.services.application.workflows.media_server_sync.season_runner import MediaServerSyncSeasonRunner
+from app.services.audit.workflow_event_emitters import emit_media_server_sync_events
 from app.services.domain.library.sidecar_files import library_sidecar_files
 from app.services.integration.tmdb.images import to_tmdb_image_url
 
@@ -727,3 +730,197 @@ async def test_media_server_sync_needs_uses_profile_refresh_tiers_for_stale(tmp_
     assert not cold_needs.should_run
     assert hot_needs.should_run
     assert hot_needs.missing_flags == ["stale"]
+
+
+@pytest.mark.asyncio
+async def test_media_server_sync_scheduler_suppresses_completed_event_for_pure_stale(monkeypatch, tmp_path: Path):
+    media = _tv()
+    video = tmp_path / "Show" / "Season 01" / "Show.S01E01.mkv"
+    video.parent.mkdir(parents=True)
+    video.write_text("video")
+    files = [
+        LibraryFile(
+            id="file-1",
+            task_id="task-1",
+            directory_id="dir-1",
+            media_id=media.media_id,
+            path=str(video.parent),
+            file_name=video.name,
+            created_at=1.0,
+        )
+    ]
+    target = MediaServerSyncTargetFile(destination_path=str(video), episode_number=None)
+    needs = MediaServerSyncDetectNeeds(
+        should_run=True,
+        missing_flags=["stale"],
+        transfer_results=[target],
+        anchor_file=str(video),
+        media_root_dir=str(tmp_path / "Show"),
+    )
+    runner = MediaServerSyncSeasonRunner()
+    events = []
+    applied = []
+
+    async def fake_info(media_id, season_number=None):
+        return media
+
+    async def fake_layout(media_id, library_files):
+        return LibraryMediaLayout(media_id=media_id, media_type=media.media_type, primary_anchor_file=str(video))
+
+    async def fake_detect(*args, **kwargs):
+        return needs
+
+    async def fake_apply_updates(*args, **kwargs):
+        applied.append(args)
+
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.media_service.info", fake_info)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.library_service.get_media_layout_for_files", fake_layout)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.media_server_sync_needs.detect", fake_detect)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.media_server_sync_state.record_success", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.emit_media_server_sync_events", lambda *args, **kwargs: events.append((args, kwargs)))
+    monkeypatch.setattr(runner, "apply_updates", fake_apply_updates)
+
+    result = await runner.sync_one_season(
+        JellyfinConfig(id="jellyfin-1", name="Jellyfin", url="http://jellyfin", api_key="token"),
+        media.media_id,
+        1,
+        files,
+        _state(media.media_id, last_success_at=time.time() - 8 * 86400),
+        time.time(),
+        MediaServerSyncConfig(write_nfo=False, download_images=False),
+    )
+
+    assert result
+    assert applied
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_media_server_sync_scheduler_emits_completed_event_for_missing_artifacts(monkeypatch, tmp_path: Path):
+    media = _tv()
+    video = tmp_path / "Show" / "Season 01" / "Show.S01E01.mkv"
+    video.parent.mkdir(parents=True)
+    video.write_text("video")
+    files = [
+        LibraryFile(
+            id="file-1",
+            task_id="task-1",
+            directory_id="dir-1",
+            media_id=media.media_id,
+            path=str(video.parent),
+            file_name=video.name,
+            created_at=1.0,
+        )
+    ]
+    target = MediaServerSyncTargetFile(destination_path=str(video), episode_number=1)
+    needs = MediaServerSyncDetectNeeds(
+        should_run=True,
+        missing_flags=["episode_nfo_missing"],
+        transfer_results=[target],
+        anchor_file=str(video),
+        media_root_dir=str(tmp_path / "Show"),
+    )
+    runner = MediaServerSyncSeasonRunner()
+    events = []
+
+    async def fake_info(media_id, season_number=None):
+        return media
+
+    async def fake_layout(media_id, library_files):
+        return LibraryMediaLayout(media_id=media_id, media_type=media.media_type, primary_anchor_file=str(video))
+
+    async def fake_detect(*args, **kwargs):
+        return needs
+
+    async def fake_apply_updates(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.media_service.info", fake_info)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.library_service.get_media_layout_for_files", fake_layout)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.media_server_sync_needs.detect", fake_detect)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.media_server_sync_state.record_success", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.season_runner.emit_media_server_sync_events", lambda *args, **kwargs: events.append((args, kwargs)))
+    monkeypatch.setattr(runner, "apply_updates", fake_apply_updates)
+
+    result = await runner.sync_one_season(
+        JellyfinConfig(id="jellyfin-1", name="Jellyfin", url="http://jellyfin", api_key="token"),
+        media.media_id,
+        1,
+        files,
+        _state(media.media_id, last_success_at=time.time()),
+        time.time(),
+        MediaServerSyncConfig(write_nfo=False, download_images=False),
+    )
+
+    assert result
+    assert len(events) == 1
+    assert events[0][1]["trigger"] == "scheduler"
+
+
+def test_media_server_sync_event_meta_includes_target_episodes(monkeypatch, tmp_path: Path):
+    media = _tv()
+    video = tmp_path / "Show" / "Season 01" / "Show.S01E03-E04.mkv"
+    video.parent.mkdir(parents=True)
+    video.write_text("video")
+    emitted = []
+
+    def fake_emit_media(event, meta=None):
+        emitted.append((event, meta))
+
+    monkeypatch.setattr("app.services.audit.workflow_event_emitters.event_service.emit_media", fake_emit_media)
+
+    emit_media_server_sync_events(
+        EventType.MEDIA_SERVER_SYNC_COMPLETED,
+        media,
+        str(video),
+        [
+            MediaServerSyncTargetFile(
+                destination_path=str(video),
+                episode_numbers=[3, 4],
+            )
+        ],
+        "jellyfin-1",
+        trigger="import",
+    )
+
+    assert len(emitted) == 1
+    event, meta = emitted[0]
+    assert event.type == EventType.MEDIA_SERVER_SYNC_COMPLETED
+    assert meta.file_path == str(video)
+    assert meta.episode_number is None
+    assert meta.episode_numbers == [3, 4]
+    assert meta.trigger == "import"
+
+
+def test_media_server_sync_event_meta_ignores_movie_episode_attributes(monkeypatch, tmp_path: Path):
+    media = _movie()
+    video = tmp_path / "Movie" / "Movie.2026.mkv"
+    video.parent.mkdir(parents=True)
+    video.write_text("video")
+    emitted = []
+
+    def fake_emit_media(event, meta=None):
+        emitted.append((event, meta))
+
+    monkeypatch.setattr("app.services.audit.workflow_event_emitters.event_service.emit_media", fake_emit_media)
+
+    emit_media_server_sync_events(
+        EventType.MEDIA_SERVER_SYNC_COMPLETED,
+        media,
+        str(video),
+        [
+            MediaServerSyncTargetFile(
+                destination_path=str(video),
+                episode_number=1,
+                episode_numbers=[1],
+            )
+        ],
+        "jellyfin-1",
+        trigger="manual",
+    )
+
+    assert len(emitted) == 1
+    _event, meta = emitted[0]
+    assert meta.file_path == str(video)
+    assert meta.episode_number is None
+    assert meta.episode_numbers == []

@@ -127,3 +127,30 @@ def test_telegram_indexer_unhealthy_uses_indexer_and_site_names():
     assert "索引器站点异常" in message
     assert "资源：Prowlarr / OurBits" in message
     assert "原因：status\\=429" in message
+
+
+def test_telegram_media_server_sync_completed_includes_episode_range():
+    event = Event(
+        type=EventType.MEDIA_SERVER_SYNC_COMPLETED,
+        level=EventLevel.info,
+        media=_media(),
+        ts=datetime(2026, 6, 2, 20, 30),
+        meta=json.dumps(
+            {
+                "media_id": "tmdb:tv:273240",
+                "media_server_id": "jellyfin-1",
+                "file_path": "/library/Show/Season 01/Show.S01E03-E04.mkv",
+                "episode_numbers": [3, 4],
+                "trigger": "import",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    message = format_telegram_event(event, locale="zh-CN", public_base_url="")
+
+    assert "刮削完成" in message
+    assert "校园之外" in message
+    assert "第 1 季" in message
+    assert "第 3\\-4 集" in message
+    assert "资源：Show\\.S01E03\\-E04\\.mkv" in message
