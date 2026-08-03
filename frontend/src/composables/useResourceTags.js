@@ -1,4 +1,4 @@
-import { formatAbsoluteDateTime, formatRelativeTime } from '@/utils/formatters'
+import { formatAbsoluteDateTime, formatEpisodeRange, formatRelativeTime } from '@/utils/formatters'
 import { DEFAULT_RESOURCE_TAGS, ResourceTagType } from '@/constants/resourceTagTypes'
 import { useI18n } from 'vue-i18n'
 
@@ -398,7 +398,10 @@ export const useResourceTags = () => {
       return [`E${min}-E${max}`]
     }
 
-    return episodes.slice(0, 3).map(e => `E${e}`)
+    return formatEpisodeRange(episodeNumbers)
+      .split(',')
+      .filter(Boolean)
+      .map(range => `E${range}`)
   }
 
   const formatDiscLabel = (discNumber, discTotal) => {
