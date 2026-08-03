@@ -457,8 +457,8 @@ export function useSubscriptionDialog(props, emit) {
     loadingInitialData.value = true
     try {
       resetForm()
-      await Promise.all([fetchDirectories(), fetchFilterPresets(), fetchQualityProfiles(), fetchTags(), fetchSites()])
       await syncDialogUpgradeModeFromPolicy()
+      await Promise.all([fetchDirectories(), fetchFilterPresets(), fetchQualityProfiles(), fetchTags(), fetchSites()])
       await applyInitialConfig()
     } finally {
       loadingInitialData.value = false
