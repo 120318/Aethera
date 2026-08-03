@@ -329,6 +329,39 @@ class EventRepository:
             session.commit()
             return int(result.rowcount or 0)
 
+    def acknowledge_matching_events(
+        self,
+        *,
+        correlation_id: str | None = None,
+        types: list[EventType] | None = None,
+        levels: list[EventLevel] | None = None,
+    ) -> int:
+        acknowledged_at = datetime.now().isoformat()
+        with SessionLocal() as session:
+            stmt = select(EventORM.id).where(
+                not_(
+                    select(EventAcknowledgementORM.event_id)
+                    .where(EventAcknowledgementORM.event_id == EventORM.id)
+                    .exists()
+                )
+            )
+            if correlation_id:
+                stmt = stmt.where(EventORM.correlation_id == correlation_id)
+            if types:
+                stmt = stmt.where(EventORM.type.in_([event_type.value for event_type in types]))
+            if levels:
+                stmt = stmt.where(EventORM.level.in_([level.value for level in levels]))
+            event_ids = session.execute(stmt).scalars().all()
+            if not event_ids:
+                return 0
+            result = session.execute(
+                sqlite_insert(EventAcknowledgementORM)
+                .values([{"event_id": event_id, "acknowledged_at": acknowledged_at} for event_id in event_ids])
+                .on_conflict_do_nothing(index_elements=[EventAcknowledgementORM.event_id])
+            )
+            session.commit()
+            return int(result.rowcount or 0)
+
     def prune_to_limit(self, max_records: int) -> int:
         limit = int(max_records or 0)
         if limit <= 0:

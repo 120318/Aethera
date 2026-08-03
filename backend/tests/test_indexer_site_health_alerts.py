@@ -70,7 +70,11 @@ def test_indexer_site_failure_emits_unhealthy_event_once_at_threshold(monkeypatc
     assert event.message_params["consecutive_failures"] == "3"
 
 
-def test_indexer_site_success_clears_notify_pending_and_allows_future_threshold():
+def test_indexer_site_success_clears_notify_pending_and_allows_future_threshold(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.acknowledge_matching_events",
+        lambda **_kwargs: 0,
+    )
     state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
 
     for _ in range(3):
@@ -113,6 +117,10 @@ def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch
         "app.services.config.indexer_client_settings.event_service.emit",
         lambda event: emitted_events.append(event),
     )
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.acknowledge_matching_events",
+        lambda **_kwargs: 0,
+    )
     state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
 
     for _ in range(3):
@@ -139,6 +147,45 @@ def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch
         )
 
     assert len(emitted_events) == 1
+
+
+def test_indexer_site_success_acknowledges_unhealthy_warning_event(monkeypatch):
+    emitted_events = []
+    acknowledged_calls = []
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.emit",
+        lambda event: emitted_events.append(event),
+    )
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.acknowledge_matching_events",
+        lambda **kwargs: acknowledged_calls.append(kwargs) or 1,
+    )
+    state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
+
+    for _ in range(3):
+        state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+
+    state.record_success(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+    )
+
+    assert len(emitted_events) == 1
+    assert acknowledged_calls == [
+        {
+            "correlation_id": "indexer:prowlarr:site:audiences:unhealthy",
+            "types": [EventTypes.INDEXER_SITE_UNHEALTHY],
+            "levels": [EventLevel.warning],
+        }
+    ]
 
 
 def test_indexer_site_unhealthy_event_repeats_after_notification_cooldown(monkeypatch):

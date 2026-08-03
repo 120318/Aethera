@@ -265,6 +265,19 @@ class EventService:
     def acknowledge_attention_events(self) -> int:
         return self.repo.acknowledge_attention_events()
 
+    def acknowledge_matching_events(
+        self,
+        *,
+        correlation_id: str | None = None,
+        types: list[EventType] | None = None,
+        levels: list[EventLevel] | None = None,
+    ) -> int:
+        return self.repo.acknowledge_matching_events(
+            correlation_id=correlation_id,
+            types=types,
+            levels=levels,
+        )
+
     def list_filter_options(
         self,
         media_id: MediaID | None = None,

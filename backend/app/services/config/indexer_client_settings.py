@@ -30,6 +30,10 @@ class IndexerSiteHealthState:
     def _upsert(self, status: IndexerSiteHealthStatus) -> IndexerSiteHealthStatus:
         return self._repo.upsert(status)
 
+    @staticmethod
+    def _unhealthy_event_correlation_id(indexer_id: str, site_id: str) -> str:
+        return f"indexer:{indexer_id}:site:{site_id}:unhealthy"
+
     def _emit_unhealthy_event(self, status: IndexerSiteHealthStatus) -> bool:
         try:
             event_service.emit(
@@ -50,7 +54,7 @@ class IndexerSiteHealthState:
                         EventEntityRef(type="indexer", id=status.indexer_id),
                         EventEntityRef(type="indexer_site", id=status.site_id),
                     ],
-                    correlation_id=f"indexer:{status.indexer_id}:site:{status.site_id}:unhealthy",
+                    correlation_id=self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
                 )
             )
             return True
@@ -62,6 +66,28 @@ class IndexerSiteHealthState:
                 exc,
             )
             return False
+
+    def _acknowledge_unhealthy_event(self, status: IndexerSiteHealthStatus) -> None:
+        try:
+            acknowledged_count = event_service.acknowledge_matching_events(
+                correlation_id=self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
+                types=[EventTypes.INDEXER_SITE_UNHEALTHY],
+                levels=[EventLevel.warning],
+            )
+            if acknowledged_count:
+                logger.info(
+                    "Acknowledged recovered indexer site unhealthy events: indexer=%s site=%s count=%s",
+                    status.indexer_id,
+                    status.site_id,
+                    acknowledged_count,
+                )
+        except Exception as exc:
+            logger.error(
+                "Failed to acknowledge recovered indexer site unhealthy events for %s/%s: %s",
+                status.indexer_id,
+                status.site_id,
+                exc,
+            )
 
     def record_outcomes(self, outcomes: list[IndexerSiteSearchOutcome]) -> None:
         for outcome in outcomes:
@@ -94,6 +120,9 @@ class IndexerSiteHealthState:
     ) -> IndexerSiteHealthStatus:
         current = self._get_record(indexer_id, site_id)
         now = datetime.now()
+        should_acknowledge_unhealthy_event = bool(
+            current and (current.status == "unhealthy" or current.notify_pending)
+        )
         status = IndexerSiteHealthStatus(
             indexer_id=indexer_id,
             indexer_name=indexer_name,
@@ -109,7 +138,10 @@ class IndexerSiteHealthState:
             last_notified_at=current.last_notified_at if current else None,
             client_type=client_type,
         )
-        return self._upsert(status)
+        saved = self._upsert(status)
+        if should_acknowledge_unhealthy_event:
+            self._acknowledge_unhealthy_event(saved)
+        return saved
 
     def record_failure(
         self,
