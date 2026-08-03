@@ -103,6 +103,23 @@ class MediaIdentityRepository:
         session.execute(
             text(
                 f"""
+                DELETE FROM media_external_mappings
+                WHERE {source_predicate}
+                  AND media_type = :media_type
+                  AND media_id != :target
+                  AND EXISTS (
+                    SELECT 1
+                    FROM media_external_mappings target_rows
+                    WHERE target_rows.media_id = :target
+                      AND target_rows.season_number = media_external_mappings.season_number
+                  )
+                """
+            ),
+            params,
+        )
+        session.execute(
+            text(
+                f"""
                 UPDATE media_external_mappings
                 SET media_id = :target,
                     tmdb_id = CASE WHEN :target_tmdb_id IS NOT NULL THEN :target_tmdb_id ELSE tmdb_id END,

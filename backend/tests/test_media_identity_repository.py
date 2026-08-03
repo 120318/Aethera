@@ -45,6 +45,50 @@ def test_merge_media_id_retargets_source_external_mapping():
     assert row["douban_id"] == "111"
 
 
+def test_merge_media_id_drops_source_external_mapping_when_target_season_exists():
+    source = MediaID.parse("tmdb:tv:123456789")
+    target = MediaID.parse("tmdb:tv:987654321")
+
+    with SessionLocal.begin() as session:
+        session.execute(
+            text(
+                """
+                INSERT INTO media_external_mappings
+                (media_type, media_id, tmdb_id, imdb_id, douban_id, season_number, updated_at)
+                VALUES
+                ('tv', :target, 987654321, 'tt456', 'target-season-1', 1, 1),
+                ('tv', :source, 123456789, 'tt123', 'source-season-1', 1, 1),
+                ('tv', :source, 123456789, 'tt123', 'source-season-3', 3, 1)
+                """
+            ),
+            {"source": str(source), "target": str(target)},
+        )
+
+    MediaIdentityRepository().merge_media_id(source, target)
+
+    with SessionLocal() as session:
+        rows = (
+            session.execute(
+                text(
+                    """
+                    SELECT media_id, tmdb_id, douban_id, season_number
+                    FROM media_external_mappings
+                    WHERE media_id IN (:source, :target)
+                    ORDER BY season_number, douban_id
+                    """
+                ),
+                {"source": str(source), "target": str(target)},
+            )
+            .mappings()
+            .all()
+        )
+
+    assert [dict(row) for row in rows] == [
+        {"media_id": str(target), "tmdb_id": 987654321, "douban_id": "target-season-1", "season_number": 1},
+        {"media_id": str(target), "tmdb_id": 987654321, "douban_id": "source-season-3", "season_number": 3},
+    ]
+
+
 def test_merge_media_id_does_not_replace_prefix_media_ids_in_embedded_text_or_json():
     source = MediaID.parse("tmdb:movie:1")
     target = MediaID.parse("tmdb:movie:456")

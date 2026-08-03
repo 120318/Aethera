@@ -40,6 +40,11 @@ class MediaExternalMappingApplicationService:
             episode_count_override=episode_count_override,
         )
         try:
+            if result.canonical_media_id.media_type == MediaType.tv and target_season_number:
+                await media_service.refresh_profile(
+                    result.canonical_media_id,
+                    season_number=target_season_number,
+                )
             command = await profile_refresh_command_service.enqueue(
                 result.canonical_media_id,
                 season_number=target_season_number,
