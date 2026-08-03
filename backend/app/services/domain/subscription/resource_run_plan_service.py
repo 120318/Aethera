@@ -256,6 +256,8 @@ async def _compute_target_episodes(
         return target_episodes, required_scores
     min_upgrade_delta = int(upgrade_policy.min_upgrade_score_delta or 0)
     for episode, current_score in current_scores.items():
+        if int(episode) in downloading_episodes:
+            continue
         if current_score >= locked_score:
             continue
         target_episodes.add(int(episode))
