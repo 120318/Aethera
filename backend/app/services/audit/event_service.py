@@ -21,6 +21,7 @@ from app.schemas.domain.event import (
     EventType,
     MediaEventCreate,
 )
+from app.schemas.persistence.event_dispatch import EventDispatchRecord
 from app.services.application.events.dispatch import event_dispatch_service
 from app.services.audit.action_catalog import ACTION_NAME_NOTIFICATION_SEND
 from app.services.audit.action_service import action_service
@@ -67,6 +68,10 @@ class EventService:
 
     def _persist_event(self, event: Event) -> Event:
         self.repo.insert(event)
+        self.dispatch_persisted_event(event)
+        return event
+
+    def dispatch_persisted_event(self, event: Event) -> None:
         if self.is_business_event(event.type):
             try:
                 loop = asyncio.get_running_loop()
@@ -74,15 +79,18 @@ class EventService:
                 asyncio.run(event_dispatch_service.enqueue_event(event.id, event.type))
             else:
                 loop.create_task(event_dispatch_service.enqueue_event(event.id, event.type))
-        return event
 
-    def emit(
+    def build_dispatch_records(self, event: Event) -> list[EventDispatchRecord]:
+        if not self.is_business_event(event.type):
+            return []
+        return event_dispatch_service.build_records(event.id, event.type)
+
+    def build_event(
         self,
         event: EventCreate,
         meta: BaseModel | None = None,
-    ) -> Event | None:
-        # Internal note.
-        ev = Event(
+    ) -> Event:
+        return Event(
             type=event.type,
             message_key=event.message_key or event_message_key(event.type),
             message_params=_merge_message_params(event, meta),
@@ -99,6 +107,14 @@ class EventService:
             correlation_id=event.correlation_id,
             action_id=event.action_id or get_current_action_id(),
         )
+
+    def emit(
+        self,
+        event: EventCreate,
+        meta: BaseModel | None = None,
+    ) -> Event | None:
+        # Internal note.
+        ev = self.build_event(event, meta)
         return self._persist_event(ev)
 
     def emit_media(
@@ -264,6 +280,19 @@ class EventService:
 
     def acknowledge_attention_events(self) -> int:
         return self.repo.acknowledge_attention_events()
+
+    def acknowledge_matching_events(
+        self,
+        *,
+        correlation_id: str | None = None,
+        types: list[EventType] | None = None,
+        levels: list[EventLevel] | None = None,
+    ) -> int:
+        return self.repo.acknowledge_matching_events(
+            correlation_id=correlation_id,
+            types=types,
+            levels=levels,
+        )
 
     def list_filter_options(
         self,

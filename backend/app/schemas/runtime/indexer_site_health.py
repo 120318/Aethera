@@ -17,6 +17,7 @@ class IndexerSiteHealthStatus(BaseModel):
     last_error_message: Optional[str] = None
     notify_pending: bool = False
     last_notified_at: Optional[datetime] = None
+    last_reopened_at: Optional[datetime] = None
     client_type: str = "jackett"
 
 

@@ -8,7 +8,7 @@ from app.db.repositories.indexer_site_health_repository import IndexerSiteHealth
 from app.db.repositories.settings_sqlite_repository import SettingsSqliteRepository
 from app.schemas.config import IndexerConfig, IndexerProviderConfig
 from app.schemas.constants.event_types import EventTypes
-from app.schemas.domain.event import EventCreate, EventEntityRef, EventLevel, EventSource
+from app.schemas.domain.event import Event, EventCreate, EventEntityRef, EventLevel, EventSource
 from app.schemas.exception import ConfigurationException
 from app.schemas.runtime.indexer_runtime import IndexerSiteSearchOutcome
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
@@ -30,30 +30,54 @@ class IndexerSiteHealthState:
     def _upsert(self, status: IndexerSiteHealthStatus) -> IndexerSiteHealthStatus:
         return self._repo.upsert(status)
 
-    def _emit_unhealthy_event(self, status: IndexerSiteHealthStatus) -> bool:
-        try:
-            event_service.emit(
-                EventCreate(
-                    type=EventTypes.INDEXER_SITE_UNHEALTHY,
-                    level=EventLevel.warning,
-                    source=EventSource.base,
-                    message_params={
-                        "indexer_id": status.indexer_id,
-                        "indexer_name": status.indexer_name,
-                        "site_id": status.site_id,
-                        "site_name": status.site_name,
-                        "client_type": status.client_type,
-                        "consecutive_failures": str(status.consecutive_failures),
-                        "error": status.last_error_message or "",
-                    },
-                    entities=[
-                        EventEntityRef(type="indexer", id=status.indexer_id),
-                        EventEntityRef(type="indexer_site", id=status.site_id),
-                    ],
-                    correlation_id=f"indexer:{status.indexer_id}:site:{status.site_id}:unhealthy",
-                )
+    def _upsert_if_current(
+        self,
+        status: IndexerSiteHealthStatus,
+        expected: IndexerSiteHealthStatus | None,
+    ) -> tuple[bool, IndexerSiteHealthStatus]:
+        return self._repo.upsert_if_current(status, expected)
+
+    @staticmethod
+    def _unhealthy_event_correlation_id(indexer_id: str, site_id: str) -> str:
+        return f"indexer:{indexer_id}:site:{site_id}:unhealthy"
+
+    def _build_unhealthy_event(self, status: IndexerSiteHealthStatus) -> Event:
+        return event_service.build_event(
+            EventCreate(
+                type=EventTypes.INDEXER_SITE_UNHEALTHY,
+                level=EventLevel.warning,
+                source=EventSource.base,
+                message_params={
+                    "indexer_id": status.indexer_id,
+                    "indexer_name": status.indexer_name,
+                    "site_id": status.site_id,
+                    "site_name": status.site_name,
+                    "client_type": status.client_type,
+                    "consecutive_failures": str(status.consecutive_failures),
+                    "error": status.last_error_message or "",
+                },
+                entities=[
+                    EventEntityRef(type="indexer", id=status.indexer_id),
+                    EventEntityRef(type="indexer_site", id=status.site_id),
+                ],
+                correlation_id=self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
             )
-            return True
+        )
+
+    def _emit_unhealthy_event(
+        self,
+        status: IndexerSiteHealthStatus,
+        notified_at: datetime,
+    ) -> bool:
+        try:
+            event = self._build_unhealthy_event(status)
+            dispatch_records = event_service.build_dispatch_records(event)
+            return self._repo.emit_unhealthy_event_if_current(
+                status,
+                event,
+                dispatch_records,
+                notified_at,
+            )
         except Exception as exc:
             logger.error(
                 "Failed to emit indexer site unhealthy event for %s/%s: %s",
@@ -62,6 +86,51 @@ class IndexerSiteHealthState:
                 exc,
             )
             return False
+
+    def _acknowledge_unhealthy_event(self, status: IndexerSiteHealthStatus) -> bool:
+        try:
+            applied, acknowledged_count = self._repo.acknowledge_recovered_unhealthy_events(
+                status,
+                self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
+            )
+            if acknowledged_count:
+                logger.info(
+                    "Acknowledged recovered indexer site unhealthy events: indexer=%s site=%s count=%s",
+                    status.indexer_id,
+                    status.site_id,
+                    acknowledged_count,
+                )
+            return applied
+        except Exception as exc:
+            logger.error(
+                "Failed to acknowledge recovered indexer site unhealthy events for %s/%s: %s",
+                status.indexer_id,
+                status.site_id,
+                exc,
+            )
+            return False
+
+    def _reopen_unhealthy_event(self, status: IndexerSiteHealthStatus) -> None:
+        try:
+            applied, reopened_count = self._repo.reopen_unhealthy_events(
+                status,
+                self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
+                self._build_unhealthy_event(status),
+            )
+            if applied and reopened_count:
+                logger.info(
+                    "Reopened recurring indexer site unhealthy events: indexer=%s site=%s count=%s",
+                    status.indexer_id,
+                    status.site_id,
+                    reopened_count,
+                )
+        except Exception as exc:
+            logger.error(
+                "Failed to reopen recurring indexer site unhealthy events for %s/%s: %s",
+                status.indexer_id,
+                status.site_id,
+                exc,
+            )
 
     def record_outcomes(self, outcomes: list[IndexerSiteSearchOutcome]) -> None:
         for outcome in outcomes:
@@ -93,23 +162,43 @@ class IndexerSiteHealthState:
         client_type: str = "jackett",
     ) -> IndexerSiteHealthStatus:
         current = self._get_record(indexer_id, site_id)
-        now = datetime.now()
-        status = IndexerSiteHealthStatus(
-            indexer_id=indexer_id,
-            indexer_name=indexer_name,
-            site_id=site_id,
-            site_name=site_name,
-            status="healthy",
-            checked_at=now,
-            last_success_at=now,
-            last_failure_at=current.last_failure_at if current else None,
-            consecutive_failures=0,
-            last_error_message=None,
-            notify_pending=False,
-            last_notified_at=current.last_notified_at if current else None,
-            client_type=client_type,
-        )
-        return self._upsert(status)
+        while True:
+            now = datetime.now()
+            if current and current.checked_at and now <= current.checked_at:
+                now = current.checked_at + timedelta(microseconds=1)
+            should_acknowledge_unhealthy_event = bool(
+                current and (current.status == "unhealthy" or current.notify_pending)
+            )
+            status = IndexerSiteHealthStatus(
+                indexer_id=indexer_id,
+                indexer_name=indexer_name,
+                site_id=site_id,
+                site_name=site_name,
+                status="healthy",
+                checked_at=now,
+                last_success_at=now,
+                last_failure_at=current.last_failure_at if current else None,
+                consecutive_failures=0,
+                last_error_message=None,
+                notify_pending=should_acknowledge_unhealthy_event,
+                last_notified_at=current.last_notified_at if current else None,
+                last_reopened_at=current.last_reopened_at if current else None,
+                client_type=client_type,
+            )
+            applied, saved = self._upsert_if_current(status, current)
+            if applied:
+                break
+            if (
+                current is None
+                or saved.status != current.status
+                or saved.checked_at != current.checked_at
+            ):
+                return saved
+            current = saved
+        if should_acknowledge_unhealthy_event:
+            self._acknowledge_unhealthy_event(saved)
+            return self._get_record(indexer_id, site_id) or saved
+        return saved
 
     def record_failure(
         self,
@@ -122,33 +211,53 @@ class IndexerSiteHealthState:
         client_type: str = "jackett",
     ) -> IndexerSiteHealthStatus:
         current = self._get_record(indexer_id, site_id)
-        now = datetime.now()
-        previous_failures = current.consecutive_failures if current else 0
-        consecutive_failures = previous_failures + 1
-        should_emit = (
-            consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
-            and self._notify_cooldown_elapsed(current.last_notified_at if current else None, now)
-        )
-        status = IndexerSiteHealthStatus(
-            indexer_id=indexer_id,
-            indexer_name=indexer_name,
-            site_id=site_id,
-            site_name=site_name,
-            status="unhealthy",
-            checked_at=now,
-            last_success_at=current.last_success_at if current else None,
-            last_failure_at=now,
-            consecutive_failures=consecutive_failures,
-            last_error_message=error_message,
-            notify_pending=consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD,
-            last_notified_at=current.last_notified_at if current else None,
-            client_type=client_type,
-        )
-        saved = self._upsert(status)
-        if should_emit and self._emit_unhealthy_event(saved):
-            saved.last_notified_at = now
-            saved = self._upsert(saved)
-        return saved
+        while True:
+            now = datetime.now()
+            if current and current.checked_at and now <= current.checked_at:
+                now = current.checked_at + timedelta(microseconds=1)
+            previous_failures = current.consecutive_failures if current else 0
+            consecutive_failures = previous_failures + 1
+            should_emit = (
+                consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
+                and self._notify_cooldown_elapsed(current.last_notified_at if current else None, now)
+            )
+            should_reopen = bool(
+                consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
+                and not should_emit
+                and current
+                and current.last_success_at
+                and current.last_notified_at
+                and current.last_success_at > current.last_notified_at
+                and (
+                    current.last_reopened_at is None
+                    or current.last_success_at > current.last_reopened_at
+                )
+            )
+            status = IndexerSiteHealthStatus(
+                indexer_id=indexer_id,
+                indexer_name=indexer_name,
+                site_id=site_id,
+                site_name=site_name,
+                status="unhealthy",
+                checked_at=now,
+                last_success_at=current.last_success_at if current else None,
+                last_failure_at=now,
+                consecutive_failures=consecutive_failures,
+                last_error_message=error_message,
+                notify_pending=consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD,
+                last_notified_at=current.last_notified_at if current else None,
+                last_reopened_at=current.last_reopened_at if current else None,
+                client_type=client_type,
+            )
+            applied, saved = self._upsert_if_current(status, current)
+            if applied:
+                break
+            current = saved
+        if should_emit:
+            self._emit_unhealthy_event(saved, now)
+        elif should_reopen:
+            self._reopen_unhealthy_event(saved)
+        return self._get_record(indexer_id, site_id) or saved
 
     @staticmethod
     def _notify_cooldown_elapsed(last_notified_at: datetime | None, now: datetime) -> bool:
