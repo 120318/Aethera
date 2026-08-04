@@ -67,12 +67,11 @@ class IndexerSiteHealthState:
             )
             return False
 
-    def _acknowledge_unhealthy_event(self, status: IndexerSiteHealthStatus) -> None:
+    def _acknowledge_unhealthy_event(self, status: IndexerSiteHealthStatus) -> bool:
         try:
-            acknowledged_count = event_service.acknowledge_matching_events(
-                correlation_id=self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
-                types=[EventTypes.INDEXER_SITE_UNHEALTHY],
-                levels=[EventLevel.warning],
+            applied, acknowledged_count = self._repo.acknowledge_recovered_unhealthy_events(
+                status,
+                self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
             )
             if acknowledged_count:
                 logger.info(
@@ -81,9 +80,32 @@ class IndexerSiteHealthState:
                     status.site_id,
                     acknowledged_count,
                 )
+            return applied
         except Exception as exc:
             logger.error(
                 "Failed to acknowledge recovered indexer site unhealthy events for %s/%s: %s",
+                status.indexer_id,
+                status.site_id,
+                exc,
+            )
+            return False
+
+    def _reopen_unhealthy_event(self, status: IndexerSiteHealthStatus) -> None:
+        try:
+            applied, reopened_count = self._repo.reopen_unhealthy_events(
+                status,
+                self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
+            )
+            if applied and reopened_count:
+                logger.info(
+                    "Reopened recurring indexer site unhealthy events: indexer=%s site=%s count=%s",
+                    status.indexer_id,
+                    status.site_id,
+                    reopened_count,
+                )
+        except Exception as exc:
+            logger.error(
+                "Failed to reopen recurring indexer site unhealthy events for %s/%s: %s",
                 status.indexer_id,
                 status.site_id,
                 exc,
@@ -134,13 +156,14 @@ class IndexerSiteHealthState:
             last_failure_at=current.last_failure_at if current else None,
             consecutive_failures=0,
             last_error_message=None,
-            notify_pending=False,
+            notify_pending=should_acknowledge_unhealthy_event,
             last_notified_at=current.last_notified_at if current else None,
             client_type=client_type,
         )
         saved = self._upsert(status)
         if should_acknowledge_unhealthy_event:
             self._acknowledge_unhealthy_event(saved)
+            return self._get_record(indexer_id, site_id) or saved
         return saved
 
     def record_failure(
@@ -161,6 +184,14 @@ class IndexerSiteHealthState:
             consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
             and self._notify_cooldown_elapsed(current.last_notified_at if current else None, now)
         )
+        should_reopen = bool(
+            consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
+            and not should_emit
+            and current
+            and current.last_success_at
+            and current.last_notified_at
+            and current.last_success_at > current.last_notified_at
+        )
         status = IndexerSiteHealthStatus(
             indexer_id=indexer_id,
             indexer_name=indexer_name,
@@ -180,6 +211,8 @@ class IndexerSiteHealthState:
         if should_emit and self._emit_unhealthy_event(saved):
             saved.last_notified_at = now
             saved = self._upsert(saved)
+        elif should_reopen:
+            self._reopen_unhealthy_event(saved)
         return saved
 
     @staticmethod

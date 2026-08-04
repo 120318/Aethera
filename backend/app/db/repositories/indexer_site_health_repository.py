@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime
 
-from app.db.sql.models import IndexerSiteHealthORM
+from sqlalchemy import delete, not_, select, text
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+from app.db.sql.models import EventAcknowledgementORM, EventORM, IndexerSiteHealthORM
 from app.db.sql.session import SessionLocal
+from app.schemas.constants.event_types import EventTypes
+from app.schemas.domain.event import EventLevel
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
 
 
@@ -56,6 +61,97 @@ class IndexerSiteHealthRepository:
             row.client_type = status.client_type
             session.commit()
             return status
+
+    @staticmethod
+    def _matches_outcome(row: IndexerSiteHealthORM | None, status: IndexerSiteHealthStatus) -> bool:
+        checked_at = status.checked_at.isoformat() if status.checked_at else None
+        return bool(
+            row
+            and row.status == status.status
+            and row.checked_at == checked_at
+        )
+
+    @staticmethod
+    def _matching_unhealthy_event_ids(session, correlation_id: str) -> list[str]:
+        return list(
+            session.execute(
+                select(EventORM.id)
+                .where(EventORM.correlation_id == correlation_id)
+                .where(EventORM.type == EventTypes.INDEXER_SITE_UNHEALTHY.value)
+                .where(EventORM.level == EventLevel.warning.value)
+            ).scalars().all()
+        )
+
+    def acknowledge_recovered_unhealthy_events(
+        self,
+        status: IndexerSiteHealthStatus,
+        correlation_id: str,
+    ) -> tuple[bool, int]:
+        with SessionLocal() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
+            row = session.get(
+                IndexerSiteHealthORM,
+                {"indexer_id": status.indexer_id, "site_id": status.site_id},
+            )
+            if not self._matches_outcome(row, status) or row.status != "healthy" or not row.notify_pending:
+                session.rollback()
+                return False, 0
+
+            event_ids = self._matching_unhealthy_event_ids(session, correlation_id)
+            unacknowledged_ids = list(
+                session.execute(
+                    select(EventORM.id)
+                    .where(EventORM.id.in_(event_ids))
+                    .where(
+                        not_(
+                            select(EventAcknowledgementORM.event_id)
+                            .where(EventAcknowledgementORM.event_id == EventORM.id)
+                            .exists()
+                        )
+                    )
+                ).scalars().all()
+            ) if event_ids else []
+            acknowledged_count = 0
+            if unacknowledged_ids:
+                result = session.execute(
+                    sqlite_insert(EventAcknowledgementORM)
+                    .values(
+                        [
+                            {"event_id": event_id, "acknowledged_at": datetime.now().isoformat()}
+                            for event_id in unacknowledged_ids
+                        ]
+                    )
+                    .on_conflict_do_nothing(index_elements=[EventAcknowledgementORM.event_id])
+                )
+                acknowledged_count = int(result.rowcount or 0)
+            row.notify_pending = False
+            session.commit()
+            return True, acknowledged_count
+
+    def reopen_unhealthy_events(
+        self,
+        status: IndexerSiteHealthStatus,
+        correlation_id: str,
+    ) -> tuple[bool, int]:
+        with SessionLocal() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
+            row = session.get(
+                IndexerSiteHealthORM,
+                {"indexer_id": status.indexer_id, "site_id": status.site_id},
+            )
+            if not self._matches_outcome(row, status) or row.status != "unhealthy" or not row.notify_pending:
+                session.rollback()
+                return False, 0
+
+            event_ids = self._matching_unhealthy_event_ids(session, correlation_id)
+            reopened_count = 0
+            if event_ids:
+                result = session.execute(
+                    delete(EventAcknowledgementORM).where(EventAcknowledgementORM.event_id.in_(event_ids))
+                )
+                reopened_count = int(result.rowcount or 0)
+            session.commit()
+            return True, reopened_count
 
     def list_by_indexer(self, indexer_id: str) -> list[IndexerSiteHealthStatus]:
         with SessionLocal() as session:

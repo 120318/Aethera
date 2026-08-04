@@ -9,6 +9,10 @@ from app.services.config.indexer_client_settings import IndexerSiteHealthState
 class _FakeIndexerSiteHealthRepository:
     def __init__(self) -> None:
         self.records: dict[tuple[str, str], IndexerSiteHealthStatus] = {}
+        self.acknowledge_failures_remaining = 0
+        self.acknowledged_calls: list[str] = []
+        self.reopened_calls: list[str] = []
+        self.before_acknowledge = None
 
     def find_one(self, indexer_id: str, site_id: str) -> IndexerSiteHealthStatus | None:
         return self.records.get((indexer_id, site_id))
@@ -16,6 +20,37 @@ class _FakeIndexerSiteHealthRepository:
     def upsert(self, status: IndexerSiteHealthStatus) -> IndexerSiteHealthStatus:
         self.records[(status.indexer_id, status.site_id)] = status
         return status
+
+    def acknowledge_recovered_unhealthy_events(
+        self,
+        status: IndexerSiteHealthStatus,
+        correlation_id: str,
+    ) -> tuple[bool, int]:
+        if self.before_acknowledge:
+            callback = self.before_acknowledge
+            self.before_acknowledge = None
+            callback()
+        if self.acknowledge_failures_remaining:
+            self.acknowledge_failures_remaining -= 1
+            raise RuntimeError("event store unavailable")
+        current = self.find_one(status.indexer_id, status.site_id)
+        if not current or current.status != "healthy" or current.checked_at != status.checked_at:
+            return False, 0
+        self.acknowledged_calls.append(correlation_id)
+        saved = current.model_copy(update={"notify_pending": False})
+        self.records[(status.indexer_id, status.site_id)] = saved
+        return True, 1
+
+    def reopen_unhealthy_events(
+        self,
+        status: IndexerSiteHealthStatus,
+        correlation_id: str,
+    ) -> tuple[bool, int]:
+        current = self.find_one(status.indexer_id, status.site_id)
+        if not current or current.status != "unhealthy" or current.checked_at != status.checked_at:
+            return False, 0
+        self.reopened_calls.append(correlation_id)
+        return True, 1
 
     def list_by_indexer(self, indexer_id: str) -> list[IndexerSiteHealthStatus]:
         return [
@@ -70,11 +105,7 @@ def test_indexer_site_failure_emits_unhealthy_event_once_at_threshold(monkeypatc
     assert event.message_params["consecutive_failures"] == "3"
 
 
-def test_indexer_site_success_clears_notify_pending_and_allows_future_threshold(monkeypatch):
-    monkeypatch.setattr(
-        "app.services.config.indexer_client_settings.event_service.acknowledge_matching_events",
-        lambda **_kwargs: 0,
-    )
+def test_indexer_site_success_clears_notify_pending_and_allows_future_threshold():
     state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
 
     for _ in range(3):
@@ -117,11 +148,8 @@ def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch
         "app.services.config.indexer_client_settings.event_service.emit",
         lambda event: emitted_events.append(event),
     )
-    monkeypatch.setattr(
-        "app.services.config.indexer_client_settings.event_service.acknowledge_matching_events",
-        lambda **_kwargs: 0,
-    )
-    state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
 
     for _ in range(3):
         state.record_failure(
@@ -147,20 +175,17 @@ def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch
         )
 
     assert len(emitted_events) == 1
+    assert repo.reopened_calls == ["indexer:prowlarr:site:audiences:unhealthy"]
 
 
 def test_indexer_site_success_acknowledges_unhealthy_warning_event(monkeypatch):
     emitted_events = []
-    acknowledged_calls = []
     monkeypatch.setattr(
         "app.services.config.indexer_client_settings.event_service.emit",
         lambda event: emitted_events.append(event),
     )
-    monkeypatch.setattr(
-        "app.services.config.indexer_client_settings.event_service.acknowledge_matching_events",
-        lambda **kwargs: acknowledged_calls.append(kwargs) or 1,
-    )
-    state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
 
     for _ in range(3):
         state.record_failure(
@@ -179,13 +204,86 @@ def test_indexer_site_success_acknowledges_unhealthy_warning_event(monkeypatch):
     )
 
     assert len(emitted_events) == 1
-    assert acknowledged_calls == [
-        {
-            "correlation_id": "indexer:prowlarr:site:audiences:unhealthy",
-            "types": [EventTypes.INDEXER_SITE_UNHEALTHY],
-            "levels": [EventLevel.warning],
-        }
-    ]
+    assert repo.acknowledged_calls == ["indexer:prowlarr:site:audiences:unhealthy"]
+
+
+def test_indexer_site_success_retries_failed_recovery_acknowledgement(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.emit",
+        lambda _event: None,
+    )
+    repo = _FakeIndexerSiteHealthRepository()
+    repo.acknowledge_failures_remaining = 1
+    state = IndexerSiteHealthState(repo=repo)
+
+    for _ in range(3):
+        state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+
+    first_recovery = state.record_success(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+    )
+    second_recovery = state.record_success(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+    )
+
+    assert first_recovery.notify_pending is True
+    assert second_recovery.notify_pending is False
+    assert repo.acknowledged_calls == ["indexer:prowlarr:site:audiences:unhealthy"]
+
+
+def test_indexer_site_success_does_not_acknowledge_after_concurrent_failure(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.emit",
+        lambda _event: None,
+    )
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
+
+    for _ in range(3):
+        state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+
+    def write_concurrent_failure():
+        current = repo.find_one("prowlarr", "audiences")
+        assert current is not None
+        repo.upsert(
+            current.model_copy(
+                update={
+                    "status": "unhealthy",
+                    "checked_at": datetime.now() + timedelta(seconds=1),
+                    "notify_pending": True,
+                }
+            )
+        )
+
+    repo.before_acknowledge = write_concurrent_failure
+    recovered = state.record_success(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+    )
+
+    assert recovered.status == "unhealthy"
+    assert recovered.notify_pending is True
+    assert repo.acknowledged_calls == []
 
 
 def test_indexer_site_unhealthy_event_repeats_after_notification_cooldown(monkeypatch):
