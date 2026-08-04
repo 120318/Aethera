@@ -19,14 +19,19 @@ class EventDispatchService:
         self._event_repo = EventRepository()
         self.max_terminal_dispatches = 20000
 
-    async def enqueue_event(self, event_id: str, event_type: str) -> None:
-        consumers = event_consumer_service.match_consumers(event_type)
-        for consumer in consumers:
-            record = EventDispatchRecord(
+    @staticmethod
+    def build_records(event_id: str, event_type: str) -> list[EventDispatchRecord]:
+        return [
+            EventDispatchRecord(
                 id=str(uuid.uuid4()),
                 event_id=event_id,
                 consumer_name=consumer.name,
             )
+            for consumer in event_consumer_service.match_consumers(event_type)
+        ]
+
+    async def enqueue_event(self, event_id: str, event_type: str) -> None:
+        for record in self.build_records(event_id, event_type):
             await self.repo.insert(record)
 
     async def reset_running_dispatches(self) -> None:

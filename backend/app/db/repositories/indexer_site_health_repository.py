@@ -8,8 +8,10 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from app.db.sql.models import EventAcknowledgementORM, EventORM, IndexerSiteHealthORM
 from app.db.sql.session import SessionLocal
 from app.db.repositories.event_repository import EventRepository
+from app.db.repositories.event_dispatch_repository import EventDispatchRepository
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.event import Event, EventLevel
+from app.schemas.persistence.event_dispatch import EventDispatchRecord
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
 
 
@@ -149,6 +151,7 @@ class IndexerSiteHealthRepository:
         self,
         status: IndexerSiteHealthStatus,
         event: Event,
+        dispatch_records: list[EventDispatchRecord],
         notified_at: datetime,
     ) -> bool:
         with SessionLocal() as session:
@@ -161,6 +164,8 @@ class IndexerSiteHealthRepository:
                 session.rollback()
                 return False
             EventRepository.add_to_session(session, event)
+            for dispatch_record in dispatch_records:
+                EventDispatchRepository.add_to_session(session, dispatch_record)
             row.last_notified_at = notified_at.isoformat()
             session.commit()
             return True

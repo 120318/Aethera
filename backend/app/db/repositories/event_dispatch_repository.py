@@ -29,23 +29,27 @@ class EventDispatchRepository:
             }
         )
 
+    @staticmethod
+    def add_to_session(session, record: EventDispatchRecord) -> None:
+        session.add(
+            EventDispatchORM(
+                id=record.id,
+                event_id=record.event_id,
+                consumer_name=record.consumer_name,
+                status=record.status.value,
+                attempts=record.attempts,
+                max_attempts=record.max_attempts,
+                available_at=record.available_at.isoformat(),
+                error=record.error,
+                created_at=record.created_at.isoformat(),
+                started_at=record.started_at.isoformat() if record.started_at else None,
+                finished_at=record.finished_at.isoformat() if record.finished_at else None,
+            )
+        )
+
     async def insert(self, record: EventDispatchRecord) -> str:
         with SessionLocal() as session:
-            session.add(
-                EventDispatchORM(
-                    id=record.id,
-                    event_id=record.event_id,
-                    consumer_name=record.consumer_name,
-                    status=record.status.value,
-                    attempts=record.attempts,
-                    max_attempts=record.max_attempts,
-                    available_at=record.available_at.isoformat(),
-                    error=record.error,
-                    created_at=record.created_at.isoformat(),
-                    started_at=record.started_at.isoformat() if record.started_at else None,
-                    finished_at=record.finished_at.isoformat() if record.finished_at else None,
-                )
-            )
+            self.add_to_session(session, record)
             session.commit()
             return record.id
 

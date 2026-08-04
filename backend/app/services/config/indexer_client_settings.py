@@ -71,11 +71,13 @@ class IndexerSiteHealthState:
     ) -> bool:
         try:
             event = self._build_unhealthy_event(status)
-            applied = self._repo.emit_unhealthy_event_if_current(status, event, notified_at)
-            if not applied:
-                return False
-            event_service.dispatch_persisted_event(event)
-            return True
+            dispatch_records = event_service.build_dispatch_records(event)
+            return self._repo.emit_unhealthy_event_if_current(
+                status,
+                event,
+                dispatch_records,
+                notified_at,
+            )
         except Exception as exc:
             logger.error(
                 "Failed to emit indexer site unhealthy event for %s/%s: %s",
@@ -160,29 +162,39 @@ class IndexerSiteHealthState:
         client_type: str = "jackett",
     ) -> IndexerSiteHealthStatus:
         current = self._get_record(indexer_id, site_id)
-        now = datetime.now()
-        should_acknowledge_unhealthy_event = bool(
-            current and (current.status == "unhealthy" or current.notify_pending)
-        )
-        status = IndexerSiteHealthStatus(
-            indexer_id=indexer_id,
-            indexer_name=indexer_name,
-            site_id=site_id,
-            site_name=site_name,
-            status="healthy",
-            checked_at=now,
-            last_success_at=now,
-            last_failure_at=current.last_failure_at if current else None,
-            consecutive_failures=0,
-            last_error_message=None,
-            notify_pending=should_acknowledge_unhealthy_event,
-            last_notified_at=current.last_notified_at if current else None,
-            last_reopened_at=current.last_reopened_at if current else None,
-            client_type=client_type,
-        )
-        applied, saved = self._upsert_if_current(status, current)
-        if not applied:
-            return saved
+        while True:
+            now = datetime.now()
+            if current and current.checked_at and now <= current.checked_at:
+                now = current.checked_at + timedelta(microseconds=1)
+            should_acknowledge_unhealthy_event = bool(
+                current and (current.status == "unhealthy" or current.notify_pending)
+            )
+            status = IndexerSiteHealthStatus(
+                indexer_id=indexer_id,
+                indexer_name=indexer_name,
+                site_id=site_id,
+                site_name=site_name,
+                status="healthy",
+                checked_at=now,
+                last_success_at=now,
+                last_failure_at=current.last_failure_at if current else None,
+                consecutive_failures=0,
+                last_error_message=None,
+                notify_pending=should_acknowledge_unhealthy_event,
+                last_notified_at=current.last_notified_at if current else None,
+                last_reopened_at=current.last_reopened_at if current else None,
+                client_type=client_type,
+            )
+            applied, saved = self._upsert_if_current(status, current)
+            if applied:
+                break
+            if (
+                current is None
+                or saved.status != current.status
+                or saved.checked_at != current.checked_at
+            ):
+                return saved
+            current = saved
         if should_acknowledge_unhealthy_event:
             self._acknowledge_unhealthy_event(saved)
             return self._get_record(indexer_id, site_id) or saved

@@ -1,13 +1,21 @@
 from datetime import datetime, timedelta
 
+import pytest
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from app.db.repositories.indexer_site_health_repository import IndexerSiteHealthRepository
-from app.db.sql.models import EventAcknowledgementORM, EventORM, IndexerSiteHealthORM
+from app.db.sql.models import (
+    EventAcknowledgementORM,
+    EventDispatchORM,
+    EventORM,
+    IndexerSiteHealthORM,
+)
 from app.db.sql.session import SessionLocal
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.event import Event, EventLevel
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
+from app.schemas.persistence.event_dispatch import EventDispatchRecord
 from app.services.config.indexer_client_settings import IndexerSiteHealthState
 
 
@@ -21,6 +29,7 @@ class _FakeIndexerSiteHealthRepository:
         self.before_emit = None
         self.before_conditional_upsert = None
         self.emit_failures_remaining = 0
+        self.emitted_events = []
 
     def find_one(self, indexer_id: str, site_id: str) -> IndexerSiteHealthStatus | None:
         return self.records.get((indexer_id, site_id))
@@ -67,7 +76,8 @@ class _FakeIndexerSiteHealthRepository:
     def emit_unhealthy_event_if_current(
         self,
         status: IndexerSiteHealthStatus,
-        _event,
+        event,
+        _dispatch_records,
         notified_at: datetime,
     ) -> bool:
         if self.before_emit:
@@ -82,6 +92,7 @@ class _FakeIndexerSiteHealthRepository:
             return False
         saved = current.model_copy(update={"last_notified_at": notified_at})
         self.records[(status.indexer_id, status.site_id)] = saved
+        self.emitted_events.append(event)
         return True
 
     def reopen_unhealthy_events(
@@ -131,7 +142,8 @@ def test_indexer_site_failure_emits_unhealthy_event_once_at_threshold(monkeypatc
         "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
         lambda event: emitted_events.append(event),
     )
-    state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
 
     for failure_count in range(1, 5):
         state.record_failure(
@@ -142,8 +154,8 @@ def test_indexer_site_failure_emits_unhealthy_event_once_at_threshold(monkeypatc
             error_message=f"failure {failure_count}",
         )
 
-    assert len(emitted_events) == 1
-    event = emitted_events[0]
+    assert len(repo.emitted_events) == 1
+    event = repo.emitted_events[0]
     assert event.type == EventTypes.INDEXER_SITE_UNHEALTHY
     assert event.level == EventLevel.warning
     assert event.message_params["indexer_name"] == "Jackett"
@@ -220,7 +232,7 @@ def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch
             error_message="disabled again",
         )
 
-    assert len(emitted_events) == 1
+    assert len(repo.emitted_events) == 1
     assert repo.reopened_calls == ["indexer:prowlarr:site:audiences:unhealthy"]
 
 
@@ -283,7 +295,7 @@ def test_indexer_site_success_acknowledges_unhealthy_warning_event(monkeypatch):
         site_name="Audiences",
     )
 
-    assert len(emitted_events) == 1
+    assert len(repo.emitted_events) == 1
     assert repo.acknowledged_calls == ["indexer:prowlarr:site:audiences:unhealthy"]
 
 
@@ -411,6 +423,40 @@ def test_indexer_site_success_does_not_overwrite_failure_committed_after_read(mo
     assert repo.acknowledged_calls == []
 
 
+def test_indexer_site_success_retries_after_notification_metadata_changes(monkeypatch):
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
+    for _ in range(3):
+        state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+    current = repo.find_one("prowlarr", "audiences")
+    assert current is not None
+    notified_at = (current.last_notified_at or datetime.now()) + timedelta(seconds=1)
+
+    def update_notification_metadata():
+        latest = repo.find_one("prowlarr", "audiences")
+        assert latest is not None
+        repo.upsert(latest.model_copy(update={"last_notified_at": notified_at}))
+
+    repo.before_conditional_upsert = update_notification_metadata
+    recovered = state.record_success(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+    )
+
+    assert recovered.status == "healthy"
+    assert recovered.notify_pending is False
+    assert recovered.last_notified_at == notified_at
+    assert repo.acknowledged_calls == ["indexer:prowlarr:site:audiences:unhealthy"]
+
+
 def test_indexer_site_failure_recalculates_after_concurrent_failure(monkeypatch):
     dispatched_events = []
     monkeypatch.setattr(
@@ -453,7 +499,7 @@ def test_indexer_site_failure_recalculates_after_concurrent_failure(monkeypatch)
 
     assert saved.consecutive_failures == 3
     assert saved.notify_pending is True
-    assert len(dispatched_events) == 1
+    assert len(repo.emitted_events) == 1
 
 
 def test_indexer_site_failure_recalculates_after_notification_marker_changes(monkeypatch):
@@ -491,7 +537,7 @@ def test_indexer_site_failure_recalculates_after_notification_marker_changes(mon
 
     assert saved.consecutive_failures == 3
     assert saved.last_notified_at == notified_at
-    assert dispatched_events == []
+    assert repo.emitted_events == []
 
 
 def test_indexer_site_failure_does_not_emit_after_concurrent_recovery(monkeypatch):
@@ -530,7 +576,7 @@ def test_indexer_site_failure_does_not_emit_after_concurrent_recovery(monkeypatc
     assert status.status == "healthy"
     assert status.notify_pending is False
     assert status.last_notified_at is None
-    assert dispatched_events == []
+    assert repo.emitted_events == []
 
 
 def test_reopen_unhealthy_events_reopens_only_latest_matching_event():
@@ -696,7 +742,7 @@ def test_emit_unhealthy_event_rejects_stale_failure_without_inserting_event():
         level=EventLevel.warning,
     )
 
-    applied = repo.emit_unhealthy_event_if_current(stale_failure, event, checked_at)
+    applied = repo.emit_unhealthy_event_if_current(stale_failure, event, [], checked_at)
 
     with SessionLocal.begin() as session:
         persisted_event = session.get(EventORM, event.id)
@@ -709,6 +755,116 @@ def test_emit_unhealthy_event_rejects_stale_failure_without_inserting_event():
 
     assert applied is False
     assert persisted_event is None
+
+
+def test_emit_unhealthy_event_queues_dispatch_and_cooldown_atomically():
+    repo = IndexerSiteHealthRepository()
+    checked_at = datetime.now()
+    status = IndexerSiteHealthStatus(
+        indexer_id="dispatch-indexer",
+        site_id="dispatch-site",
+        status="unhealthy",
+        checked_at=checked_at,
+        consecutive_failures=3,
+        notify_pending=True,
+    )
+    repo.upsert(status)
+    event = Event(
+        id="dispatch-indexer-warning",
+        type=EventTypes.INDEXER_SITE_UNHEALTHY,
+        level=EventLevel.warning,
+    )
+    dispatch = EventDispatchRecord(
+        id="dispatch-indexer-warning-telegram",
+        event_id=event.id,
+        consumer_name="notifications",
+    )
+
+    applied = repo.emit_unhealthy_event_if_current(
+        status,
+        event,
+        [dispatch],
+        checked_at,
+    )
+    saved = repo.find_one(status.indexer_id, status.site_id)
+
+    with SessionLocal.begin() as session:
+        persisted_event = session.get(EventORM, event.id)
+        persisted_dispatch = session.get(EventDispatchORM, dispatch.id)
+        session.execute(delete(EventDispatchORM).where(EventDispatchORM.id == dispatch.id))
+        session.execute(delete(EventORM).where(EventORM.id == event.id))
+        session.execute(
+            delete(IndexerSiteHealthORM).where(
+                IndexerSiteHealthORM.indexer_id == status.indexer_id,
+                IndexerSiteHealthORM.site_id == status.site_id,
+            )
+        )
+
+    assert applied is True
+    assert persisted_event is not None
+    assert persisted_dispatch is not None
+    assert saved is not None
+    assert saved.last_notified_at == checked_at
+
+
+def test_emit_unhealthy_event_rolls_back_when_dispatch_queue_insert_fails():
+    repo = IndexerSiteHealthRepository()
+    checked_at = datetime.now()
+    status = IndexerSiteHealthStatus(
+        indexer_id="dispatch-rollback-indexer",
+        site_id="dispatch-rollback-site",
+        status="unhealthy",
+        checked_at=checked_at,
+        consecutive_failures=3,
+        notify_pending=True,
+    )
+    repo.upsert(status)
+    event = Event(
+        id="dispatch-rollback-warning",
+        type=EventTypes.INDEXER_SITE_UNHEALTHY,
+        level=EventLevel.warning,
+    )
+    dispatch = EventDispatchRecord(
+        id="dispatch-conflict",
+        event_id=event.id,
+        consumer_name="notifications",
+    )
+    with SessionLocal.begin() as session:
+        session.add(
+            EventDispatchORM(
+                id=dispatch.id,
+                event_id="existing-event",
+                consumer_name="notifications",
+                status="queued",
+                attempts=0,
+                max_attempts=3,
+                available_at=checked_at.isoformat(),
+                created_at=checked_at.isoformat(),
+            )
+        )
+
+    with pytest.raises(IntegrityError):
+        repo.emit_unhealthy_event_if_current(
+            status,
+            event,
+            [dispatch],
+            checked_at,
+        )
+
+    saved = repo.find_one(status.indexer_id, status.site_id)
+    with SessionLocal.begin() as session:
+        persisted_event = session.get(EventORM, event.id)
+        session.execute(delete(EventDispatchORM).where(EventDispatchORM.id == dispatch.id))
+        session.execute(
+            delete(IndexerSiteHealthORM).where(
+                IndexerSiteHealthORM.indexer_id == status.indexer_id,
+                IndexerSiteHealthORM.site_id == status.site_id,
+            )
+        )
+
+    assert persisted_event is None
+    assert saved is not None
+    assert saved.last_notified_at is None
 
 
 def test_indexer_site_unhealthy_event_repeats_after_notification_cooldown(monkeypatch):
@@ -741,7 +897,7 @@ def test_indexer_site_unhealthy_event_repeats_after_notification_cooldown(monkey
         error_message="still disabled",
     )
 
-    assert len(emitted_events) == 1
+    assert len(repo.emitted_events) == 1
 
 
 def test_indexer_site_unhealthy_event_failure_does_not_start_cooldown(monkeypatch):
@@ -773,5 +929,5 @@ def test_indexer_site_unhealthy_event_failure_does_not_start_cooldown(monkeypatc
         error_message="still disabled",
     )
 
-    assert len(attempts) == 1
+    assert len(repo.emitted_events) == 1
     assert status.last_notified_at is not None

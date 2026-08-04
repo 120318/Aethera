@@ -21,6 +21,7 @@ from app.schemas.domain.event import (
     EventType,
     MediaEventCreate,
 )
+from app.schemas.persistence.event_dispatch import EventDispatchRecord
 from app.services.application.events.dispatch import event_dispatch_service
 from app.services.audit.action_catalog import ACTION_NAME_NOTIFICATION_SEND
 from app.services.audit.action_service import action_service
@@ -78,6 +79,11 @@ class EventService:
                 asyncio.run(event_dispatch_service.enqueue_event(event.id, event.type))
             else:
                 loop.create_task(event_dispatch_service.enqueue_event(event.id, event.type))
+
+    def build_dispatch_records(self, event: Event) -> list[EventDispatchRecord]:
+        if not self.is_business_event(event.type):
+            return []
+        return event_dispatch_service.build_records(event.id, event.type)
 
     def build_event(
         self,
