@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from app.schemas.domain.command import CommandInitiator, CommandRecord
 from app.schemas.domain.media_types import MediaType
 from app.schemas.media_id import MediaID
+from app.services.application.commands.target_labels import format_media_target_label
 from app.services.application.workflows.profile_refresh.service import profile_refresh_command_service
 from app.services.domain.media import media_service
 from app.services.domain.media.mapping import MediaExternalMappingService, media_external_mapping_service
@@ -40,16 +41,12 @@ class MediaExternalMappingApplicationService:
             episode_count_override=episode_count_override,
         )
         try:
-            if result.canonical_media_id.media_type == MediaType.tv and target_season_number:
-                await media_service.refresh_profile(
-                    result.canonical_media_id,
-                    season_number=target_season_number,
-                )
             command = await profile_refresh_command_service.enqueue(
                 result.canonical_media_id,
                 season_number=target_season_number,
                 initiator=CommandInitiator.SYSTEM,
                 force_requeue=True,
+                target_label=format_media_target_label(media),
             )
         except Exception:
             self.mapping_service.rollback_tmdb_mapping_attach(result)

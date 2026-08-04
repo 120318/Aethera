@@ -22,11 +22,13 @@ class ProfileRefreshCommandHandler:
         request = body.payload
         target = request.target
         payload = ProfileRefreshCommandRecordPayload(target=target)
-        media = await media_service.resolve_execution_snapshot(
-            target.media_id,
-            season_number=target.season_number,
-        )
-        target_label = format_media_target_label(media)
+        target_label = request.target_label
+        if not target_label:
+            media = await media_service.resolve_execution_snapshot(
+                target.media_id,
+                season_number=target.season_number,
+            )
+            target_label = format_media_target_label(media)
         season_part = f":season={target.season_number}" if target.season_number is not None and target.season_number > 0 else ":season=all"
         return CommandRecord(
             id=str(uuid.uuid4()),

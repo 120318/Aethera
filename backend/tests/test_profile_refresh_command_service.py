@@ -234,3 +234,26 @@ async def test_profile_refresh_build_uses_identity_label_without_media_id_fallba
     assert command.target == MediaTarget(media_id=media_id, season_number=2)
     assert command.uniq_key == f"command:{CommandType.PROFILE_REFRESH.value}:{media_id}:season=2"
     resolve_mock.assert_awaited_once_with(media_id, season_number=2)
+
+
+@pytest.mark.asyncio
+async def test_profile_refresh_build_uses_supplied_label_before_profile_exists(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:272476")
+    resolve_mock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.application.commands.handlers.profile.media_service.resolve_execution_snapshot",
+        resolve_mock,
+    )
+
+    command = await ProfileRefreshCommandHandler().build(
+        CommandCreateRequest(
+            type=CommandType.PROFILE_REFRESH,
+            payload=ProfileRefreshCommandRequestPayload(
+                target=MediaTarget(media_id=media_id, season_number=2),
+                target_label="Test Show (2026)",
+            ),
+        )
+    )
+
+    assert command.target_label == "Test Show (2026)"
+    resolve_mock.assert_not_awaited()

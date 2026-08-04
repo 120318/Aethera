@@ -138,6 +138,7 @@ class TaskDeleteCommandRequestPayload(PayloadBase):
 
 class ProfileRefreshCommandRequestPayload(PayloadBase):
     target: MediaTarget
+    target_label: str | None = None
 
 
 class MediaDeleteCommandRequestPayload(PayloadBase):

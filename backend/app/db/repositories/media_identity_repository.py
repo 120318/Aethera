@@ -85,7 +85,7 @@ class MediaIdentityRepository:
 
     def _retarget_source_mapping(self, session, source_media_id: MediaID, target_media_id: MediaID) -> None:
         target_tmdb_id = int(target_media_id.id) if target_media_id.provider == Provider.tmdb else None
-        source_predicate = None
+        source_column = None
         params = {
             "target": str(target_media_id),
             "target_tmdb_id": target_tmdb_id,
@@ -93,30 +93,77 @@ class MediaIdentityRepository:
             "media_type": source_media_id.media_type.value,
         }
         if source_media_id.provider == Provider.douban:
-            source_predicate = "douban_id = :source_external_id"
+            source_column = "douban_id"
+            source_parameter = "source_external_id"
             params["source_external_id"] = source_media_id.id
         elif source_media_id.provider == Provider.tmdb:
-            source_predicate = "tmdb_id = :source_tmdb_id"
+            source_column = "tmdb_id"
+            source_parameter = "source_tmdb_id"
             params["source_tmdb_id"] = int(source_media_id.id)
-        if not source_predicate:
+        if not source_column:
             return
-        session.execute(
+        source_predicate = f"{source_column} = :{source_parameter}"
+        conflicts = session.execute(
             text(
                 f"""
-                DELETE FROM media_external_mappings
-                WHERE {source_predicate}
-                  AND media_type = :media_type
-                  AND media_id != :target
-                  AND EXISTS (
-                    SELECT 1
-                    FROM media_external_mappings target_rows
-                    WHERE target_rows.media_id = :target
-                      AND target_rows.season_number = media_external_mappings.season_number
-                  )
+                SELECT source_rows.media_id AS source_media_id,
+                       source_rows.season_number AS season_number,
+                       source_rows.imdb_id AS source_imdb_id,
+                       source_rows.douban_id AS source_douban_id,
+                       source_rows.episode_count_override AS source_episode_count_override,
+                       target_rows.imdb_id AS target_imdb_id,
+                       target_rows.douban_id AS target_douban_id,
+                       target_rows.episode_count_override AS target_episode_count_override
+                FROM media_external_mappings source_rows
+                JOIN media_external_mappings target_rows
+                  ON target_rows.media_id = :target
+                 AND target_rows.season_number = source_rows.season_number
+                WHERE source_rows.{source_predicate}
+                  AND source_rows.media_type = :media_type
+                  AND source_rows.media_id != :target
                 """
             ),
             params,
-        )
+        ).mappings().all()
+        for conflict in conflicts:
+            session.execute(
+                text(
+                    """
+                    DELETE FROM media_external_mappings
+                    WHERE media_id = :source_media_id
+                      AND season_number = :season_number
+                    """
+                ),
+                {
+                    "source_media_id": conflict["source_media_id"],
+                    "season_number": conflict["season_number"],
+                },
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE media_external_mappings
+                    SET imdb_id = :imdb_id,
+                        douban_id = :douban_id,
+                        episode_count_override = :episode_count_override,
+                        updated_at = :updated_at
+                    WHERE media_id = :target
+                      AND season_number = :season_number
+                    """
+                ),
+                {
+                    "target": str(target_media_id),
+                    "season_number": conflict["season_number"],
+                    "imdb_id": conflict["target_imdb_id"] or conflict["source_imdb_id"],
+                    "douban_id": conflict["target_douban_id"] or conflict["source_douban_id"],
+                    "episode_count_override": (
+                        conflict["target_episode_count_override"]
+                        if conflict["target_episode_count_override"] is not None
+                        else conflict["source_episode_count_override"]
+                    ),
+                    "updated_at": params["updated_at"],
+                },
+            )
         session.execute(
             text(
                 f"""

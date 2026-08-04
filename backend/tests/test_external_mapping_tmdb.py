@@ -379,6 +379,7 @@ async def test_attach_tmdb_mapping_uses_profile_refresh_command_service_force_re
         season_number=None,
         initiator=CommandInitiator.SYSTEM,
         force_requeue=True,
+        target_label="Test Media (2026)",
     )
     mapping_service.finalize_tmdb_mapping_attach.assert_called_once()
 
@@ -389,15 +390,10 @@ async def test_attach_tmdb_mapping_application_keeps_requested_tv_season(monkeyp
     canonical_mid = MediaID.parse("tmdb:tv:12345")
     enqueue_mock = AsyncMock(side_effect=lambda media_id, **_: _command(media_id, "cmd-season"))
     apply_snapshot_mock = AsyncMock()
-    refresh_profile_mock = AsyncMock()
     monkeypatch.setattr("app.services.application.workflows.media_external_mapping.service.profile_refresh_command_service.enqueue", enqueue_mock)
     monkeypatch.setattr(
         "app.services.application.workflows.media_external_mapping.service.media_service.simple_info",
         AsyncMock(return_value=_media(mid, season_number=2)),
-    )
-    monkeypatch.setattr(
-        "app.services.application.workflows.media_external_mapping.service.media_service.refresh_profile",
-        refresh_profile_mock,
     )
     monkeypatch.setattr(
         "app.services.application.workflows.media_external_mapping.service.media_service.apply_source_mapping_snapshot",
@@ -417,12 +413,12 @@ async def test_attach_tmdb_mapping_application_keeps_requested_tv_season(monkeyp
         season_number=3,
         episode_count_override=8,
     )
-    refresh_profile_mock.assert_awaited_once_with(canonical_mid, season_number=3)
     enqueue_mock.assert_awaited_once_with(
         canonical_mid,
         season_number=3,
         initiator=CommandInitiator.SYSTEM,
         force_requeue=True,
+        target_label="Test Media (2026)",
     )
     apply_snapshot_mock.assert_awaited_once_with(
         canonical_mid,

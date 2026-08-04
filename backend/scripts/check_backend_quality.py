@@ -50,7 +50,6 @@ MEDIA_REFRESH_ALLOWLIST_REASONS = {
     "app/services/application/views/calendar/service.py": "Sample",
     "app/services/application/commands/handlers/profile.py": "Sample",
     "app/services/application/workflows/danmu/source_resolver.py": "danmu workflow weakly refreshes season-scoped media before checking fetchable platforms",
-    "app/services/application/workflows/media_external_mapping/service.py": "mapping attach refreshes the selected TV season before finalizing the canonical identity merge",
     "app/services/domain/media/profile/service.py": "text profile text",
     "app/services/domain/media/service.py": "text facade",
     "app/services/domain/transfer/service.py": "text，text",

@@ -33,6 +33,7 @@ class ProfileRefreshCommandService:
         initiator: CommandInitiator = CommandInitiator.SYSTEM,
         *,
         force_requeue: bool = False,
+        target_label: str | None = None,
     ) -> CommandRecord | None:
         target = self._target(media_id, season_number)
         if not force_requeue:
@@ -40,7 +41,7 @@ class ProfileRefreshCommandService:
                 CommandCreateRequest(
                     type=CommandType.PROFILE_REFRESH,
                     initiator=initiator,
-                    payload=ProfileRefreshCommandRequestPayload(target=target),
+                    payload=ProfileRefreshCommandRequestPayload(target=target, target_label=target_label),
                 )
             )
 
@@ -56,7 +57,7 @@ class ProfileRefreshCommandService:
                 CommandCreateRequest(
                     type=CommandType.PROFILE_REFRESH,
                     initiator=initiator,
-                    payload=ProfileRefreshCommandRequestPayload(target=target),
+                    payload=ProfileRefreshCommandRequestPayload(target=target, target_label=target_label),
                 ),
                 uniq_key=self._followup_uniq_key(media_id, season_number),
                 source=ActionSource.api,
@@ -66,7 +67,7 @@ class ProfileRefreshCommandService:
             CommandCreateRequest(
                 type=CommandType.PROFILE_REFRESH,
                 initiator=initiator,
-                payload=ProfileRefreshCommandRequestPayload(target=target),
+                payload=ProfileRefreshCommandRequestPayload(target=target, target_label=target_label),
             )
         )
 

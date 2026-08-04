@@ -89,6 +89,52 @@ def test_merge_media_id_drops_source_external_mapping_when_target_season_exists(
     ]
 
 
+def test_merge_media_id_preserves_missing_target_season_mapping_fields():
+    source = MediaID.parse("tmdb:tv:123456788")
+    target = MediaID.parse("tmdb:tv:987654320")
+
+    with SessionLocal.begin() as session:
+        session.execute(
+            text(
+                """
+                INSERT INTO media_external_mappings
+                (media_type, media_id, tmdb_id, imdb_id, douban_id, season_number,
+                 episode_count_override, updated_at)
+                VALUES
+                ('tv', :target, 987654320, null, null, 2, null, 1),
+                ('tv', :source, 123456788, 'tt123', 'source-season-2', 2, 12, 1)
+                """
+            ),
+            {"source": str(source), "target": str(target)},
+        )
+
+    MediaIdentityRepository().merge_media_id(source, target)
+
+    with SessionLocal() as session:
+        row = (
+            session.execute(
+                text(
+                    """
+                    SELECT media_id, tmdb_id, imdb_id, douban_id, episode_count_override
+                    FROM media_external_mappings
+                    WHERE media_id = :target AND season_number = 2
+                    """
+                ),
+                {"target": str(target)},
+            )
+            .mappings()
+            .one()
+        )
+
+    assert dict(row) == {
+        "media_id": str(target),
+        "tmdb_id": 987654320,
+        "imdb_id": "tt123",
+        "douban_id": "source-season-2",
+        "episode_count_override": 12,
+    }
+
+
 def test_merge_media_id_does_not_replace_prefix_media_ids_in_embedded_text_or_json():
     source = MediaID.parse("tmdb:movie:1")
     target = MediaID.parse("tmdb:movie:456")
