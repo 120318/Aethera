@@ -48,6 +48,7 @@ class CommandService:
         await self.reset_running_commands()
 
     async def reset_running_commands(self) -> None:
+        await self.repo.delete_all_staged_commands()
         running_commands = await self.repo.find_running()
         for command in running_commands:
             command.status = CommandStatus.FAILED
@@ -78,6 +79,11 @@ class CommandService:
             source=ActionSource.api,
         )
 
+    async def create_staged_command(self, body: CommandCreateRequest) -> CommandRecord:
+        command = await self._get_registry().build_command(body)
+        command.status = CommandStatus.STAGED
+        return await self._submit_command(command, source=ActionSource.api, create_action=False)
+
     async def find_active_command_by_uniq_key(self, uniq_key: str) -> CommandRecord | None:
         command = await self.repo.find_active_by_uniq_key(uniq_key)
         return attach_command_message_i18n(command) if command else None
@@ -92,6 +98,38 @@ class CommandService:
         command = await self._get_registry().build_command(body)
         command.uniq_key = uniq_key
         return await self._submit_command(command, source=source)
+
+    async def create_staged_command_with_uniq_key(
+        self,
+        body: CommandCreateRequest,
+        *,
+        uniq_key: str,
+        source: ActionSource,
+    ) -> CommandRecord:
+        command = await self._get_registry().build_command(body)
+        command.status = CommandStatus.STAGED
+        command.uniq_key = uniq_key
+        return await self._submit_command(command, source=source, create_action=False)
+
+    async def publish_staged_command(
+        self,
+        command_id: str,
+        *,
+        source: ActionSource,
+    ) -> CommandRecord:
+        published = await self.repo.publish_staged_command(command_id)
+        command = await self.repo.find_by_id(command_id)
+        if not command:
+            raise RuntimeError(f"Staged command disappeared before publish: {command_id}")
+        if published:
+            command.status = CommandStatus.QUEUED
+            attach_command_message_i18n(command)
+            await self.repo.update(command, self.repo.cond_id(command.id))
+            self._create_command_action(command, source=source)
+        return attach_command_message_i18n(command)
+
+    async def discard_staged_command(self, command_id: str) -> bool:
+        return await self.repo.delete_staged_command(command_id)
 
     async def get_command(self, command_id: str) -> CommandRecord | None:
         command = await self.repo.find_by_id(command_id)
@@ -219,11 +257,18 @@ class CommandService:
 
         return True
 
-    async def _submit_command(self, command: CommandRecord, source: ActionSource) -> CommandRecord:
+    async def _submit_command(
+        self,
+        command: CommandRecord,
+        source: ActionSource,
+        *,
+        create_action: bool = True,
+    ) -> CommandRecord:
         if not command.uniq_key:
             attach_command_message_i18n(command)
             await self.repo.insert(command)
-            self._create_command_action(command, source=source)
+            if create_action:
+                self._create_command_action(command, source=source)
             return attach_command_message_i18n(command)
 
         lock = self._uniq_key_locks.setdefault(command.uniq_key, asyncio.Lock())
@@ -239,7 +284,8 @@ class CommandService:
                 return attach_command_message_i18n(existing)
             attach_command_message_i18n(command)
             await self.repo.insert(command)
-            self._create_command_action(command, source=source)
+            if create_action:
+                self._create_command_action(command, source=source)
             return attach_command_message_i18n(command)
 
     def _create_command_action(self, command: CommandRecord, source: ActionSource) -> ActionRecord:

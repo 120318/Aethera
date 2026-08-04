@@ -380,6 +380,7 @@ async def test_attach_tmdb_mapping_uses_profile_refresh_command_service_force_re
         initiator=CommandInitiator.SYSTEM,
         force_requeue=True,
         target_label="Test Media (2026)",
+        defer_publish=True,
     )
     mapping_service.finalize_tmdb_mapping_attach.assert_called_once()
 
@@ -419,6 +420,7 @@ async def test_attach_tmdb_mapping_application_keeps_requested_tv_season(monkeyp
         initiator=CommandInitiator.SYSTEM,
         force_requeue=True,
         target_label="Test Media (2026)",
+        defer_publish=True,
     )
     apply_snapshot_mock.assert_awaited_once_with(
         canonical_mid,
@@ -426,3 +428,48 @@ async def test_attach_tmdb_mapping_application_keeps_requested_tv_season(monkeyp
         douban_id=None,
         episode_count_override=8,
     )
+
+
+@pytest.mark.asyncio
+async def test_attach_tmdb_mapping_publishes_refresh_only_after_identity_finalization(monkeypatch):
+    mid = MediaID.parse("tmdb:tv:19994")
+    canonical_mid = MediaID.parse("tmdb:tv:12344")
+    staged = _command(canonical_mid, "cmd-staged")
+    staged.status = CommandStatus.STAGED
+    queued = staged.model_copy(update={"status": CommandStatus.QUEUED})
+    steps = []
+
+    async def publish(command):
+        assert command.id == staged.id
+        steps.append("publish")
+        return queued
+
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_external_mapping.service.profile_refresh_command_service.enqueue",
+        AsyncMock(return_value=staged),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_external_mapping.service.profile_refresh_command_service.publish",
+        AsyncMock(side_effect=publish),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_external_mapping.service.media_service.simple_info",
+        AsyncMock(return_value=_media(mid, season_number=1)),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_external_mapping.service.media_service.apply_source_mapping_snapshot",
+        AsyncMock(side_effect=lambda *_args, **_kwargs: steps.append("snapshot")),
+    )
+    mapping_service = Mock()
+    mapping_service.attach_tmdb_mapping = AsyncMock(
+        return_value=TMDBMappingAttachResult(canonical_media_id=canonical_mid, source_media_id=mid)
+    )
+    mapping_service.finalize_tmdb_mapping_attach = Mock(side_effect=lambda _result: steps.append("finalize"))
+    mapping_service.rollback_tmdb_mapping_attach = Mock()
+
+    result = await MediaExternalMappingApplicationService(
+        mapping_service=mapping_service
+    ).attach_tmdb_mapping(mid, tmdb_id=12344, season_number=1)
+
+    assert steps == ["finalize", "snapshot", "publish"]
+    assert result.command.status == CommandStatus.QUEUED

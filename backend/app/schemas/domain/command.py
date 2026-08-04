@@ -34,6 +34,7 @@ class CommandType(str, Enum):
 
 
 class CommandStatus(str, Enum):
+    STAGED = "staged"
     QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"

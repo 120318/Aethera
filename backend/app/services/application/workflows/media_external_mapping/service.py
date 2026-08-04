@@ -47,18 +47,24 @@ class MediaExternalMappingApplicationService:
                 initiator=CommandInitiator.SYSTEM,
                 force_requeue=True,
                 target_label=format_media_target_label(media),
+                defer_publish=True,
             )
         except Exception:
             self.mapping_service.rollback_tmdb_mapping_attach(result)
             raise
 
-        self.mapping_service.finalize_tmdb_mapping_attach(result)
-        await media_service.apply_source_mapping_snapshot(
-            result.canonical_media_id,
-            season_number=target_season_number,
-            douban_id=None,
-            episode_count_override=episode_count_override,
-        )
+        try:
+            self.mapping_service.finalize_tmdb_mapping_attach(result)
+            await media_service.apply_source_mapping_snapshot(
+                result.canonical_media_id,
+                season_number=target_season_number,
+                douban_id=None,
+                episode_count_override=episode_count_override,
+            )
+            command = await profile_refresh_command_service.publish(command)
+        except Exception:
+            await profile_refresh_command_service.discard(command)
+            raise
         return MediaExternalMappingAttachCommandResult(
             media_id=result.canonical_media_id,
             command=command,

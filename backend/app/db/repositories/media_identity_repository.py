@@ -121,11 +121,26 @@ class MediaIdentityRepository:
                 WHERE source_rows.{source_predicate}
                   AND source_rows.media_type = :media_type
                   AND source_rows.media_id != :target
+                ORDER BY source_rows.media_id ASC
                 """
             ),
             params,
         ).mappings().all()
+        merged_by_season: dict[int, dict[str, Any]] = {}
         for conflict in conflicts:
+            season_number = int(conflict["season_number"])
+            merged = merged_by_season.setdefault(
+                season_number,
+                {
+                    "imdb_id": conflict["target_imdb_id"],
+                    "douban_id": conflict["target_douban_id"],
+                    "episode_count_override": conflict["target_episode_count_override"],
+                },
+            )
+            merged["imdb_id"] = merged["imdb_id"] or conflict["source_imdb_id"]
+            merged["douban_id"] = merged["douban_id"] or conflict["source_douban_id"]
+            if merged["episode_count_override"] is None:
+                merged["episode_count_override"] = conflict["source_episode_count_override"]
             session.execute(
                 text(
                     """
@@ -139,6 +154,7 @@ class MediaIdentityRepository:
                     "season_number": conflict["season_number"],
                 },
             )
+        for season_number, merged in merged_by_season.items():
             session.execute(
                 text(
                     """
@@ -153,14 +169,10 @@ class MediaIdentityRepository:
                 ),
                 {
                     "target": str(target_media_id),
-                    "season_number": conflict["season_number"],
-                    "imdb_id": conflict["target_imdb_id"] or conflict["source_imdb_id"],
-                    "douban_id": conflict["target_douban_id"] or conflict["source_douban_id"],
-                    "episode_count_override": (
-                        conflict["target_episode_count_override"]
-                        if conflict["target_episode_count_override"] is not None
-                        else conflict["source_episode_count_override"]
-                    ),
+                    "season_number": season_number,
+                    "imdb_id": merged["imdb_id"],
+                    "douban_id": merged["douban_id"],
+                    "episode_count_override": merged["episode_count_override"],
                     "updated_at": params["updated_at"],
                 },
             )

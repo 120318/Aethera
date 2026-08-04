@@ -158,6 +158,36 @@ async def test_force_requeue_reuses_existing_followup_uniq_key(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_deferred_profile_refresh_stays_staged_until_published(monkeypatch):
+    service = ProfileRefreshCommandService()
+    media_id = MediaID.parse("tmdb:movie:1")
+    staged = _profile_refresh_command(command_id="cmd-staged", status=CommandStatus.STAGED)
+    queued = staged.model_copy(update={"status": CommandStatus.QUEUED})
+    monkeypatch.setattr(
+        "app.services.application.workflows.profile_refresh.service.command_service.find_active_command_by_uniq_key",
+        AsyncMock(return_value=None),
+    )
+    create_mock = AsyncMock(return_value=staged)
+    monkeypatch.setattr(
+        "app.services.application.workflows.profile_refresh.service.command_service.create_staged_command",
+        create_mock,
+    )
+    publish_mock = AsyncMock(return_value=queued)
+    monkeypatch.setattr(
+        "app.services.application.workflows.profile_refresh.service.command_service.publish_staged_command",
+        publish_mock,
+    )
+
+    prepared = await service.enqueue(media_id, force_requeue=True, defer_publish=True)
+
+    assert prepared.status == CommandStatus.STAGED
+    create_mock.assert_awaited_once()
+    published = await service.publish(prepared)
+    assert published.status == CommandStatus.QUEUED
+    publish_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_profile_refresh_api_uses_force_requeue(monkeypatch):
     media_id = MediaID.parse("tmdb:movie:1")
     command = _profile_refresh_command(command_id="cmd-new", status=CommandStatus.QUEUED)

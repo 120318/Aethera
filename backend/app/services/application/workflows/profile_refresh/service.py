@@ -3,7 +3,7 @@ from app.schemas.exception import DownloadException
 from app.schemas.exception.exceptions import InvalidRequestException
 from app.schemas.media_id import MediaID
 from app.schemas.domain.action import ActionSource
-from app.schemas.domain.command import CommandCreateRequest, CommandInitiator, CommandRecord, CommandType, ProfileRefreshCommandRequestPayload
+from app.schemas.domain.command import CommandCreateRequest, CommandInitiator, CommandRecord, CommandStatus, CommandType, ProfileRefreshCommandRequestPayload
 from app.schemas.domain.media import MediaTarget
 from app.services.application.commands.service import command_service
 
@@ -34,10 +34,16 @@ class ProfileRefreshCommandService:
         *,
         force_requeue: bool = False,
         target_label: str | None = None,
+        defer_publish: bool = False,
     ) -> CommandRecord | None:
         target = self._target(media_id, season_number)
+        create_command = (
+            command_service.create_staged_command
+            if defer_publish
+            else command_service.create_command
+        )
         if not force_requeue:
-            return await command_service.create_command(
+            return await create_command(
                 CommandCreateRequest(
                     type=CommandType.PROFILE_REFRESH,
                     initiator=initiator,
@@ -53,7 +59,12 @@ class ProfileRefreshCommandService:
                 existing = await command_service.find_active_command_by_uniq_key(self._uniq_key(media_id, season_number))
 
         if existing and existing.status.value == "running":
-            return await command_service.create_command_with_uniq_key(
+            create_with_uniq_key = (
+                command_service.create_staged_command_with_uniq_key
+                if defer_publish
+                else command_service.create_command_with_uniq_key
+            )
+            return await create_with_uniq_key(
                 CommandCreateRequest(
                     type=CommandType.PROFILE_REFRESH,
                     initiator=initiator,
@@ -63,13 +74,22 @@ class ProfileRefreshCommandService:
                 source=ActionSource.api,
             )
 
-        return await command_service.create_command(
+        return await create_command(
             CommandCreateRequest(
                 type=CommandType.PROFILE_REFRESH,
                 initiator=initiator,
                 payload=ProfileRefreshCommandRequestPayload(target=target, target_label=target_label),
             )
         )
+
+    async def publish(self, command: CommandRecord) -> CommandRecord:
+        if command.status != CommandStatus.STAGED:
+            return command
+        return await command_service.publish_staged_command(command.id, source=ActionSource.api)
+
+    async def discard(self, command: CommandRecord | None) -> None:
+        if command and command.status == CommandStatus.STAGED:
+            await command_service.discard_staged_command(command.id)
 
 
 profile_refresh_command_service = ProfileRefreshCommandService()

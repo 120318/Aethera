@@ -3,11 +3,18 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import desc, select, update
+from sqlalchemy import delete, desc, select, update
 
 from app.db.sql.models import CommandORM
 from app.db.sql.session import SessionLocal
 from app.schemas.domain.command import CommandRecord, CommandStatus, CommandTargetType, CommandType
+
+
+ACTIVE_COMMAND_STATUSES = [
+    CommandStatus.STAGED.value,
+    CommandStatus.QUEUED.value,
+    CommandStatus.RUNNING.value,
+]
 
 
 class CommandRepository:
@@ -138,11 +145,40 @@ class CommandRepository:
             session.commit()
             return bool(result.rowcount)
 
+    async def publish_staged_command(self, command_id: str) -> bool:
+        with SessionLocal() as session:
+            result = session.execute(
+                update(CommandORM)
+                .where(CommandORM.id == command_id, CommandORM.status == CommandStatus.STAGED.value)
+                .values(status=CommandStatus.QUEUED.value)
+            )
+            session.commit()
+            return bool(result.rowcount)
+
+    async def delete_staged_command(self, command_id: str) -> bool:
+        with SessionLocal() as session:
+            result = session.execute(
+                delete(CommandORM).where(
+                    CommandORM.id == command_id,
+                    CommandORM.status == CommandStatus.STAGED.value,
+                )
+            )
+            session.commit()
+            return bool(result.rowcount)
+
+    async def delete_all_staged_commands(self) -> int:
+        with SessionLocal() as session:
+            result = session.execute(
+                delete(CommandORM).where(CommandORM.status == CommandStatus.STAGED.value)
+            )
+            session.commit()
+            return int(result.rowcount or 0)
+
     async def find_active(self) -> list[CommandRecord]:
         with SessionLocal() as session:
             rows = session.execute(
                 select(CommandORM)
-                .where(CommandORM.status.in_([CommandStatus.QUEUED.value, CommandStatus.RUNNING.value]))
+                .where(CommandORM.status.in_(ACTIVE_COMMAND_STATUSES))
                 .order_by(desc(CommandORM.created_at))
             ).scalars().all()
             return [self._to_model(row) for row in rows]
@@ -175,7 +211,7 @@ class CommandRepository:
     ) -> list[CommandRecord]:
         with SessionLocal() as session:
             stmt = select(CommandORM).where(
-                CommandORM.status.in_([CommandStatus.QUEUED.value, CommandStatus.RUNNING.value])
+                CommandORM.status.in_(ACTIVE_COMMAND_STATUSES)
             )
             if target_type:
                 stmt = stmt.where(CommandORM.target_type == target_type.value)
@@ -199,7 +235,7 @@ class CommandRepository:
         with SessionLocal() as session:
             stmt = select(CommandORM).where(
                 CommandORM.media_id == media_id,
-                CommandORM.status.in_([CommandStatus.QUEUED.value, CommandStatus.RUNNING.value]),
+                CommandORM.status.in_(ACTIVE_COMMAND_STATUSES),
             )
             if target_season_number is not None:
                 stmt = stmt.where(CommandORM.target_season_number == target_season_number)
@@ -215,7 +251,7 @@ class CommandRepository:
                 select(CommandORM)
                 .where(
                     CommandORM.uniq_key == uniq_key,
-                    CommandORM.status.in_([CommandStatus.QUEUED.value, CommandStatus.RUNNING.value]),
+                    CommandORM.status.in_(ACTIVE_COMMAND_STATUSES),
                 )
                 .order_by(desc(CommandORM.created_at))
                 .limit(1)

@@ -417,6 +417,47 @@ async def test_command_repository_season_filter_does_not_include_unscoped_media_
 
 
 @pytest.mark.asyncio
+async def test_command_repository_does_not_offer_staged_command_to_worker():
+    media_id = MediaID.parse("tmdb:tv:1")
+    payload = ProfileRefreshCommandRecordPayload(
+        target=MediaTarget(media_id=media_id, season_number=1),
+    ).model_dump(mode="json")
+    with SessionLocal() as session:
+        session.add(
+            CommandORM(
+                id="cmd-staged-profile-refresh",
+                type=CommandType.PROFILE_REFRESH.value,
+                status=CommandStatus.STAGED.value,
+                payload_json=payload,
+                initiator=CommandInitiator.SYSTEM.value,
+                media_id=str(media_id),
+                target_season_number=1,
+                uniq_key="command:profile.refresh:tmdb:tv:1:season=1",
+                target_type=CommandTargetType.MEDIA.value,
+                target_id=str(media_id),
+                created_at=datetime.now().isoformat(),
+            )
+        )
+        session.commit()
+
+    try:
+        next_command = await CommandRepository().find_next_queued()
+        active = await CommandRepository().find_active_by_uniq_key(
+            "command:profile.refresh:tmdb:tv:1:season=1"
+        )
+    finally:
+        with SessionLocal() as session:
+            session.execute(
+                delete(CommandORM).where(CommandORM.id == "cmd-staged-profile-refresh")
+            )
+            session.commit()
+
+    assert next_command is None
+    assert active is not None
+    assert active.status == CommandStatus.STAGED
+
+
+@pytest.mark.asyncio
 async def test_command_repository_preserves_nested_error_params():
     media_id = MediaID.parse("tmdb:tv:1")
     payload = TaskCreateCommandRecordPayload(
