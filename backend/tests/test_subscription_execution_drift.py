@@ -26,6 +26,7 @@ from app.schemas.media_id import MediaID
 from app.schemas.domain.subscription_run_result import SubscriptionRunResponse
 from app.schemas.runtime.subscription_runtime import SubscriptionPlanningStatus, SubscriptionRunPlan, SubscriptionRunPlanningResult
 from app.services.domain.download import download_service
+from app.services.domain.download.coverage import DownloadCoverageService
 from app.services.domain.resource.selection import ResourceSelectionPlan, partition_search_results, select_resources
 from app.services.application.workflows.resource_search import resource_search_service
 from app.services.application.workflows.subscription.run import SubscriptionRunApplicationService
@@ -597,6 +598,65 @@ async def test_compute_target_episodes_excludes_present_and_downloading_episodes
     assert plan is not None
     assert plan.target_episodes == {2, 5}
     assert plan.required_scores == {}
+
+
+@pytest.mark.asyncio
+async def test_compute_target_episodes_excludes_downloading_upgrade_episodes(monkeypatch):
+    sub = _subscription()
+    sub.filters = SubscriptionFilters(
+        upgrade_policy=UpgradePolicy(
+            enabled=True,
+            strategy="consistent_skip_low",
+            lock_mode="best_existing",
+        )
+    )
+    media = _media(episodes_count=3)
+
+    monkeypatch.setattr(
+        "app.services.domain.subscription.resource_run_plan_service.library_service.get_present_episodes",
+        AsyncMock(return_value={1, 2, 3}),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.subscription.resource_run_plan_service.download_service.list_active_episodes_by_media",
+        AsyncMock(return_value={2}),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.subscription.resource_run_plan_service.library_service.get_episode_attributes",
+        AsyncMock(
+            return_value={
+                1: [ResourceAttributes(resolution="2160p")],
+                2: [ResourceAttributes(resolution="1080p")],
+                3: [ResourceAttributes(resolution="1080p")],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.subscription.resource_run_plan_service._upgrade_score",
+        lambda attrs, _quality_profile: 200 if attrs.resolution == "2160p" else 100,
+    )
+
+    plan = ((await resource_run_plan_service.build_subscription_plan(sub.model_copy(update={"media": media}))).plan)
+
+    assert plan is not None
+    assert plan.target_episodes == {3}
+    assert plan.required_scores == {3: 200}
+
+
+@pytest.mark.asyncio
+async def test_active_episode_coverage_excludes_completed_tasks():
+    downloading_task = _task_with_metadata(_video_metadata("Show.S01E02", [2]))
+    completed_task = _task_with_metadata(_video_metadata("Show.S01E03", [3])).model_copy(
+        update={"id": "task-completed", "status": TaskStatus.COMPLETED}
+    )
+    tasks = [downloading_task, completed_task]
+
+    async def get_tasks(*, status, media_id):
+        assert media_id == downloading_task.media_id
+        return [task for task in tasks if task.status in status]
+
+    service = DownloadCoverageService(get_tasks)
+
+    assert await service.list_active_episodes_by_media(downloading_task.media_id, season=1) == {2}
 
 
 def test_tv_disc_package_task_does_not_fallback_to_episode_one():
