@@ -12,76 +12,84 @@ from app.schemas.media_id import MediaID, Provider
 
 
 class MediaIdentityRepository:
-    def merge_media_id(self, source_media_id: MediaID, target_media_id: MediaID) -> None:
+    def merge_media_id(self, source_media_id: MediaID, target_media_id: MediaID, *, session=None) -> None:
         if source_media_id == target_media_id:
             return
+
+        if session is None:
+            with SessionLocal.begin() as owned_session:
+                self._merge_media_id(owned_session, source_media_id, target_media_id)
+            return
+
+        self._merge_media_id(session, source_media_id, target_media_id)
+
+    def _merge_media_id(self, session, source_media_id: MediaID, target_media_id: MediaID) -> None:
 
         source = str(source_media_id)
         target = str(target_media_id)
         target_provider = target_media_id.provider.value
         target_provider_item_id = target_media_id.id
 
-        with SessionLocal.begin() as session:
-            self._replace_embedded_media_refs(session, source_media_id, target_media_id)
-            self._merge_singleton_rows(session, source, target)
-            self._merge_subscription_settings(session, source, target)
-            self._merge_metadata_sync(session, source, target)
+        self._replace_embedded_media_refs(session, source_media_id, target_media_id)
+        self._merge_singleton_rows(session, source, target)
+        self._merge_subscription_settings(session, source, target)
+        self._merge_metadata_sync(session, source, target)
 
-            for table in (
-                "library_files",
-                "library_episodes",
-                "actions",
-                "events",
-                "media_subscription_cycles",
-            ):
-                session.execute(text(f"UPDATE {table} SET media_id = :target WHERE media_id = :source"), {"source": source, "target": target})
+        for table in (
+            "library_files",
+            "library_episodes",
+            "actions",
+            "events",
+            "media_subscription_cycles",
+        ):
+            session.execute(text(f"UPDATE {table} SET media_id = :target WHERE media_id = :source"), {"source": source, "target": target})
 
-            session.execute(
-                text(
-                    """
-                    UPDATE tasks
-                    SET media_id = :target,
-                        provider = :provider,
-                        provider_item_id = :provider_item_id
-                    WHERE media_id = :source
-                    """
-                ),
-                {
-                    "source": source,
-                    "target": target,
-                    "provider": target_provider,
-                    "provider_item_id": target_provider_item_id,
-                },
-            )
-            session.execute(
-                text(
-                    """
-                    UPDATE commands
-                    SET media_id = :target,
-                        target_id = CASE WHEN target_type = 'media' AND target_id = :source THEN :target ELSE target_id END
-                    WHERE media_id = :source OR (target_type = 'media' AND target_id = :source)
-                    """
-                ),
-                {"source": source, "target": target},
-            )
+        session.execute(
+            text(
+                """
+                UPDATE tasks
+                SET media_id = :target,
+                    provider = :provider,
+                    provider_item_id = :provider_item_id
+                WHERE media_id = :source
+                """
+            ),
+            {
+                "source": source,
+                "target": target,
+                "provider": target_provider,
+                "provider_item_id": target_provider_item_id,
+            },
+        )
+        session.execute(
+            text(
+                """
+                UPDATE commands
+                SET media_id = :target,
+                    target_id = CASE WHEN target_type = 'media' AND target_id = :source THEN :target ELSE target_id END
+                WHERE media_id = :source OR (target_type = 'media' AND target_id = :source)
+                """
+            ),
+            {"source": source, "target": target},
+        )
 
-            self._retarget_source_mapping(session, source_media_id, target_media_id)
-            session.execute(
-                text(
-                    """
-                    UPDATE media_external_mappings
-                    SET media_id = :target,
-                        tmdb_id = CASE WHEN :target_provider = 'tmdb' THEN :target_tmdb_id ELSE tmdb_id END
-                    WHERE media_id = :source
-                    """
-                ),
-                {
-                    "source": source,
-                    "target": target,
-                    "target_provider": target_provider,
-                    "target_tmdb_id": int(target_media_id.id) if target_media_id.provider == Provider.tmdb else None,
-                },
-            )
+        self._retarget_source_mapping(session, source_media_id, target_media_id)
+        session.execute(
+            text(
+                """
+                UPDATE media_external_mappings
+                SET media_id = :target,
+                    tmdb_id = CASE WHEN :target_provider = 'tmdb' THEN :target_tmdb_id ELSE tmdb_id END
+                WHERE media_id = :source
+                """
+            ),
+            {
+                "source": source,
+                "target": target,
+                "target_provider": target_provider,
+                "target_tmdb_id": int(target_media_id.id) if target_media_id.provider == Provider.tmdb else None,
+            },
+        )
 
     def _retarget_source_mapping(self, session, source_media_id: MediaID, target_media_id: MediaID) -> None:
         target_tmdb_id = int(target_media_id.id) if target_media_id.provider == Provider.tmdb else None

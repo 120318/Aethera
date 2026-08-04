@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 pytestmark = [pytest.mark.drift, pytest.mark.health]
 
@@ -554,6 +554,64 @@ async def test_publish_staged_command_commits_command_and_action_together(monkey
     assert saved is not None
     assert saved.status == CommandStatus.READY
     assert persisted_action is None
+
+
+def test_finalize_staged_replacement_cancels_queued_and_marks_ready_atomically():
+    uniq_key = "command:profile.refresh:tmdb:tv:1:season=1"
+    payload = ProfileRefreshCommandRecordPayload(
+        target=MediaTarget(media_id=MediaID.parse("tmdb:tv:1"), season_number=1),
+    ).model_dump(mode="json")
+    ids = ["cmd-queued-before-mapping", "cmd-staged-after-mapping"]
+    with SessionLocal.begin() as session:
+        session.add_all(
+            [
+                CommandORM(
+                    id=ids[0],
+                    type=CommandType.PROFILE_REFRESH.value,
+                    status=CommandStatus.QUEUED.value,
+                    payload_json=payload,
+                    initiator=CommandInitiator.SYSTEM.value,
+                    media_id="tmdb:tv:1",
+                    target_season_number=1,
+                    uniq_key=uniq_key,
+                    target_type=CommandTargetType.MEDIA.value,
+                    target_id="tmdb:tv:1",
+                    created_at=datetime.now().isoformat(),
+                ),
+                CommandORM(
+                    id=ids[1],
+                    type=CommandType.PROFILE_REFRESH.value,
+                    status=CommandStatus.STAGED.value,
+                    payload_json=payload,
+                    initiator=CommandInitiator.SYSTEM.value,
+                    media_id="tmdb:tv:1",
+                    target_season_number=1,
+                    uniq_key=uniq_key,
+                    target_type=CommandTargetType.MEDIA.value,
+                    target_id="tmdb:tv:1",
+                    created_at=datetime.now().isoformat(),
+                ),
+            ]
+        )
+
+    try:
+        with SessionLocal.begin() as session:
+            CommandRepository._finalize_staged_replacement(session, ids[1])
+        with SessionLocal() as session:
+            statuses = {
+                row.id: row.status
+                for row in session.execute(
+                    select(CommandORM).where(CommandORM.id.in_(ids))
+                ).scalars()
+            }
+    finally:
+        with SessionLocal.begin() as session:
+            session.execute(delete(CommandORM).where(CommandORM.id.in_(ids)))
+
+    assert statuses == {
+        ids[0]: CommandStatus.CANCELLED.value,
+        ids[1]: CommandStatus.READY.value,
+    }
 
 
 @pytest.mark.asyncio

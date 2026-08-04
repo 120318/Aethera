@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from datetime import datetime
+
 from sqlalchemy import delete, desc, select, text, update
 
 from app.db.repositories.action_repository import ActionRepository
-from app.db.sql.models import CommandORM
+from app.db.sql.models import ActionORM, CommandORM
 from app.db.sql.session import SessionLocal
 from app.schemas.domain.action import ActionRecord
 from app.schemas.domain.command import CommandRecord, CommandStatus, CommandTargetType, CommandType
@@ -186,6 +188,52 @@ class CommandRepository:
             )
             session.commit()
             return bool(result.rowcount)
+
+    def finalize_staged_replacement(self, command_id: str, before_ready) -> None:
+        with SessionLocal.begin() as session:
+            before_ready(session)
+            self._finalize_staged_replacement(session, command_id)
+
+    @staticmethod
+    def _finalize_staged_replacement(session, command_id: str) -> None:
+        row = session.get(CommandORM, command_id)
+        if row is None or row.status != CommandStatus.STAGED.value:
+            raise RuntimeError(f"Staged command disappeared before finalization: {command_id}")
+
+        finished_at = datetime.now().isoformat()
+        superseded_ids = [
+            item[0]
+            for item in session.execute(
+                select(CommandORM.id).where(
+                    CommandORM.uniq_key == row.uniq_key,
+                    CommandORM.status == CommandStatus.QUEUED.value,
+                    CommandORM.id != command_id,
+                )
+            ).all()
+        ]
+        if superseded_ids:
+            session.execute(
+                update(CommandORM)
+                .where(CommandORM.id.in_(superseded_ids))
+                .values(
+                    status=CommandStatus.CANCELLED.value,
+                    message_key=None,
+                    message_params_json={},
+                    error=None,
+                    error_key=None,
+                    error_params_json={},
+                    finished_at=finished_at,
+                )
+            )
+            session.execute(
+                update(ActionORM)
+                .where(
+                    ActionORM.id.in_(superseded_ids),
+                    ActionORM.status == "queued",
+                )
+                .values(status="cancelled", finished_at=finished_at)
+            )
+        row.status = CommandStatus.READY.value
 
     async def reserve_ready_command(self, command_id: str) -> bool:
         with SessionLocal() as session:

@@ -71,6 +71,44 @@ async def test_force_requeue_cancels_existing_queued_profile_refresh(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_deferred_force_requeue_keeps_existing_queued_until_finalize(monkeypatch):
+    service = ProfileRefreshCommandService()
+    media_id = MediaID.parse("tmdb:movie:1")
+    existing = _profile_refresh_command(
+        command_id="cmd-existing-queued",
+        status=CommandStatus.QUEUED,
+    )
+    staged = _profile_refresh_command(
+        command_id="cmd-staged-replacement",
+        status=CommandStatus.STAGED,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.profile_refresh.service.command_service.find_active_command_by_uniq_key",
+        AsyncMock(return_value=existing),
+    )
+    cancel_mock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.application.workflows.profile_refresh.service.command_service.cancel_command",
+        cancel_mock,
+    )
+    create_mock = AsyncMock(return_value=staged)
+    monkeypatch.setattr(
+        "app.services.application.workflows.profile_refresh.service.command_service.create_staged_command",
+        create_mock,
+    )
+
+    result = await service.enqueue(
+        media_id,
+        force_requeue=True,
+        defer_publish=True,
+    )
+
+    assert result.id == staged.id
+    cancel_mock.assert_not_awaited()
+    create_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_force_requeue_submits_followup_when_existing_profile_refresh_is_running(monkeypatch):
     service = ProfileRefreshCommandService()
     media_id = MediaID.parse("tmdb:movie:1")

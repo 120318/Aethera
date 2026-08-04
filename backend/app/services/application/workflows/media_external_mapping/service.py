@@ -58,7 +58,16 @@ class MediaExternalMappingApplicationService:
             raise
 
         try:
-            self.mapping_service.finalize_tmdb_mapping_attach(result)
+            def finalize_mapping(session) -> None:
+                self.mapping_service.finalize_tmdb_mapping_attach(
+                    result,
+                    session=session,
+                )
+
+            command = await profile_refresh_command_service.finalize_replacement(
+                command,
+                finalize_mapping,
+            )
         except Exception:
             await profile_refresh_command_service.discard(command)
             raise

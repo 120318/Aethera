@@ -144,6 +144,13 @@ class CommandService:
             command.status = CommandStatus.STAGED
         return attach_command_message_i18n(command)
 
+    async def finalize_staged_replacement(self, command_id: str, before_ready) -> CommandRecord:
+        self.repo.finalize_staged_replacement(command_id, before_ready)
+        command = await self.repo.find_by_id(command_id)
+        if not command:
+            raise RuntimeError(f"Staged command disappeared after finalization: {command_id}")
+        return attach_command_message_i18n(command)
+
     async def publish_staged_command(
         self,
         command_id: str,

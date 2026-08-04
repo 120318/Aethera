@@ -106,6 +106,19 @@ def _command(media_id: MediaID, command_id: str = "cmd-1") -> CommandRecord:
     )
 
 
+def _mock_atomic_command_finalization(monkeypatch) -> AsyncMock:
+    async def finalize(command, before_ready):
+        before_ready(Mock())
+        return command.model_copy(update={"status": CommandStatus.READY})
+
+    finalize_mock = AsyncMock(side_effect=finalize)
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_external_mapping.service.profile_refresh_command_service.finalize_replacement",
+        finalize_mock,
+    )
+    return finalize_mock
+
+
 def _media(mid: MediaID, *, imdb_id="tt0499549", douban_id: str | None = None, season_number: int | None = None) -> MediaSimpleInfo:
     return MediaSimpleInfo(
         media_id=mid,
@@ -359,6 +372,7 @@ async def test_attach_tmdb_mapping_keeps_existing_imdb_id_when_tmdb_external_ids
 
 @pytest.mark.asyncio
 async def test_attach_tmdb_mapping_uses_profile_refresh_command_service_force_requeue(monkeypatch):
+    _mock_atomic_command_finalization(monkeypatch)
     mid = MediaID.parse("tmdb:movie:19995")
     canonical_mid = MediaID.parse("tmdb:movie:12345")
     enqueue_mock = AsyncMock(side_effect=lambda media_id, **_: _command(media_id, "cmd-force-requeue"))
@@ -387,6 +401,7 @@ async def test_attach_tmdb_mapping_uses_profile_refresh_command_service_force_re
 
 @pytest.mark.asyncio
 async def test_attach_tmdb_mapping_application_keeps_requested_tv_season(monkeypatch):
+    _mock_atomic_command_finalization(monkeypatch)
     mid = MediaID.parse("tmdb:tv:19995")
     canonical_mid = MediaID.parse("tmdb:tv:12345")
     enqueue_mock = AsyncMock(side_effect=lambda media_id, **_: _command(media_id, "cmd-season"))
@@ -432,6 +447,7 @@ async def test_attach_tmdb_mapping_application_keeps_requested_tv_season(monkeyp
 
 @pytest.mark.asyncio
 async def test_attach_tmdb_mapping_publishes_refresh_only_after_identity_finalization(monkeypatch):
+    _mock_atomic_command_finalization(monkeypatch)
     mid = MediaID.parse("tmdb:tv:19994")
     canonical_mid = MediaID.parse("tmdb:tv:12344")
     staged = _command(canonical_mid, "cmd-staged")
@@ -464,7 +480,9 @@ async def test_attach_tmdb_mapping_publishes_refresh_only_after_identity_finaliz
     mapping_service.attach_tmdb_mapping = AsyncMock(
         return_value=TMDBMappingAttachResult(canonical_media_id=canonical_mid, source_media_id=mid)
     )
-    mapping_service.finalize_tmdb_mapping_attach = Mock(side_effect=lambda _result: steps.append("finalize"))
+    mapping_service.finalize_tmdb_mapping_attach = Mock(
+        side_effect=lambda _result, **_kwargs: steps.append("finalize")
+    )
     mapping_service.rollback_tmdb_mapping_attach = Mock()
 
     result = await MediaExternalMappingApplicationService(
@@ -477,6 +495,7 @@ async def test_attach_tmdb_mapping_publishes_refresh_only_after_identity_finaliz
 
 @pytest.mark.asyncio
 async def test_attach_tmdb_mapping_keeps_refresh_after_post_commit_publish_failure(monkeypatch):
+    _mock_atomic_command_finalization(monkeypatch)
     mid = MediaID.parse("tmdb:tv:19995")
     canonical_mid = MediaID.parse("tmdb:tv:12345")
     staged = _command(canonical_mid, "cmd-staged-retry")
@@ -524,6 +543,7 @@ async def test_attach_tmdb_mapping_keeps_refresh_after_post_commit_publish_failu
 
 @pytest.mark.asyncio
 async def test_attach_tmdb_mapping_publishes_refresh_after_snapshot_failure(monkeypatch):
+    _mock_atomic_command_finalization(monkeypatch)
     mid = MediaID.parse("tmdb:tv:19996")
     canonical_mid = MediaID.parse("tmdb:tv:12346")
     staged = _command(canonical_mid, "cmd-snapshot-retry")
@@ -565,5 +585,6 @@ async def test_attach_tmdb_mapping_publishes_refresh_after_snapshot_failure(monk
     ).attach_tmdb_mapping(mid, tmdb_id=12346, season_number=1)
 
     assert result.command.status == CommandStatus.QUEUED
-    publish_mock.assert_awaited_once_with(staged)
+    assert publish_mock.await_args.args[0].id == staged.id
+    assert publish_mock.await_args.args[0].status == CommandStatus.READY
     discard_mock.assert_not_awaited()

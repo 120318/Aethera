@@ -91,16 +91,43 @@ class MediaExternalMappingService:
             source_douban_media_id=MediaID(provider=Provider.douban, media_type=media.media_type, id=media.douban_id) if media.douban_id else None,
         )
 
-    def finalize_tmdb_mapping_attach(self, result: TMDBMappingAttachResult) -> None:
+    def finalize_tmdb_mapping_attach(self, result: TMDBMappingAttachResult, *, session=None) -> None:
         source_media_id = result.source_media_id
         if source_media_id != result.canonical_media_id:
-            self.identity_repo.merge_media_id(source_media_id, result.canonical_media_id)
+            if session is None:
+                self.identity_repo.merge_media_id(source_media_id, result.canonical_media_id)
+            else:
+                self.identity_repo.merge_media_id(
+                    source_media_id,
+                    result.canonical_media_id,
+                    session=session,
+                )
 
         previous_mapping = result.previous_mapping
         if previous_mapping and previous_mapping.media_id != result.canonical_media_id:
             if previous_mapping.media_id != source_media_id:
-                self.identity_repo.merge_media_id(previous_mapping.media_id, result.canonical_media_id)
-            self.mapping_repo.remove(previous_mapping.media_id, previous_mapping.season_number)
+                if session is None:
+                    self.identity_repo.merge_media_id(
+                        previous_mapping.media_id,
+                        result.canonical_media_id,
+                    )
+                else:
+                    self.identity_repo.merge_media_id(
+                        previous_mapping.media_id,
+                        result.canonical_media_id,
+                        session=session,
+                    )
+            if session is None:
+                self.mapping_repo.remove(
+                    previous_mapping.media_id,
+                    previous_mapping.season_number,
+                )
+            else:
+                self.mapping_repo.remove(
+                    previous_mapping.media_id,
+                    previous_mapping.season_number,
+                    session=session,
+                )
 
     def rollback_tmdb_mapping_attach(self, result: TMDBMappingAttachResult) -> None:
         self.mapping_repo.remove(result.canonical_media_id, result.season_number)

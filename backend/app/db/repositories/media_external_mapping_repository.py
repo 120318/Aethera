@@ -218,15 +218,22 @@ class MediaExternalMappingRepository:
             )
             session.commit()
 
-    def remove(self, media_id: MediaID, season_number: int | None = None) -> bool:
-        with SessionLocal() as session:
-            statement = delete(MediaExternalMappingORM).where(MediaExternalMappingORM.media_id == str(media_id))
-            if media_id.media_type.value == "tv":
-                if season_number is None or season_number <= 0:
-                    return False
-                statement = statement.where(MediaExternalMappingORM.season_number == int(season_number))
-            else:
-                statement = statement.where(MediaExternalMappingORM.season_number == 0)
-            result = session.execute(statement)
-            session.commit()
-            return bool(result.rowcount)
+    def remove(self, media_id: MediaID, season_number: int | None = None, *, session=None) -> bool:
+        if session is None:
+            with SessionLocal() as owned_session:
+                removed = self._remove(owned_session, media_id, season_number)
+                owned_session.commit()
+                return removed
+        return self._remove(session, media_id, season_number)
+
+    @staticmethod
+    def _remove(session, media_id: MediaID, season_number: int | None = None) -> bool:
+        statement = delete(MediaExternalMappingORM).where(MediaExternalMappingORM.media_id == str(media_id))
+        if media_id.media_type.value == "tv":
+            if season_number is None or season_number <= 0:
+                return False
+            statement = statement.where(MediaExternalMappingORM.season_number == int(season_number))
+        else:
+            statement = statement.where(MediaExternalMappingORM.season_number == 0)
+        result = session.execute(statement)
+        return bool(result.rowcount)

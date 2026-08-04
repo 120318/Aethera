@@ -8,7 +8,7 @@ import { useNotificationCenterStore } from '@/stores/notification-center'
 import { t } from '@/i18n'
 const RECENT_LIMIT = 20
 const FINISHED_STATUSES = ['succeeded', 'failed', 'cancelled']
-const ACTIVE_STATUSES = ['queued', 'running']
+const ACTIVE_STATUSES = ['ready', 'queued', 'running']
 
 function commandMediaTarget(command) {
   const target = command?.target

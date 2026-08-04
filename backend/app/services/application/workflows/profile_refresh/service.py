@@ -62,6 +62,14 @@ class ProfileRefreshCommandService:
                 return reserved
             existing = reserved
         if existing and existing.status.value == "queued":
+            if defer_publish:
+                return await create_command(
+                    CommandCreateRequest(
+                        type=CommandType.PROFILE_REFRESH,
+                        initiator=initiator,
+                        payload=ProfileRefreshCommandRequestPayload(target=target, target_label=target_label),
+                    )
+                )
             try:
                 await command_service.cancel_command(existing.id)
             except DownloadException:
@@ -115,6 +123,12 @@ class ProfileRefreshCommandService:
         except Exception:
             logger.exception("Deferred profile refresh will be recovered: command=%s", command.id)
             return await command_service.get_command(command.id) or command
+
+    async def finalize_replacement(self, command: CommandRecord, before_ready) -> CommandRecord:
+        return await command_service.finalize_staged_replacement(
+            command.id,
+            before_ready,
+        )
 
     async def discard(self, command: CommandRecord | None) -> None:
         if command and command.status == CommandStatus.STAGED:
