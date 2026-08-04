@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.core.action_context import action_context
 from app.db.repositories.command_repository import CommandRepository
@@ -28,6 +28,7 @@ from app.services.application.commands.setup import create_command_handler_regis
 from app.schemas.constants.event_types import EventTypes
 
 logger = logging.getLogger("app.services.command")
+STAGED_COMMAND_MAX_AGE = timedelta(hours=24)
 
 class CommandConflictException(Exception):
     pass
@@ -48,7 +49,11 @@ class CommandService:
         await self.reset_running_commands()
 
     async def reset_running_commands(self) -> None:
-        await self.repo.delete_all_staged_commands()
+        expired_count = await self.repo.delete_expired_staged_commands(
+            (datetime.now() - STAGED_COMMAND_MAX_AGE).isoformat()
+        )
+        if expired_count:
+            logger.info("Removed %d expired staged commands", expired_count)
         running_commands = await self.repo.find_running()
         for command in running_commands:
             command.status = CommandStatus.FAILED
@@ -117,16 +122,21 @@ class CommandService:
         *,
         source: ActionSource,
     ) -> CommandRecord:
-        published = await self.repo.publish_staged_command(command_id)
         command = await self.repo.find_by_id(command_id)
         if not command:
             raise RuntimeError(f"Staged command disappeared before publish: {command_id}")
-        if published:
-            command.status = CommandStatus.QUEUED
-            attach_command_message_i18n(command)
-            await self.repo.update(command, self.repo.cond_id(command.id))
-            self._create_command_action(command, source=source)
-        return attach_command_message_i18n(command)
+        if command.status != CommandStatus.STAGED:
+            return attach_command_message_i18n(command)
+        command.status = CommandStatus.QUEUED
+        attach_command_message_i18n(command)
+        action = self._build_command_action(command, source=source, persist=False)
+        published = await self.repo.publish_staged_command(command, action)
+        if not published:
+            latest = await self.repo.find_by_id(command_id)
+            if not latest:
+                raise RuntimeError(f"Staged command disappeared before publish: {command_id}")
+            return attach_command_message_i18n(latest)
+        return command
 
     async def discard_staged_command(self, command_id: str) -> bool:
         return await self.repo.delete_staged_command(command_id)
@@ -288,7 +298,13 @@ class CommandService:
                 self._create_command_action(command, source=source)
             return attach_command_message_i18n(command)
 
-    def _create_command_action(self, command: CommandRecord, source: ActionSource) -> ActionRecord:
+    def _build_command_action(
+        self,
+        command: CommandRecord,
+        source: ActionSource,
+        *,
+        persist: bool,
+    ) -> ActionRecord:
         actor = ActionActor.user if command.initiator == CommandInitiator.MANUAL else ActionActor.system
         if command.initiator == CommandInitiator.MANUAL:
             trigger = ActionTrigger.manual
@@ -316,7 +332,11 @@ class CommandService:
                 target_label=command.target_label,
             ),
             action_id=command.id,
+            persist=persist,
         )
+
+    def _create_command_action(self, command: CommandRecord, source: ActionSource) -> ActionRecord:
+        return self._build_command_action(command, source, persist=True)
 
     def _mark_command_running(self, command: CommandRecord) -> ActionRecord | None:
         return action_service.mark_running(

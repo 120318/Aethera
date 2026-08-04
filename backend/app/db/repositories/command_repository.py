@@ -3,15 +3,21 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import delete, desc, select, update
+from sqlalchemy import delete, desc, select, text, update
 
+from app.db.repositories.action_repository import ActionRepository
 from app.db.sql.models import CommandORM
 from app.db.sql.session import SessionLocal
+from app.schemas.domain.action import ActionRecord
 from app.schemas.domain.command import CommandRecord, CommandStatus, CommandTargetType, CommandType
 
 
 ACTIVE_COMMAND_STATUSES = [
     CommandStatus.STAGED.value,
+    CommandStatus.QUEUED.value,
+    CommandStatus.RUNNING.value,
+]
+DEDUPLICATED_COMMAND_STATUSES = [
     CommandStatus.QUEUED.value,
     CommandStatus.RUNNING.value,
 ]
@@ -145,15 +151,38 @@ class CommandRepository:
             session.commit()
             return bool(result.rowcount)
 
-    async def publish_staged_command(self, command_id: str) -> bool:
+    async def publish_staged_command(
+        self,
+        command: CommandRecord,
+        action: ActionRecord,
+    ) -> bool:
+        with SessionLocal() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
+            row = session.get(CommandORM, command.id)
+            if row is None or row.status != CommandStatus.STAGED.value:
+                session.rollback()
+                return False
+            ActionRepository.add_to_session(session, action)
+            row.status = CommandStatus.QUEUED.value
+            row.message_key = command.message_key
+            row.message_params_json = command.message_params
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            return True
+
+    async def delete_expired_staged_commands(self, created_before_iso: str) -> int:
         with SessionLocal() as session:
             result = session.execute(
-                update(CommandORM)
-                .where(CommandORM.id == command_id, CommandORM.status == CommandStatus.STAGED.value)
-                .values(status=CommandStatus.QUEUED.value)
+                delete(CommandORM).where(
+                    CommandORM.status == CommandStatus.STAGED.value,
+                    CommandORM.created_at < created_before_iso,
+                )
             )
             session.commit()
-            return bool(result.rowcount)
+            return int(result.rowcount or 0)
 
     async def delete_staged_command(self, command_id: str) -> bool:
         with SessionLocal() as session:
@@ -251,7 +280,7 @@ class CommandRepository:
                 select(CommandORM)
                 .where(
                     CommandORM.uniq_key == uniq_key,
-                    CommandORM.status.in_(ACTIVE_COMMAND_STATUSES),
+                    CommandORM.status.in_(DEDUPLICATED_COMMAND_STATUSES),
                 )
                 .order_by(desc(CommandORM.created_at))
                 .limit(1)

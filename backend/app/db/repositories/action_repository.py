@@ -179,37 +179,41 @@ class ActionRepository:
             }
         )
 
+    @staticmethod
+    def add_to_session(session, action: ActionRecord) -> None:
+        session.add(
+            ActionORM(
+                id=action.id,
+                ts=action.ts.isoformat(),
+                started_at=action.started_at.isoformat() if action.started_at else None,
+                finished_at=action.finished_at.isoformat() if action.finished_at else None,
+                kind=action.kind.value,
+                action_name=action.action_name,
+                status=action.status.value,
+                actor=action.actor.value,
+                trigger=action.trigger.value,
+                source=action.source.value,
+                target_type=action.target_type.value if action.target_type else None,
+                target_id=action.target_id,
+                media_id=str(action.media_id) if action.media_id else None,
+                media_season_number=action.media.season_number if action.media else None,
+                media_title=action.media.title if action.media else None,
+                media_year=action.media.year if action.media else None,
+                task_id=action.task_id,
+                subscription_id=action.subscription_id,
+                correlation_id=action.correlation_id,
+                message_key=action.message_key,
+                message_params_json=action.message_params,
+                error=action.error,
+                search_text=build_action_search_text(action),
+                duration_ms=action.duration_ms,
+                meta_json=ActionRepository._meta_db_value(action.meta),
+            )
+        )
+
     def insert(self, action: ActionRecord) -> str:
         with SessionLocal() as session:
-            session.add(
-                ActionORM(
-                    id=action.id,
-                    ts=action.ts.isoformat(),
-                    started_at=action.started_at.isoformat() if action.started_at else None,
-                    finished_at=action.finished_at.isoformat() if action.finished_at else None,
-                    kind=action.kind.value,
-                    action_name=action.action_name,
-                    status=action.status.value,
-                    actor=action.actor.value,
-                    trigger=action.trigger.value,
-                    source=action.source.value,
-                    target_type=action.target_type.value if action.target_type else None,
-                    target_id=action.target_id,
-                    media_id=str(action.media_id) if action.media_id else None,
-                    media_season_number=action.media.season_number if action.media else None,
-                    media_title=action.media.title if action.media else None,
-                    media_year=action.media.year if action.media else None,
-                    task_id=action.task_id,
-                    subscription_id=action.subscription_id,
-                    correlation_id=action.correlation_id,
-                    message_key=action.message_key,
-                    message_params_json=action.message_params,
-                    error=action.error,
-                    search_text=build_action_search_text(action),
-                    duration_ms=action.duration_ms,
-                    meta_json=self._meta_db_value(action.meta),
-                )
-            )
+            self.add_to_session(session, action)
             session.commit()
             return action.id
 

@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -32,10 +32,20 @@ from app.schemas.domain.media import MediaIdentity, MediaTarget
 from app.schemas.exception import InvalidRequestException
 from app.schemas.media_id import MediaID
 from app.db.repositories.command_repository import CommandRepository
-from app.db.sql.models import CommandORM
+from app.db.repositories.action_repository import ActionRepository
+from app.db.sql.models import ActionORM, CommandORM
 from app.db.sql.session import SessionLocal
 from app.services.audit.event_message_i18n import event_message_key, event_message_params
 from app.services.application.commands.service import CommandService
+from app.schemas.domain.action import (
+    ActionActor,
+    ActionKind,
+    ActionRecord,
+    ActionSource,
+    ActionStatus,
+    ActionTargetType,
+    ActionTrigger,
+)
 
 
 def _command(*, command_id: str, uniq_key: str | None) -> CommandRecord:
@@ -417,7 +427,7 @@ async def test_command_repository_season_filter_does_not_include_unscoped_media_
 
 
 @pytest.mark.asyncio
-async def test_command_repository_does_not_offer_staged_command_to_worker():
+async def test_command_repository_does_not_offer_or_dedupe_staged_command():
     media_id = MediaID.parse("tmdb:tv:1")
     payload = ProfileRefreshCommandRecordPayload(
         target=MediaTarget(media_id=media_id, season_number=1),
@@ -453,8 +463,79 @@ async def test_command_repository_does_not_offer_staged_command_to_worker():
             session.commit()
 
     assert next_command is None
-    assert active is not None
-    assert active.status == CommandStatus.STAGED
+    assert active is None
+
+
+@pytest.mark.asyncio
+async def test_publish_staged_command_commits_command_and_action_together(monkeypatch):
+    repo = CommandRepository()
+    command = _media_command("cmd-atomic-publish", CommandType.PROFILE_REFRESH, season_number=1)
+    command.status = CommandStatus.STAGED
+    command.uniq_key = "command:profile.refresh:tmdb:tv:1:season=1"
+    await repo.insert(command)
+    queued = command.model_copy(update={"status": CommandStatus.QUEUED})
+    action = ActionRecord(
+        id=command.id,
+        kind=ActionKind.command,
+        action_name=CommandType.PROFILE_REFRESH.value,
+        status=ActionStatus.queued,
+        actor=ActionActor.system,
+        trigger=ActionTrigger.system,
+        source=ActionSource.api,
+        target_type=ActionTargetType.media,
+        target_id=str(command.media_id),
+        correlation_id=command.id,
+    )
+
+    def fail_action_insert(_session, _action):
+        raise RuntimeError("action insert failed")
+
+    monkeypatch.setattr(ActionRepository, "add_to_session", fail_action_insert)
+    try:
+        with pytest.raises(RuntimeError, match="action insert failed"):
+            await repo.publish_staged_command(queued, action)
+        saved = await repo.find_by_id(command.id)
+        with SessionLocal() as session:
+            persisted_action = session.get(ActionORM, command.id)
+    finally:
+        with SessionLocal.begin() as session:
+            session.execute(delete(ActionORM).where(ActionORM.id == command.id))
+            session.execute(delete(CommandORM).where(CommandORM.id == command.id))
+
+    assert saved is not None
+    assert saved.status == CommandStatus.STAGED
+    assert persisted_action is None
+
+
+@pytest.mark.asyncio
+async def test_expired_staged_cleanup_preserves_recent_command():
+    repo = CommandRepository()
+    old_command = _media_command("cmd-staged-old", CommandType.PROFILE_REFRESH, season_number=1)
+    old_command.status = CommandStatus.STAGED
+    old_command.created_at = datetime.now() - timedelta(days=2)
+    recent_command = _media_command("cmd-staged-recent", CommandType.PROFILE_REFRESH, season_number=1)
+    recent_command.status = CommandStatus.STAGED
+    await repo.insert(old_command)
+    await repo.insert(recent_command)
+
+    try:
+        deleted = await repo.delete_expired_staged_commands(
+            (datetime.now() - timedelta(days=1)).isoformat()
+        )
+        old_saved = await repo.find_by_id(old_command.id)
+        recent_saved = await repo.find_by_id(recent_command.id)
+    finally:
+        with SessionLocal.begin() as session:
+            session.execute(
+                delete(CommandORM).where(
+                    CommandORM.id.in_([old_command.id, recent_command.id])
+                )
+            )
+
+    assert deleted == 1
+    assert old_saved is None
+    assert recent_saved is not None
+    assert recent_saved.status == CommandStatus.STAGED
 
 
 @pytest.mark.asyncio
