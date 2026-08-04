@@ -26,6 +26,7 @@ from app.schemas.media_id import MediaID
 from app.schemas.domain.subscription_run_result import SubscriptionRunResponse
 from app.schemas.runtime.subscription_runtime import SubscriptionPlanningStatus, SubscriptionRunPlan, SubscriptionRunPlanningResult
 from app.services.domain.download import download_service
+from app.services.domain.download.coverage import DownloadCoverageService
 from app.services.domain.resource.selection import ResourceSelectionPlan, partition_search_results, select_resources
 from app.services.application.workflows.resource_search import resource_search_service
 from app.services.application.workflows.subscription.run import SubscriptionRunApplicationService
@@ -639,6 +640,23 @@ async def test_compute_target_episodes_excludes_downloading_upgrade_episodes(mon
     assert plan is not None
     assert plan.target_episodes == {3}
     assert plan.required_scores == {3: 200}
+
+
+@pytest.mark.asyncio
+async def test_active_episode_coverage_excludes_completed_tasks():
+    downloading_task = _task_with_metadata(_video_metadata("Show.S01E02", [2]))
+    completed_task = _task_with_metadata(_video_metadata("Show.S01E03", [3])).model_copy(
+        update={"id": "task-completed", "status": TaskStatus.COMPLETED}
+    )
+    tasks = [downloading_task, completed_task]
+
+    async def get_tasks(*, status, media_id):
+        assert media_id == downloading_task.media_id
+        return [task for task in tasks if task.status in status]
+
+    service = DownloadCoverageService(get_tasks)
+
+    assert await service.list_active_episodes_by_media(downloading_task.media_id, season=1) == {2}
 
 
 def test_tv_disc_package_task_does_not_fallback_to_episode_one():

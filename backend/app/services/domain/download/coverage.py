@@ -18,7 +18,7 @@ def _positive_int(value) -> int | None:
     return None
 
 
-def list_episode_coverage_statuses() -> list[TaskStatus]:
+def list_active_episode_coverage_statuses() -> list[TaskStatus]:
     return [
         TaskStatus.PENDING,
         TaskStatus.DOWNLOADING,
@@ -26,6 +26,12 @@ def list_episode_coverage_statuses() -> list[TaskStatus]:
         TaskStatus.FINISHED,
         TaskStatus.TRANSFERRING,
         TaskStatus.MIGRATING,
+    ]
+
+
+def list_episode_coverage_statuses() -> list[TaskStatus]:
+    return [
+        *list_active_episode_coverage_statuses(),
         TaskStatus.COMPLETED,
     ]
 
@@ -148,7 +154,7 @@ class DownloadCoverageService:
         media_id: MediaID,
         season: int | None = None,
     ) -> set[int]:
-        tasks = await self._get_tasks(status=list_episode_coverage_statuses(), media_id=media_id)
+        tasks = await self._get_tasks(status=list_active_episode_coverage_statuses(), media_id=media_id)
         episodes: set[int] = set()
         for task in tasks:
             coverage = resolve_task_episode_coverage_detail(task)
