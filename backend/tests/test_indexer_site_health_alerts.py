@@ -1,12 +1,12 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.db.repositories.indexer_site_health_repository import IndexerSiteHealthRepository
-from app.db.sql.models import EventAcknowledgementORM, EventORM
+from app.db.sql.models import EventAcknowledgementORM, EventORM, IndexerSiteHealthORM
 from app.db.sql.session import SessionLocal
 from app.schemas.constants.event_types import EventTypes
-from app.schemas.domain.event import EventLevel
+from app.schemas.domain.event import Event, EventLevel
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
 from app.services.config.indexer_client_settings import IndexerSiteHealthState
 
@@ -18,7 +18,8 @@ class _FakeIndexerSiteHealthRepository:
         self.acknowledged_calls: list[str] = []
         self.reopened_calls: list[str] = []
         self.before_acknowledge = None
-        self.before_mark_emitted = None
+        self.before_emit = None
+        self.emit_failures_remaining = 0
 
     def find_one(self, indexer_id: str, site_id: str) -> IndexerSiteHealthStatus | None:
         return self.records.get((indexer_id, site_id))
@@ -47,15 +48,19 @@ class _FakeIndexerSiteHealthRepository:
         self.records[(status.indexer_id, status.site_id)] = saved
         return True, 1
 
-    def mark_unhealthy_event_emitted(
+    def emit_unhealthy_event_if_current(
         self,
         status: IndexerSiteHealthStatus,
+        _event,
         notified_at: datetime,
     ) -> bool:
-        if self.before_mark_emitted:
-            callback = self.before_mark_emitted
-            self.before_mark_emitted = None
+        if self.before_emit:
+            callback = self.before_emit
+            self.before_emit = None
             callback()
+        if self.emit_failures_remaining:
+            self.emit_failures_remaining -= 1
+            raise RuntimeError("event store unavailable")
         current = self.find_one(status.indexer_id, status.site_id)
         if not current or current.status != "unhealthy" or current.checked_at != status.checked_at:
             return False
@@ -106,7 +111,7 @@ def test_indexer_site_failure_marks_notify_pending_after_threshold():
 def test_indexer_site_failure_emits_unhealthy_event_once_at_threshold(monkeypatch):
     emitted_events = []
     monkeypatch.setattr(
-        "app.services.config.indexer_client_settings.event_service.emit",
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
         lambda event: emitted_events.append(event),
     )
     state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
@@ -169,7 +174,7 @@ def test_indexer_site_success_clears_notify_pending_and_allows_future_threshold(
 def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch):
     emitted_events = []
     monkeypatch.setattr(
-        "app.services.config.indexer_client_settings.event_service.emit",
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
         lambda event: emitted_events.append(event),
     )
     repo = _FakeIndexerSiteHealthRepository()
@@ -204,7 +209,7 @@ def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch
 
 def test_indexer_site_recurring_failure_reopens_event_only_once(monkeypatch):
     monkeypatch.setattr(
-        "app.services.config.indexer_client_settings.event_service.emit",
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
         lambda _event: None,
     )
     repo = _FakeIndexerSiteHealthRepository()
@@ -239,7 +244,7 @@ def test_indexer_site_recurring_failure_reopens_event_only_once(monkeypatch):
 def test_indexer_site_success_acknowledges_unhealthy_warning_event(monkeypatch):
     emitted_events = []
     monkeypatch.setattr(
-        "app.services.config.indexer_client_settings.event_service.emit",
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
         lambda event: emitted_events.append(event),
     )
     repo = _FakeIndexerSiteHealthRepository()
@@ -267,7 +272,7 @@ def test_indexer_site_success_acknowledges_unhealthy_warning_event(monkeypatch):
 
 def test_indexer_site_success_retries_failed_recovery_acknowledgement(monkeypatch):
     monkeypatch.setattr(
-        "app.services.config.indexer_client_settings.event_service.emit",
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
         lambda _event: None,
     )
     repo = _FakeIndexerSiteHealthRepository()
@@ -303,7 +308,7 @@ def test_indexer_site_success_retries_failed_recovery_acknowledgement(monkeypatc
 
 def test_indexer_site_success_does_not_acknowledge_after_concurrent_failure(monkeypatch):
     monkeypatch.setattr(
-        "app.services.config.indexer_client_settings.event_service.emit",
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
         lambda _event: None,
     )
     repo = _FakeIndexerSiteHealthRepository()
@@ -344,10 +349,11 @@ def test_indexer_site_success_does_not_acknowledge_after_concurrent_failure(monk
     assert repo.acknowledged_calls == []
 
 
-def test_indexer_site_failure_does_not_overwrite_concurrent_recovery_after_emit(monkeypatch):
+def test_indexer_site_failure_does_not_emit_after_concurrent_recovery(monkeypatch):
+    dispatched_events = []
     monkeypatch.setattr(
-        "app.services.config.indexer_client_settings.event_service.emit",
-        lambda _event: None,
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
+        lambda event: dispatched_events.append(event),
     )
     repo = _FakeIndexerSiteHealthRepository()
     state = IndexerSiteHealthState(repo=repo)
@@ -366,7 +372,7 @@ def test_indexer_site_failure_does_not_overwrite_concurrent_recovery_after_emit(
             )
         )
 
-    repo.before_mark_emitted = write_concurrent_recovery
+    repo.before_emit = write_concurrent_recovery
     for _ in range(3):
         status = state.record_failure(
             indexer_id="prowlarr",
@@ -379,6 +385,7 @@ def test_indexer_site_failure_does_not_overwrite_concurrent_recovery_after_emit(
     assert status.status == "healthy"
     assert status.notify_pending is False
     assert status.last_notified_at is None
+    assert dispatched_events == []
 
 
 def test_reopen_unhealthy_events_reopens_only_latest_matching_event():
@@ -443,12 +450,68 @@ def test_reopen_unhealthy_events_reopens_only_latest_matching_event():
     saved = repo.find_one("prowlarr", "audiences")
     assert saved is not None
     assert saved.last_reopened_at == checked_at
+    with SessionLocal.begin() as session:
+        session.execute(
+            delete(EventAcknowledgementORM).where(
+                EventAcknowledgementORM.event_id.in_([
+                    "indexer-old-warning",
+                    "indexer-current-warning",
+                ])
+            )
+        )
+        session.execute(
+            delete(EventORM).where(
+                EventORM.id.in_(["indexer-old-warning", "indexer-current-warning"])
+            )
+        )
+
+
+def test_emit_unhealthy_event_rejects_stale_failure_without_inserting_event():
+    repo = IndexerSiteHealthRepository()
+    checked_at = datetime.now()
+    stale_failure = IndexerSiteHealthStatus(
+        indexer_id="atomic-indexer",
+        site_id="atomic-site",
+        status="unhealthy",
+        checked_at=checked_at,
+        consecutive_failures=3,
+        notify_pending=True,
+    )
+    repo.upsert(
+        stale_failure.model_copy(
+            update={
+                "status": "healthy",
+                "checked_at": checked_at + timedelta(seconds=1),
+                "consecutive_failures": 0,
+                "notify_pending": False,
+            }
+        )
+    )
+    event = Event(
+        id="stale-indexer-warning",
+        type=EventTypes.INDEXER_SITE_UNHEALTHY,
+        level=EventLevel.warning,
+    )
+
+    applied = repo.emit_unhealthy_event_if_current(stale_failure, event, checked_at)
+
+    with SessionLocal.begin() as session:
+        persisted_event = session.get(EventORM, event.id)
+        session.execute(
+            delete(IndexerSiteHealthORM).where(
+                IndexerSiteHealthORM.indexer_id == "atomic-indexer",
+                IndexerSiteHealthORM.site_id == "atomic-site",
+            )
+        )
+
+    assert applied is False
+    assert persisted_event is None
 
 
 def test_indexer_site_unhealthy_event_repeats_after_notification_cooldown(monkeypatch):
     emitted_events = []
     monkeypatch.setattr(
-        "app.services.config.indexer_client_settings.event_service.emit",
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
         lambda event: emitted_events.append(event),
     )
     repo = _FakeIndexerSiteHealthRepository()
@@ -480,17 +543,13 @@ def test_indexer_site_unhealthy_event_repeats_after_notification_cooldown(monkey
 
 def test_indexer_site_unhealthy_event_failure_does_not_start_cooldown(monkeypatch):
     attempts = []
-
-    def fake_emit(event):
-        attempts.append(event)
-        if len(attempts) == 1:
-            raise RuntimeError("event store unavailable")
-
     monkeypatch.setattr(
-        "app.services.config.indexer_client_settings.event_service.emit",
-        fake_emit,
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
+        lambda event: attempts.append(event),
     )
-    state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
+    repo = _FakeIndexerSiteHealthRepository()
+    repo.emit_failures_remaining = 1
+    state = IndexerSiteHealthState(repo=repo)
 
     for _ in range(3):
         status = state.record_failure(
@@ -511,5 +570,5 @@ def test_indexer_site_unhealthy_event_failure_does_not_start_cooldown(monkeypatc
         error_message="still disabled",
     )
 
-    assert len(attempts) == 2
+    assert len(attempts) == 1
     assert status.last_notified_at is not None

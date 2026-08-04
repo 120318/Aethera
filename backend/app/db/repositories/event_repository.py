@@ -17,6 +17,34 @@ from app.services.audit.search_text_support import build_event_search_text
 
 class EventRepository:
     @staticmethod
+    def add_to_session(session, event: Event) -> None:
+        session.add(
+            EventORM(
+                id=event.id,
+                ts=event.ts.isoformat(),
+                type=event.type.value,
+                level=event.level.value,
+                message_key=event.message_key,
+                message_params_json=event.message_params,
+                search_text=build_event_search_text(event),
+                media_id=str(event.media_id) if event.media_id else None,
+                media_season_number=event.media.season_number if event.media else None,
+                media_title=event.media_title,
+                media_year=event.media_year,
+                task_id=event.task_id,
+                subscription_id=event.subscription_id,
+                actor=event.actor.value if event.actor else None,
+                source=event.source.value if event.source else None,
+                addon_id=event.addon_id,
+                addon_name=event.addon_name,
+                entities_json=[item.model_dump(mode="json") for item in event.entities],
+                meta_json=EventRepository._meta_db_value(event.meta),
+                correlation_id=event.correlation_id,
+                action_id=event.action_id,
+            )
+        )
+
+    @staticmethod
     def _normalize_meta_text(raw) -> str:
         if raw is None or raw == "":
             return ""
@@ -127,31 +155,7 @@ class EventRepository:
 
     def insert(self, event: Event) -> str:
         with SessionLocal() as session:
-            session.add(
-                EventORM(
-                    id=event.id,
-                    ts=event.ts.isoformat(),
-                    type=event.type.value,
-                    level=event.level.value,
-                    message_key=event.message_key,
-                    message_params_json=event.message_params,
-                    search_text=build_event_search_text(event),
-                    media_id=str(event.media_id) if event.media_id else None,
-                    media_season_number=event.media.season_number if event.media else None,
-                    media_title=event.media_title,
-                    media_year=event.media_year,
-                    task_id=event.task_id,
-                    subscription_id=event.subscription_id,
-                    actor=event.actor.value if event.actor else None,
-                    source=event.source.value if event.source else None,
-                    addon_id=event.addon_id,
-                    addon_name=event.addon_name,
-                    entities_json=[item.model_dump(mode="json") for item in event.entities],
-                    meta_json=self._meta_db_value(event.meta),
-                    correlation_id=event.correlation_id,
-                    action_id=event.action_id,
-                )
-            )
+            self.add_to_session(session, event)
             session.commit()
             return event.id
 

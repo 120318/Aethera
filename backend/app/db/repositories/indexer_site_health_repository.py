@@ -7,8 +7,9 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.sql.models import EventAcknowledgementORM, EventORM, IndexerSiteHealthORM
 from app.db.sql.session import SessionLocal
+from app.db.repositories.event_repository import EventRepository
 from app.schemas.constants.event_types import EventTypes
-from app.schemas.domain.event import EventLevel
+from app.schemas.domain.event import Event, EventLevel
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
 
 
@@ -95,9 +96,10 @@ class IndexerSiteHealthRepository:
             .limit(1)
         ).scalar_one_or_none()
 
-    def mark_unhealthy_event_emitted(
+    def emit_unhealthy_event_if_current(
         self,
         status: IndexerSiteHealthStatus,
+        event: Event,
         notified_at: datetime,
     ) -> bool:
         with SessionLocal() as session:
@@ -109,6 +111,7 @@ class IndexerSiteHealthRepository:
             if not self._matches_outcome(row, status) or row.status != "unhealthy" or not row.notify_pending:
                 session.rollback()
                 return False
+            EventRepository.add_to_session(session, event)
             row.last_notified_at = notified_at.isoformat()
             session.commit()
             return True

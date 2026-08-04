@@ -34,9 +34,13 @@ class IndexerSiteHealthState:
     def _unhealthy_event_correlation_id(indexer_id: str, site_id: str) -> str:
         return f"indexer:{indexer_id}:site:{site_id}:unhealthy"
 
-    def _emit_unhealthy_event(self, status: IndexerSiteHealthStatus) -> bool:
+    def _emit_unhealthy_event(
+        self,
+        status: IndexerSiteHealthStatus,
+        notified_at: datetime,
+    ) -> bool:
         try:
-            event_service.emit(
+            event = event_service.build_event(
                 EventCreate(
                     type=EventTypes.INDEXER_SITE_UNHEALTHY,
                     level=EventLevel.warning,
@@ -57,6 +61,10 @@ class IndexerSiteHealthState:
                     correlation_id=self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
                 )
             )
+            applied = self._repo.emit_unhealthy_event_if_current(status, event, notified_at)
+            if not applied:
+                return False
+            event_service.dispatch_persisted_event(event)
             return True
         except Exception as exc:
             logger.error(
@@ -84,22 +92,6 @@ class IndexerSiteHealthState:
         except Exception as exc:
             logger.error(
                 "Failed to acknowledge recovered indexer site unhealthy events for %s/%s: %s",
-                status.indexer_id,
-                status.site_id,
-                exc,
-            )
-            return False
-
-    def _mark_unhealthy_event_emitted(
-        self,
-        status: IndexerSiteHealthStatus,
-        notified_at: datetime,
-    ) -> bool:
-        try:
-            return self._repo.mark_unhealthy_event_emitted(status, notified_at)
-        except Exception as exc:
-            logger.error(
-                "Failed to finalize indexer site unhealthy event for %s/%s: %s",
                 status.indexer_id,
                 status.site_id,
                 exc,
@@ -230,8 +222,8 @@ class IndexerSiteHealthState:
             client_type=client_type,
         )
         saved = self._upsert(status)
-        if should_emit and self._emit_unhealthy_event(saved):
-            self._mark_unhealthy_event_emitted(saved, now)
+        if should_emit:
+            self._emit_unhealthy_event(saved, now)
         elif should_reopen:
             self._reopen_unhealthy_event(saved)
         return self._get_record(indexer_id, site_id) or saved

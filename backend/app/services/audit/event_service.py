@@ -67,6 +67,10 @@ class EventService:
 
     def _persist_event(self, event: Event) -> Event:
         self.repo.insert(event)
+        self.dispatch_persisted_event(event)
+        return event
+
+    def dispatch_persisted_event(self, event: Event) -> None:
         if self.is_business_event(event.type):
             try:
                 loop = asyncio.get_running_loop()
@@ -74,15 +78,13 @@ class EventService:
                 asyncio.run(event_dispatch_service.enqueue_event(event.id, event.type))
             else:
                 loop.create_task(event_dispatch_service.enqueue_event(event.id, event.type))
-        return event
 
-    def emit(
+    def build_event(
         self,
         event: EventCreate,
         meta: BaseModel | None = None,
-    ) -> Event | None:
-        # Internal note.
-        ev = Event(
+    ) -> Event:
+        return Event(
             type=event.type,
             message_key=event.message_key or event_message_key(event.type),
             message_params=_merge_message_params(event, meta),
@@ -99,6 +101,14 @@ class EventService:
             correlation_id=event.correlation_id,
             action_id=event.action_id or get_current_action_id(),
         )
+
+    def emit(
+        self,
+        event: EventCreate,
+        meta: BaseModel | None = None,
+    ) -> Event | None:
+        # Internal note.
+        ev = self.build_event(event, meta)
         return self._persist_event(ev)
 
     def emit_media(
