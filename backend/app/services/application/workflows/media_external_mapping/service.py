@@ -69,6 +69,7 @@ class MediaExternalMappingApplicationService:
                 finalize_mapping,
             )
         except Exception:
+            self.mapping_service.rollback_tmdb_mapping_attach(result)
             await profile_refresh_command_service.discard(command)
             raise
         try:

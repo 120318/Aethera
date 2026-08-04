@@ -189,17 +189,24 @@ class CommandRepository:
             session.commit()
             return bool(result.rowcount)
 
-    def finalize_staged_replacement(self, command_id: str, before_ready) -> None:
+    def finalize_staged_replacement(self, command_id: str, before_ready) -> CommandRecord:
         with SessionLocal.begin() as session:
+            row = session.get(CommandORM, command_id)
+            if row is None or row.status not in {
+                CommandStatus.STAGED.value,
+                CommandStatus.READY.value,
+            }:
+                raise RuntimeError(
+                    f"Deferred command is no longer available for finalization: {command_id}"
+                )
             before_ready(session)
-            self._finalize_staged_replacement(session, command_id)
+            session.refresh(row)
+            self._finalize_staged_replacement(session, row)
+            session.flush()
+            return self._to_model(row)
 
     @staticmethod
-    def _finalize_staged_replacement(session, command_id: str) -> None:
-        row = session.get(CommandORM, command_id)
-        if row is None or row.status != CommandStatus.STAGED.value:
-            raise RuntimeError(f"Staged command disappeared before finalization: {command_id}")
-
+    def _finalize_staged_replacement(session, row: CommandORM) -> None:
         finished_at = datetime.now().isoformat()
         superseded_ids = [
             item[0]
@@ -207,7 +214,7 @@ class CommandRepository:
                 select(CommandORM.id).where(
                     CommandORM.uniq_key == row.uniq_key,
                     CommandORM.status == CommandStatus.QUEUED.value,
-                    CommandORM.id != command_id,
+                    CommandORM.id != row.id,
                 )
             ).all()
         ]
@@ -234,19 +241,6 @@ class CommandRepository:
                 .values(status="cancelled", finished_at=finished_at)
             )
         row.status = CommandStatus.READY.value
-
-    async def reserve_ready_command(self, command_id: str) -> bool:
-        with SessionLocal() as session:
-            result = session.execute(
-                update(CommandORM)
-                .where(
-                    CommandORM.id == command_id,
-                    CommandORM.status == CommandStatus.READY.value,
-                )
-                .values(status=CommandStatus.STAGED.value)
-            )
-            session.commit()
-            return bool(result.rowcount)
 
     async def find_next_ready(self) -> CommandRecord | None:
         with SessionLocal() as session:

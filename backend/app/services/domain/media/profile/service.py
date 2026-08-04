@@ -119,17 +119,12 @@ class MediaProfileService:
         profile = await self.profile_repo.find_by_media_id(media_id)
         if not profile or not profile.detail_ready:
             return
-        scope = await self.scope_repo.find_by_media_id_and_season(media_id, season_number)
-        if not scope:
-            return
-        await self.scope_repo.upsert_scope(
-            scope.model_copy(update={
-                "douban_id": douban_id or scope.douban_id,
-                "episode_count_override": episode_count_override
-                if episode_count_override is not None
-                else scope.episode_count_override,
-                "updated_at": time.time(),
-            })
+        await self.scope_repo.update_mapping_snapshot(
+            media_id,
+            season_number,
+            douban_id=douban_id,
+            episode_count_override=episode_count_override,
+            updated_at=time.time(),
         )
 
     def _build_placeholder_profile(

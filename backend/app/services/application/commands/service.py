@@ -135,20 +135,8 @@ class CommandService:
             command.status = CommandStatus.READY
         return attach_command_message_i18n(command)
 
-    async def reserve_ready_command(self, command_id: str) -> CommandRecord:
-        reserved = await self.repo.reserve_ready_command(command_id)
-        command = await self.repo.find_by_id(command_id)
-        if not command:
-            raise RuntimeError(f"Ready command disappeared before reserve: {command_id}")
-        if reserved:
-            command.status = CommandStatus.STAGED
-        return attach_command_message_i18n(command)
-
     async def finalize_staged_replacement(self, command_id: str, before_ready) -> CommandRecord:
-        self.repo.finalize_staged_replacement(command_id, before_ready)
-        command = await self.repo.find_by_id(command_id)
-        if not command:
-            raise RuntimeError(f"Staged command disappeared after finalization: {command_id}")
+        command = self.repo.finalize_staged_replacement(command_id, before_ready)
         return attach_command_message_i18n(command)
 
     async def publish_staged_command(

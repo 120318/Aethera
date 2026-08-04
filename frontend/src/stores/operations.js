@@ -196,7 +196,7 @@ export const useOperationsStore = defineStore('operations', () => {
   function cacheCommand(command) {
     if (!command?.id) return null
 
-    if (command.status === 'queued' || command.status === 'running') {
+    if (commandIsActive(command)) {
       activeCommands.value = [
         command,
         ...activeCommands.value.filter(item => item?.id !== command.id),

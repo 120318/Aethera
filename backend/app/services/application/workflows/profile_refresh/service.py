@@ -57,10 +57,7 @@ class ProfileRefreshCommandService:
 
         existing = await command_service.find_active_command_by_uniq_key(self._uniq_key(media_id, season_number))
         if defer_publish and existing and existing.status == CommandStatus.READY:
-            reserved = await command_service.reserve_ready_command(existing.id)
-            if reserved.status == CommandStatus.STAGED:
-                return reserved
-            existing = reserved
+            return existing
         if existing and existing.status.value == "queued":
             if defer_publish:
                 return await create_command(
@@ -82,11 +79,7 @@ class ProfileRefreshCommandService:
                     followup_uniq_key
                 )
                 if existing_followup and existing_followup.status == CommandStatus.READY:
-                    reserved = await command_service.reserve_ready_command(
-                        existing_followup.id
-                    )
-                    if reserved.status == CommandStatus.STAGED:
-                        return reserved
+                    return existing_followup
             create_with_uniq_key = (
                 command_service.create_staged_command_with_uniq_key
                 if defer_publish

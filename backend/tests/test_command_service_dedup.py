@@ -595,8 +595,7 @@ def test_finalize_staged_replacement_cancels_queued_and_marks_ready_atomically()
         )
 
     try:
-        with SessionLocal.begin() as session:
-            CommandRepository._finalize_staged_replacement(session, ids[1])
+        CommandRepository().finalize_staged_replacement(ids[1], lambda _session: None)
         with SessionLocal() as session:
             statuses = {
                 row.id: row.status
@@ -612,6 +611,32 @@ def test_finalize_staged_replacement_cancels_queued_and_marks_ready_atomically()
         ids[0]: CommandStatus.CANCELLED.value,
         ids[1]: CommandStatus.READY.value,
     }
+
+
+@pytest.mark.asyncio
+async def test_finalize_existing_ready_rolls_back_callback_failure():
+    repo = CommandRepository()
+    command = _media_command(
+        "cmd-ready-before-new-mapping",
+        CommandType.PROFILE_REFRESH,
+        season_number=1,
+    )
+    command.status = CommandStatus.READY
+    await repo.insert(command)
+
+    def fail_finalize(_session):
+        raise RuntimeError("identity merge failed")
+
+    try:
+        with pytest.raises(RuntimeError, match="identity merge failed"):
+            repo.finalize_staged_replacement(command.id, fail_finalize)
+        saved = await repo.find_by_id(command.id)
+    finally:
+        with SessionLocal.begin() as session:
+            session.execute(delete(CommandORM).where(CommandORM.id == command.id))
+
+    assert saved is not None
+    assert saved.status == CommandStatus.READY
 
 
 @pytest.mark.asyncio
