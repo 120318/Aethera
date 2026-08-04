@@ -4,6 +4,7 @@ import uuid
 
 from app.schemas.domain.command import (
     CommandCreateRequest,
+    CommandInitiator,
     CommandRecord,
     CommandResult,
     CommandTargetType,
@@ -22,7 +23,7 @@ class ProfileRefreshCommandHandler:
         request = body.payload
         target = request.target
         payload = ProfileRefreshCommandRecordPayload(target=target)
-        target_label = request.target_label
+        target_label = request.target_label if body.initiator == CommandInitiator.SYSTEM else None
         if not target_label:
             media = await media_service.resolve_execution_snapshot(
                 target.media_id,

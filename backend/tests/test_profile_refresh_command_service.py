@@ -237,7 +237,36 @@ async def test_profile_refresh_build_uses_identity_label_without_media_id_fallba
 
 
 @pytest.mark.asyncio
-async def test_profile_refresh_build_uses_supplied_label_before_profile_exists(monkeypatch):
+async def test_profile_refresh_build_validates_manual_target_even_with_supplied_label(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:272476")
+    snapshot = MediaExecutionSnapshot(
+        media_id=media_id,
+        season_number=2,
+        title="Resolved Show",
+        year=2026,
+    )
+    resolve_mock = AsyncMock(return_value=snapshot)
+    monkeypatch.setattr(
+        "app.services.application.commands.handlers.profile.media_service.resolve_execution_snapshot",
+        resolve_mock,
+    )
+
+    command = await ProfileRefreshCommandHandler().build(
+        CommandCreateRequest(
+            type=CommandType.PROFILE_REFRESH,
+            payload=ProfileRefreshCommandRequestPayload(
+                target=MediaTarget(media_id=media_id, season_number=2),
+                target_label="Test Show (2026)",
+            ),
+        )
+    )
+
+    assert command.target_label == "Resolved Show (2026)"
+    resolve_mock.assert_awaited_once_with(media_id, season_number=2)
+
+
+@pytest.mark.asyncio
+async def test_profile_refresh_build_uses_system_supplied_label_before_profile_exists(monkeypatch):
     media_id = MediaID.parse("tmdb:tv:272476")
     resolve_mock = AsyncMock()
     monkeypatch.setattr(
@@ -248,6 +277,7 @@ async def test_profile_refresh_build_uses_supplied_label_before_profile_exists(m
     command = await ProfileRefreshCommandHandler().build(
         CommandCreateRequest(
             type=CommandType.PROFILE_REFRESH,
+            initiator=CommandInitiator.SYSTEM,
             payload=ProfileRefreshCommandRequestPayload(
                 target=MediaTarget(media_id=media_id, season_number=2),
                 target_label="Test Show (2026)",
