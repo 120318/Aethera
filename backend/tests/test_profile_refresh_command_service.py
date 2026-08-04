@@ -162,6 +162,7 @@ async def test_deferred_profile_refresh_stays_staged_until_published(monkeypatch
     service = ProfileRefreshCommandService()
     media_id = MediaID.parse("tmdb:movie:1")
     staged = _profile_refresh_command(command_id="cmd-staged", status=CommandStatus.STAGED)
+    ready = staged.model_copy(update={"status": CommandStatus.READY})
     queued = staged.model_copy(update={"status": CommandStatus.QUEUED})
     monkeypatch.setattr(
         "app.services.application.workflows.profile_refresh.service.command_service.find_active_command_by_uniq_key",
@@ -173,6 +174,11 @@ async def test_deferred_profile_refresh_stays_staged_until_published(monkeypatch
         create_mock,
     )
     publish_mock = AsyncMock(return_value=queued)
+    mark_ready_mock = AsyncMock(return_value=ready)
+    monkeypatch.setattr(
+        "app.services.application.workflows.profile_refresh.service.command_service.mark_staged_command_ready",
+        mark_ready_mock,
+    )
     monkeypatch.setattr(
         "app.services.application.workflows.profile_refresh.service.command_service.publish_staged_command",
         publish_mock,
@@ -184,7 +190,33 @@ async def test_deferred_profile_refresh_stays_staged_until_published(monkeypatch
     create_mock.assert_awaited_once()
     published = await service.publish(prepared)
     assert published.status == CommandStatus.QUEUED
+    mark_ready_mock.assert_awaited_once_with(staged.id)
     publish_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_deferred_profile_refresh_remains_ready_when_publish_fails(monkeypatch):
+    service = ProfileRefreshCommandService()
+    staged = _profile_refresh_command(command_id="cmd-ready-retry", status=CommandStatus.STAGED)
+    ready = staged.model_copy(update={"status": CommandStatus.READY})
+    monkeypatch.setattr(
+        "app.services.application.workflows.profile_refresh.service.command_service.mark_staged_command_ready",
+        AsyncMock(return_value=ready),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.profile_refresh.service.command_service.publish_staged_command",
+        AsyncMock(side_effect=RuntimeError("database busy")),
+    )
+    get_mock = AsyncMock(return_value=ready)
+    monkeypatch.setattr(
+        "app.services.application.workflows.profile_refresh.service.command_service.get_command",
+        get_mock,
+    )
+
+    result = await service.publish(staged)
+
+    assert result.status == CommandStatus.READY
+    get_mock.assert_awaited_once_with(staged.id)
 
 
 @pytest.mark.asyncio

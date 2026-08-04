@@ -13,11 +13,12 @@ from app.schemas.domain.command import CommandRecord, CommandStatus, CommandTarg
 
 
 ACTIVE_COMMAND_STATUSES = [
-    CommandStatus.STAGED.value,
+    CommandStatus.READY.value,
     CommandStatus.QUEUED.value,
     CommandStatus.RUNNING.value,
 ]
 DEDUPLICATED_COMMAND_STATUSES = [
+    CommandStatus.READY.value,
     CommandStatus.QUEUED.value,
     CommandStatus.RUNNING.value,
 ]
@@ -159,7 +160,7 @@ class CommandRepository:
         with SessionLocal() as session:
             session.execute(text("BEGIN IMMEDIATE"))
             row = session.get(CommandORM, command.id)
-            if row is None or row.status != CommandStatus.STAGED.value:
+            if row is None or row.status != CommandStatus.READY.value:
                 session.rollback()
                 return False
             ActionRepository.add_to_session(session, action)
@@ -173,16 +174,41 @@ class CommandRepository:
                 raise
             return True
 
-    async def delete_expired_staged_commands(self, created_before_iso: str) -> int:
+    async def mark_staged_command_ready(self, command_id: str) -> bool:
         with SessionLocal() as session:
             result = session.execute(
-                delete(CommandORM).where(
+                update(CommandORM)
+                .where(
+                    CommandORM.id == command_id,
+                    CommandORM.status == CommandStatus.STAGED.value,
+                )
+                .values(status=CommandStatus.READY.value)
+            )
+            session.commit()
+            return bool(result.rowcount)
+
+    async def find_next_ready(self) -> CommandRecord | None:
+        with SessionLocal() as session:
+            row = session.execute(
+                select(CommandORM)
+                .where(CommandORM.status == CommandStatus.READY.value)
+                .order_by(CommandORM.created_at.asc())
+                .limit(1)
+            ).scalars().first()
+            return self._to_model(row) if row else None
+
+    async def find_next_expired_staged(self, created_before_iso: str) -> CommandRecord | None:
+        with SessionLocal() as session:
+            row = session.execute(
+                select(CommandORM)
+                .where(
                     CommandORM.status == CommandStatus.STAGED.value,
                     CommandORM.created_at < created_before_iso,
                 )
-            )
-            session.commit()
-            return int(result.rowcount or 0)
+                .order_by(CommandORM.created_at.asc())
+                .limit(1)
+            ).scalars().first()
+            return self._to_model(row) if row else None
 
     async def delete_staged_command(self, command_id: str) -> bool:
         with SessionLocal() as session:
@@ -194,14 +220,6 @@ class CommandRepository:
             )
             session.commit()
             return bool(result.rowcount)
-
-    async def delete_all_staged_commands(self) -> int:
-        with SessionLocal() as session:
-            result = session.execute(
-                delete(CommandORM).where(CommandORM.status == CommandStatus.STAGED.value)
-            )
-            session.commit()
-            return int(result.rowcount or 0)
 
     async def find_active(self) -> list[CommandRecord]:
         with SessionLocal() as session:

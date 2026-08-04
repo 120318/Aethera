@@ -175,6 +175,53 @@ async def test_submit_command_without_uniq_key_is_enqueued_normally(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_staged_submit_does_not_reuse_published_uniq_key(monkeypatch):
+    service = CommandService()
+    incoming = _command(command_id="cmd-staged-owned", uniq_key="command:task.transfer:task-1")
+    incoming.status = CommandStatus.STAGED
+    existing = _command(command_id="cmd-existing", uniq_key=incoming.uniq_key)
+    existing.status = CommandStatus.QUEUED
+    find_mock = AsyncMock(return_value=existing)
+    insert_mock = AsyncMock(return_value=incoming.id)
+    monkeypatch.setattr(service.repo, "find_active_by_uniq_key", find_mock)
+    monkeypatch.setattr(service.repo, "insert", insert_mock)
+
+    result = await service._submit_command(
+        incoming,
+        source=ActionSource.api,
+        create_action=False,
+        deduplicate=False,
+    )
+
+    assert result.id == incoming.id
+    find_mock.assert_not_awaited()
+    insert_mock.assert_awaited_once_with(incoming)
+
+
+@pytest.mark.asyncio
+async def test_recover_expired_staged_command_promotes_and_publishes(monkeypatch):
+    service = CommandService()
+    staged = _command(command_id="cmd-expired-staged", uniq_key=None)
+    staged.status = CommandStatus.STAGED
+    ready = staged.model_copy(update={"status": CommandStatus.READY})
+    queued = staged.model_copy(update={"status": CommandStatus.QUEUED})
+    monkeypatch.setattr(service.repo, "find_next_ready", AsyncMock(return_value=None))
+    find_expired = AsyncMock(return_value=staged)
+    monkeypatch.setattr(service.repo, "find_next_expired_staged", find_expired)
+    mark_ready = AsyncMock(return_value=ready)
+    monkeypatch.setattr(service, "mark_staged_command_ready", mark_ready)
+    publish = AsyncMock(return_value=queued)
+    monkeypatch.setattr(service, "publish_staged_command", publish)
+
+    recovered = await service.recover_next_deferred_command()
+
+    assert recovered is True
+    find_expired.assert_awaited_once()
+    mark_ready.assert_awaited_once_with(staged.id)
+    publish.assert_awaited_once_with(staged.id, source=ActionSource.api)
+
+
+@pytest.mark.asyncio
 async def test_run_next_queued_command_stores_app_exception_as_error_key(monkeypatch):
     service = CommandService()
     command = _command(command_id="cmd-app-error", uniq_key=None)
@@ -455,6 +502,12 @@ async def test_command_repository_does_not_offer_or_dedupe_staged_command():
         active = await CommandRepository().find_active_by_uniq_key(
             "command:profile.refresh:tmdb:tv:1:season=1"
         )
+        public_active = await CommandRepository().find_active_filtered(
+            target_type=CommandTargetType.MEDIA,
+            target_ids=[str(media_id)],
+            target_season_number=1,
+            command_types=[CommandType.PROFILE_REFRESH],
+        )
     finally:
         with SessionLocal() as session:
             session.execute(
@@ -464,13 +517,14 @@ async def test_command_repository_does_not_offer_or_dedupe_staged_command():
 
     assert next_command is None
     assert active is None
+    assert public_active == []
 
 
 @pytest.mark.asyncio
 async def test_publish_staged_command_commits_command_and_action_together(monkeypatch):
     repo = CommandRepository()
     command = _media_command("cmd-atomic-publish", CommandType.PROFILE_REFRESH, season_number=1)
-    command.status = CommandStatus.STAGED
+    command.status = CommandStatus.READY
     command.uniq_key = "command:profile.refresh:tmdb:tv:1:season=1"
     await repo.insert(command)
     queued = command.model_copy(update={"status": CommandStatus.QUEUED})
@@ -503,12 +557,12 @@ async def test_publish_staged_command_commits_command_and_action_together(monkey
             session.execute(delete(CommandORM).where(CommandORM.id == command.id))
 
     assert saved is not None
-    assert saved.status == CommandStatus.STAGED
+    assert saved.status == CommandStatus.READY
     assert persisted_action is None
 
 
 @pytest.mark.asyncio
-async def test_expired_staged_cleanup_preserves_recent_command():
+async def test_expired_staged_query_preserves_recent_command():
     repo = CommandRepository()
     old_command = _media_command("cmd-staged-old", CommandType.PROFILE_REFRESH, season_number=1)
     old_command.status = CommandStatus.STAGED
@@ -519,7 +573,7 @@ async def test_expired_staged_cleanup_preserves_recent_command():
     await repo.insert(recent_command)
 
     try:
-        deleted = await repo.delete_expired_staged_commands(
+        expired = await repo.find_next_expired_staged(
             (datetime.now() - timedelta(days=1)).isoformat()
         )
         old_saved = await repo.find_by_id(old_command.id)
@@ -532,8 +586,9 @@ async def test_expired_staged_cleanup_preserves_recent_command():
                 )
             )
 
-    assert deleted == 1
-    assert old_saved is None
+    assert expired is not None
+    assert expired.id == old_command.id
+    assert old_saved is not None
     assert recent_saved is not None
     assert recent_saved.status == CommandStatus.STAGED
 

@@ -1,3 +1,5 @@
+import logging
+
 from app.schemas.domain.media_types import MediaType
 from app.schemas.exception import DownloadException
 from app.schemas.exception.exceptions import InvalidRequestException
@@ -6,6 +8,8 @@ from app.schemas.domain.action import ActionSource
 from app.schemas.domain.command import CommandCreateRequest, CommandInitiator, CommandRecord, CommandStatus, CommandType, ProfileRefreshCommandRequestPayload
 from app.schemas.domain.media import MediaTarget
 from app.services.application.commands.service import command_service
+
+logger = logging.getLogger("app.services.profile_refresh_command")
 
 
 class ProfileRefreshCommandService:
@@ -83,9 +87,18 @@ class ProfileRefreshCommandService:
         )
 
     async def publish(self, command: CommandRecord) -> CommandRecord:
-        if command.status != CommandStatus.STAGED:
+        try:
+            if command.status == CommandStatus.STAGED:
+                command = await command_service.mark_staged_command_ready(command.id)
+            if command.status == CommandStatus.READY:
+                command = await command_service.publish_staged_command(
+                    command.id,
+                    source=ActionSource.api,
+                )
             return command
-        return await command_service.publish_staged_command(command.id, source=ActionSource.api)
+        except Exception:
+            logger.exception("Deferred profile refresh will be recovered: command=%s", command.id)
+            return await command_service.get_command(command.id) or command
 
     async def discard(self, command: CommandRecord | None) -> None:
         if command and command.status == CommandStatus.STAGED:

@@ -61,10 +61,10 @@ class MediaExternalMappingApplicationService:
                 douban_id=None,
                 episode_count_override=episode_count_override,
             )
-            command = await profile_refresh_command_service.publish(command)
         except Exception:
             await profile_refresh_command_service.discard(command)
             raise
+        command = await profile_refresh_command_service.publish(command)
         return MediaExternalMappingAttachCommandResult(
             media_id=result.canonical_media_id,
             command=command,

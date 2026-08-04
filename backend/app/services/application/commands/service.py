@@ -28,7 +28,7 @@ from app.services.application.commands.setup import create_command_handler_regis
 from app.schemas.constants.event_types import EventTypes
 
 logger = logging.getLogger("app.services.command")
-STAGED_COMMAND_MAX_AGE = timedelta(hours=24)
+STAGED_COMMAND_LEASE = timedelta(minutes=5)
 
 class CommandConflictException(Exception):
     pass
@@ -49,11 +49,6 @@ class CommandService:
         await self.reset_running_commands()
 
     async def reset_running_commands(self) -> None:
-        expired_count = await self.repo.delete_expired_staged_commands(
-            (datetime.now() - STAGED_COMMAND_MAX_AGE).isoformat()
-        )
-        if expired_count:
-            logger.info("Removed %d expired staged commands", expired_count)
         running_commands = await self.repo.find_running()
         for command in running_commands:
             command.status = CommandStatus.FAILED
@@ -87,7 +82,12 @@ class CommandService:
     async def create_staged_command(self, body: CommandCreateRequest) -> CommandRecord:
         command = await self._get_registry().build_command(body)
         command.status = CommandStatus.STAGED
-        return await self._submit_command(command, source=ActionSource.api, create_action=False)
+        return await self._submit_command(
+            command,
+            source=ActionSource.api,
+            create_action=False,
+            deduplicate=False,
+        )
 
     async def find_active_command_by_uniq_key(self, uniq_key: str) -> CommandRecord | None:
         command = await self.repo.find_active_by_uniq_key(uniq_key)
@@ -114,7 +114,21 @@ class CommandService:
         command = await self._get_registry().build_command(body)
         command.status = CommandStatus.STAGED
         command.uniq_key = uniq_key
-        return await self._submit_command(command, source=source, create_action=False)
+        return await self._submit_command(
+            command,
+            source=source,
+            create_action=False,
+            deduplicate=False,
+        )
+
+    async def mark_staged_command_ready(self, command_id: str) -> CommandRecord:
+        marked = await self.repo.mark_staged_command_ready(command_id)
+        command = await self.repo.find_by_id(command_id)
+        if not command:
+            raise RuntimeError(f"Staged command disappeared before ready: {command_id}")
+        if marked:
+            command.status = CommandStatus.READY
+        return attach_command_message_i18n(command)
 
     async def publish_staged_command(
         self,
@@ -125,7 +139,7 @@ class CommandService:
         command = await self.repo.find_by_id(command_id)
         if not command:
             raise RuntimeError(f"Staged command disappeared before publish: {command_id}")
-        if command.status != CommandStatus.STAGED:
+        if command.status != CommandStatus.READY:
             return attach_command_message_i18n(command)
         command.status = CommandStatus.QUEUED
         attach_command_message_i18n(command)
@@ -137,6 +151,26 @@ class CommandService:
                 raise RuntimeError(f"Staged command disappeared before publish: {command_id}")
             return attach_command_message_i18n(latest)
         return command
+
+    async def recover_next_deferred_command(self) -> bool:
+        command = None
+        try:
+            command = await self.repo.find_next_ready()
+            if command is None:
+                command = await self.repo.find_next_expired_staged(
+                    (datetime.now() - STAGED_COMMAND_LEASE).isoformat()
+                )
+                if command is None:
+                    return False
+                command = await self.mark_staged_command_ready(command.id)
+            await self.publish_staged_command(command.id, source=ActionSource.api)
+        except Exception:
+            logger.exception(
+                "Failed to recover deferred command%s",
+                f" {command.id}" if command else "",
+            )
+            return False
+        return True
 
     async def discard_staged_command(self, command_id: str) -> bool:
         return await self.repo.delete_staged_command(command_id)
@@ -273,8 +307,9 @@ class CommandService:
         source: ActionSource,
         *,
         create_action: bool = True,
+        deduplicate: bool = True,
     ) -> CommandRecord:
-        if not command.uniq_key:
+        if not command.uniq_key or not deduplicate:
             attach_command_message_i18n(command)
             await self.repo.insert(command)
             if create_action:
