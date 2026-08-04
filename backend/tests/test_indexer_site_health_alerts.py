@@ -19,6 +19,7 @@ class _FakeIndexerSiteHealthRepository:
         self.reopened_calls: list[str] = []
         self.before_acknowledge = None
         self.before_emit = None
+        self.before_conditional_upsert = None
         self.emit_failures_remaining = 0
 
     def find_one(self, indexer_id: str, site_id: str) -> IndexerSiteHealthStatus | None:
@@ -27,6 +28,25 @@ class _FakeIndexerSiteHealthRepository:
     def upsert(self, status: IndexerSiteHealthStatus) -> IndexerSiteHealthStatus:
         self.records[(status.indexer_id, status.site_id)] = status
         return status
+
+    def upsert_if_current(
+        self,
+        status: IndexerSiteHealthStatus,
+        expected: IndexerSiteHealthStatus | None,
+    ) -> tuple[bool, IndexerSiteHealthStatus]:
+        if self.before_conditional_upsert:
+            callback = self.before_conditional_upsert
+            self.before_conditional_upsert = None
+            callback()
+        current = self.find_one(status.indexer_id, status.site_id)
+        matches = current is None if expected is None else bool(
+            current
+            and current.status == expected.status
+            and current.checked_at == expected.checked_at
+        )
+        if not matches:
+            return False, current or status
+        return True, self.upsert(status)
 
     def acknowledge_recovered_unhealthy_events(
         self,
@@ -72,6 +92,7 @@ class _FakeIndexerSiteHealthRepository:
         self,
         status: IndexerSiteHealthStatus,
         correlation_id: str,
+        _fallback_event,
     ) -> tuple[bool, int]:
         current = self.find_one(status.indexer_id, status.site_id)
         if not current or current.status != "unhealthy" or current.checked_at != status.checked_at:
@@ -349,6 +370,51 @@ def test_indexer_site_success_does_not_acknowledge_after_concurrent_failure(monk
     assert repo.acknowledged_calls == []
 
 
+def test_indexer_site_success_does_not_overwrite_failure_committed_after_read(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
+        lambda _event: None,
+    )
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
+
+    for _ in range(3):
+        state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+
+    def write_newer_failure():
+        current = repo.find_one("prowlarr", "audiences")
+        assert current is not None
+        repo.upsert(
+            current.model_copy(
+                update={
+                    "checked_at": datetime.now() + timedelta(seconds=1),
+                    "consecutive_failures": current.consecutive_failures + 1,
+                    "last_error_message": "newer failure",
+                    "notify_pending": True,
+                }
+            )
+        )
+
+    repo.before_conditional_upsert = write_newer_failure
+    recovered = state.record_success(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+    )
+
+    assert recovered.status == "unhealthy"
+    assert recovered.consecutive_failures == 4
+    assert recovered.last_error_message == "newer failure"
+    assert repo.acknowledged_calls == []
+
+
 def test_indexer_site_failure_does_not_emit_after_concurrent_recovery(monkeypatch):
     dispatched_events = []
     monkeypatch.setattr(
@@ -439,7 +505,17 @@ def test_reopen_unhealthy_events_reopens_only_latest_matching_event():
             ]
         )
 
-    applied, reopened_count = repo.reopen_unhealthy_events(status, correlation_id)
+    fallback_event = Event(
+        id="indexer-fallback-warning",
+        type=EventTypes.INDEXER_SITE_UNHEALTHY,
+        level=EventLevel.warning,
+        correlation_id=correlation_id,
+    )
+    applied, reopened_count = repo.reopen_unhealthy_events(
+        status,
+        correlation_id,
+        fallback_event,
+    )
 
     with SessionLocal() as session:
         acknowledged_ids = set(session.execute(select(EventAcknowledgementORM.event_id)).scalars().all())
@@ -461,9 +537,57 @@ def test_reopen_unhealthy_events_reopens_only_latest_matching_event():
         )
         session.execute(
             delete(EventORM).where(
-                EventORM.id.in_(["indexer-old-warning", "indexer-current-warning"])
+                EventORM.id.in_([
+                    "indexer-old-warning",
+                    "indexer-current-warning",
+                    "indexer-fallback-warning",
+                ])
             )
         )
+
+
+def test_reopen_unhealthy_events_creates_warning_when_history_was_pruned():
+    repo = IndexerSiteHealthRepository()
+    checked_at = datetime.now()
+    status = IndexerSiteHealthStatus(
+        indexer_id="pruned-indexer",
+        site_id="pruned-site",
+        status="unhealthy",
+        checked_at=checked_at,
+        consecutive_failures=3,
+        notify_pending=True,
+    )
+    repo.upsert(status)
+    correlation_id = "indexer:pruned-indexer:site:pruned-site:unhealthy"
+    fallback_event = Event(
+        id="pruned-indexer-warning",
+        type=EventTypes.INDEXER_SITE_UNHEALTHY,
+        level=EventLevel.warning,
+        correlation_id=correlation_id,
+    )
+
+    applied, reopened_count = repo.reopen_unhealthy_events(
+        status,
+        correlation_id,
+        fallback_event,
+    )
+    saved = repo.find_one(status.indexer_id, status.site_id)
+
+    with SessionLocal.begin() as session:
+        persisted_event = session.get(EventORM, fallback_event.id)
+        session.execute(delete(EventORM).where(EventORM.id == fallback_event.id))
+        session.execute(
+            delete(IndexerSiteHealthORM).where(
+                IndexerSiteHealthORM.indexer_id == status.indexer_id,
+                IndexerSiteHealthORM.site_id == status.site_id,
+            )
+        )
+
+    assert applied is True
+    assert reopened_count == 1
+    assert persisted_event is not None
+    assert saved is not None
+    assert saved.last_reopened_at == checked_at
 
 
 def test_emit_unhealthy_event_rejects_stale_failure_without_inserting_event():

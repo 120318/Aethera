@@ -66,6 +66,45 @@ class IndexerSiteHealthRepository:
             return status
 
     @staticmethod
+    def _apply_status(row: IndexerSiteHealthORM, status: IndexerSiteHealthStatus) -> None:
+        row.indexer_name = status.indexer_name or ""
+        row.site_name = status.site_name or ""
+        row.status = status.status
+        row.checked_at = status.checked_at.isoformat() if status.checked_at else None
+        row.last_success_at = status.last_success_at.isoformat() if status.last_success_at else None
+        row.last_failure_at = status.last_failure_at.isoformat() if status.last_failure_at else None
+        row.consecutive_failures = status.consecutive_failures
+        row.last_error_message = status.last_error_message
+        row.notify_pending = bool(status.notify_pending)
+        row.last_notified_at = status.last_notified_at.isoformat() if status.last_notified_at else None
+        row.last_reopened_at = status.last_reopened_at.isoformat() if status.last_reopened_at else None
+        row.client_type = status.client_type
+
+    def upsert_if_current(
+        self,
+        status: IndexerSiteHealthStatus,
+        expected: IndexerSiteHealthStatus | None,
+    ) -> tuple[bool, IndexerSiteHealthStatus]:
+        with SessionLocal() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
+            row = session.get(
+                IndexerSiteHealthORM,
+                {"indexer_id": status.indexer_id, "site_id": status.site_id},
+            )
+            expected_matches = row is None if expected is None else self._matches_outcome(row, expected)
+            if not expected_matches:
+                session.rollback()
+                if row is None:
+                    return False, status
+                return False, self._to_model(row)
+            if row is None:
+                row = IndexerSiteHealthORM(indexer_id=status.indexer_id, site_id=status.site_id)
+                session.add(row)
+            self._apply_status(row, status)
+            session.commit()
+            return True, status
+
+    @staticmethod
     def _matches_outcome(row: IndexerSiteHealthORM | None, status: IndexerSiteHealthStatus) -> bool:
         checked_at = status.checked_at.isoformat() if status.checked_at else None
         return bool(
@@ -166,6 +205,7 @@ class IndexerSiteHealthRepository:
         self,
         status: IndexerSiteHealthStatus,
         correlation_id: str,
+        fallback_event: Event,
     ) -> tuple[bool, int]:
         with SessionLocal() as session:
             session.execute(text("BEGIN IMMEDIATE"))
@@ -184,6 +224,9 @@ class IndexerSiteHealthRepository:
                     delete(EventAcknowledgementORM).where(EventAcknowledgementORM.event_id == event_id)
                 )
                 reopened_count = int(result.rowcount or 0)
+            else:
+                EventRepository.add_to_session(session, fallback_event)
+                reopened_count = 1
             row.last_reopened_at = status.checked_at.isoformat() if status.checked_at else datetime.now().isoformat()
             session.commit()
             return True, reopened_count

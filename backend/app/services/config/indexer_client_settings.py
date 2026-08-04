@@ -8,7 +8,7 @@ from app.db.repositories.indexer_site_health_repository import IndexerSiteHealth
 from app.db.repositories.settings_sqlite_repository import SettingsSqliteRepository
 from app.schemas.config import IndexerConfig, IndexerProviderConfig
 from app.schemas.constants.event_types import EventTypes
-from app.schemas.domain.event import EventCreate, EventEntityRef, EventLevel, EventSource
+from app.schemas.domain.event import Event, EventCreate, EventEntityRef, EventLevel, EventSource
 from app.schemas.exception import ConfigurationException
 from app.schemas.runtime.indexer_runtime import IndexerSiteSearchOutcome
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
@@ -30,9 +30,39 @@ class IndexerSiteHealthState:
     def _upsert(self, status: IndexerSiteHealthStatus) -> IndexerSiteHealthStatus:
         return self._repo.upsert(status)
 
+    def _upsert_if_current(
+        self,
+        status: IndexerSiteHealthStatus,
+        expected: IndexerSiteHealthStatus | None,
+    ) -> tuple[bool, IndexerSiteHealthStatus]:
+        return self._repo.upsert_if_current(status, expected)
+
     @staticmethod
     def _unhealthy_event_correlation_id(indexer_id: str, site_id: str) -> str:
         return f"indexer:{indexer_id}:site:{site_id}:unhealthy"
+
+    def _build_unhealthy_event(self, status: IndexerSiteHealthStatus) -> Event:
+        return event_service.build_event(
+            EventCreate(
+                type=EventTypes.INDEXER_SITE_UNHEALTHY,
+                level=EventLevel.warning,
+                source=EventSource.base,
+                message_params={
+                    "indexer_id": status.indexer_id,
+                    "indexer_name": status.indexer_name,
+                    "site_id": status.site_id,
+                    "site_name": status.site_name,
+                    "client_type": status.client_type,
+                    "consecutive_failures": str(status.consecutive_failures),
+                    "error": status.last_error_message or "",
+                },
+                entities=[
+                    EventEntityRef(type="indexer", id=status.indexer_id),
+                    EventEntityRef(type="indexer_site", id=status.site_id),
+                ],
+                correlation_id=self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
+            )
+        )
 
     def _emit_unhealthy_event(
         self,
@@ -40,27 +70,7 @@ class IndexerSiteHealthState:
         notified_at: datetime,
     ) -> bool:
         try:
-            event = event_service.build_event(
-                EventCreate(
-                    type=EventTypes.INDEXER_SITE_UNHEALTHY,
-                    level=EventLevel.warning,
-                    source=EventSource.base,
-                    message_params={
-                        "indexer_id": status.indexer_id,
-                        "indexer_name": status.indexer_name,
-                        "site_id": status.site_id,
-                        "site_name": status.site_name,
-                        "client_type": status.client_type,
-                        "consecutive_failures": str(status.consecutive_failures),
-                        "error": status.last_error_message or "",
-                    },
-                    entities=[
-                        EventEntityRef(type="indexer", id=status.indexer_id),
-                        EventEntityRef(type="indexer_site", id=status.site_id),
-                    ],
-                    correlation_id=self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
-                )
-            )
+            event = self._build_unhealthy_event(status)
             applied = self._repo.emit_unhealthy_event_if_current(status, event, notified_at)
             if not applied:
                 return False
@@ -103,6 +113,7 @@ class IndexerSiteHealthState:
             applied, reopened_count = self._repo.reopen_unhealthy_events(
                 status,
                 self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
+                self._build_unhealthy_event(status),
             )
             if applied and reopened_count:
                 logger.info(
@@ -169,7 +180,9 @@ class IndexerSiteHealthState:
             last_reopened_at=current.last_reopened_at if current else None,
             client_type=client_type,
         )
-        saved = self._upsert(status)
+        applied, saved = self._upsert_if_current(status, current)
+        if not applied:
+            return saved
         if should_acknowledge_unhealthy_event:
             self._acknowledge_unhealthy_event(saved)
             return self._get_record(indexer_id, site_id) or saved
@@ -221,7 +234,9 @@ class IndexerSiteHealthState:
             last_reopened_at=current.last_reopened_at if current else None,
             client_type=client_type,
         )
-        saved = self._upsert(status)
+        applied, saved = self._upsert_if_current(status, current)
+        if not applied:
+            return saved
         if should_emit:
             self._emit_unhealthy_event(saved, now)
         elif should_reopen:
