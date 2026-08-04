@@ -1,3 +1,5 @@
+import logging
+
 from pydantic import BaseModel
 
 from app.schemas.domain.command import CommandInitiator, CommandRecord
@@ -7,6 +9,8 @@ from app.services.application.commands.target_labels import format_media_target_
 from app.services.application.workflows.profile_refresh.service import profile_refresh_command_service
 from app.services.domain.media import media_service
 from app.services.domain.media.mapping import MediaExternalMappingService, media_external_mapping_service
+
+logger = logging.getLogger("app.services.media_external_mapping")
 
 
 class MediaExternalMappingAttachCommandResult(BaseModel):
@@ -55,6 +59,10 @@ class MediaExternalMappingApplicationService:
 
         try:
             self.mapping_service.finalize_tmdb_mapping_attach(result)
+        except Exception:
+            await profile_refresh_command_service.discard(command)
+            raise
+        try:
             await media_service.apply_source_mapping_snapshot(
                 result.canonical_media_id,
                 season_number=target_season_number,
@@ -62,8 +70,10 @@ class MediaExternalMappingApplicationService:
                 episode_count_override=episode_count_override,
             )
         except Exception:
-            await profile_refresh_command_service.discard(command)
-            raise
+            logger.exception(
+                "Mapping snapshot failed; deferred refresh retained: command=%s",
+                command.id,
+            )
         command = await profile_refresh_command_service.publish(command)
         return MediaExternalMappingAttachCommandResult(
             media_id=result.canonical_media_id,

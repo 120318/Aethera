@@ -520,3 +520,50 @@ async def test_attach_tmdb_mapping_keeps_refresh_after_post_commit_publish_failu
     mapping_service.finalize_tmdb_mapping_attach.assert_called_once()
     apply_snapshot.assert_awaited_once()
     discard_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_attach_tmdb_mapping_publishes_refresh_after_snapshot_failure(monkeypatch):
+    mid = MediaID.parse("tmdb:tv:19996")
+    canonical_mid = MediaID.parse("tmdb:tv:12346")
+    staged = _command(canonical_mid, "cmd-snapshot-retry")
+    staged.status = CommandStatus.STAGED
+    queued = staged.model_copy(update={"status": CommandStatus.QUEUED})
+    discard_mock = AsyncMock()
+    publish_mock = AsyncMock(return_value=queued)
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_external_mapping.service.profile_refresh_command_service.enqueue",
+        AsyncMock(return_value=staged),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_external_mapping.service.profile_refresh_command_service.publish",
+        publish_mock,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_external_mapping.service.profile_refresh_command_service.discard",
+        discard_mock,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_external_mapping.service.media_service.simple_info",
+        AsyncMock(return_value=_media(mid, season_number=1)),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_external_mapping.service.media_service.apply_source_mapping_snapshot",
+        AsyncMock(side_effect=RuntimeError("database busy")),
+    )
+    mapping_service = Mock()
+    mapping_service.attach_tmdb_mapping = AsyncMock(
+        return_value=TMDBMappingAttachResult(
+            canonical_media_id=canonical_mid,
+            source_media_id=mid,
+        )
+    )
+    mapping_service.finalize_tmdb_mapping_attach = Mock()
+
+    result = await MediaExternalMappingApplicationService(
+        mapping_service=mapping_service
+    ).attach_tmdb_mapping(mid, tmdb_id=12346, season_number=1)
+
+    assert result.command.status == CommandStatus.QUEUED
+    publish_mock.assert_awaited_once_with(staged)
+    discard_mock.assert_not_awaited()

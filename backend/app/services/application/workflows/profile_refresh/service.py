@@ -56,6 +56,11 @@ class ProfileRefreshCommandService:
             )
 
         existing = await command_service.find_active_command_by_uniq_key(self._uniq_key(media_id, season_number))
+        if defer_publish and existing and existing.status == CommandStatus.READY:
+            reserved = await command_service.reserve_ready_command(existing.id)
+            if reserved.status == CommandStatus.STAGED:
+                return reserved
+            existing = reserved
         if existing and existing.status.value == "queued":
             try:
                 await command_service.cancel_command(existing.id)
@@ -63,6 +68,17 @@ class ProfileRefreshCommandService:
                 existing = await command_service.find_active_command_by_uniq_key(self._uniq_key(media_id, season_number))
 
         if existing and existing.status.value == "running":
+            followup_uniq_key = self._followup_uniq_key(media_id, season_number)
+            if defer_publish:
+                existing_followup = await command_service.find_active_command_by_uniq_key(
+                    followup_uniq_key
+                )
+                if existing_followup and existing_followup.status == CommandStatus.READY:
+                    reserved = await command_service.reserve_ready_command(
+                        existing_followup.id
+                    )
+                    if reserved.status == CommandStatus.STAGED:
+                        return reserved
             create_with_uniq_key = (
                 command_service.create_staged_command_with_uniq_key
                 if defer_publish
@@ -74,7 +90,7 @@ class ProfileRefreshCommandService:
                     initiator=initiator,
                     payload=ProfileRefreshCommandRequestPayload(target=target, target_label=target_label),
                 ),
-                uniq_key=self._followup_uniq_key(media_id, season_number),
+                uniq_key=followup_uniq_key,
                 source=ActionSource.api,
             )
 

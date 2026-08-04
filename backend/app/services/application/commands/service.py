@@ -28,7 +28,7 @@ from app.services.application.commands.setup import create_command_handler_regis
 from app.schemas.constants.event_types import EventTypes
 
 logger = logging.getLogger("app.services.command")
-STAGED_COMMAND_LEASE = timedelta(minutes=5)
+STAGED_COMMAND_MAX_AGE = timedelta(hours=24)
 
 class CommandConflictException(Exception):
     pass
@@ -49,6 +49,11 @@ class CommandService:
         await self.reset_running_commands()
 
     async def reset_running_commands(self) -> None:
+        expired_count = await self.repo.delete_expired_staged_commands(
+            (datetime.now() - STAGED_COMMAND_MAX_AGE).isoformat()
+        )
+        if expired_count:
+            logger.info("Removed %d expired staged commands", expired_count)
         running_commands = await self.repo.find_running()
         for command in running_commands:
             command.status = CommandStatus.FAILED
@@ -130,6 +135,15 @@ class CommandService:
             command.status = CommandStatus.READY
         return attach_command_message_i18n(command)
 
+    async def reserve_ready_command(self, command_id: str) -> CommandRecord:
+        reserved = await self.repo.reserve_ready_command(command_id)
+        command = await self.repo.find_by_id(command_id)
+        if not command:
+            raise RuntimeError(f"Ready command disappeared before reserve: {command_id}")
+        if reserved:
+            command.status = CommandStatus.STAGED
+        return attach_command_message_i18n(command)
+
     async def publish_staged_command(
         self,
         command_id: str,
@@ -157,12 +171,7 @@ class CommandService:
         try:
             command = await self.repo.find_next_ready()
             if command is None:
-                command = await self.repo.find_next_expired_staged(
-                    (datetime.now() - STAGED_COMMAND_LEASE).isoformat()
-                )
-                if command is None:
-                    return False
-                command = await self.mark_staged_command_ready(command.id)
+                return False
             await self.publish_staged_command(command.id, source=ActionSource.api)
         except Exception:
             logger.exception(

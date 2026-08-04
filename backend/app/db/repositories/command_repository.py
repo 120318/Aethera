@@ -187,6 +187,19 @@ class CommandRepository:
             session.commit()
             return bool(result.rowcount)
 
+    async def reserve_ready_command(self, command_id: str) -> bool:
+        with SessionLocal() as session:
+            result = session.execute(
+                update(CommandORM)
+                .where(
+                    CommandORM.id == command_id,
+                    CommandORM.status == CommandStatus.READY.value,
+                )
+                .values(status=CommandStatus.STAGED.value)
+            )
+            session.commit()
+            return bool(result.rowcount)
+
     async def find_next_ready(self) -> CommandRecord | None:
         with SessionLocal() as session:
             row = session.execute(
@@ -197,18 +210,16 @@ class CommandRepository:
             ).scalars().first()
             return self._to_model(row) if row else None
 
-    async def find_next_expired_staged(self, created_before_iso: str) -> CommandRecord | None:
+    async def delete_expired_staged_commands(self, created_before_iso: str) -> int:
         with SessionLocal() as session:
-            row = session.execute(
-                select(CommandORM)
-                .where(
+            result = session.execute(
+                delete(CommandORM).where(
                     CommandORM.status == CommandStatus.STAGED.value,
                     CommandORM.created_at < created_before_iso,
                 )
-                .order_by(CommandORM.created_at.asc())
-                .limit(1)
-            ).scalars().first()
-            return self._to_model(row) if row else None
+            )
+            session.commit()
+            return int(result.rowcount or 0)
 
     async def delete_staged_command(self, command_id: str) -> bool:
         with SessionLocal() as session:
