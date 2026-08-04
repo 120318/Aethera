@@ -8,7 +8,7 @@ from datetime import datetime
 from sqlalchemy import delete, desc, select, text, update
 
 from app.db.repositories.action_repository import ActionRepository
-from app.db.sql.models import ActionORM, CommandORM
+from app.db.sql.models import CommandORM
 from app.db.sql.session import SessionLocal
 from app.schemas.domain.action import ActionRecord
 from app.schemas.domain.command import CommandRecord, CommandStatus, CommandTargetType, CommandType
@@ -207,13 +207,16 @@ class CommandRepository:
 
     @staticmethod
     def _finalize_staged_replacement(session, row: CommandORM) -> None:
-        finished_at = datetime.now().isoformat()
+        finished_at = datetime.now()
         superseded_ids = [
             item[0]
             for item in session.execute(
                 select(CommandORM.id).where(
                     CommandORM.uniq_key == row.uniq_key,
-                    CommandORM.status == CommandStatus.QUEUED.value,
+                    CommandORM.status.in_([
+                        CommandStatus.READY.value,
+                        CommandStatus.QUEUED.value,
+                    ]),
                     CommandORM.id != row.id,
                 )
             ).all()
@@ -229,16 +232,13 @@ class CommandRepository:
                     error=None,
                     error_key=None,
                     error_params_json={},
-                    finished_at=finished_at,
+                    finished_at=finished_at.isoformat(),
                 )
             )
-            session.execute(
-                update(ActionORM)
-                .where(
-                    ActionORM.id.in_(superseded_ids),
-                    ActionORM.status == "queued",
-                )
-                .values(status="cancelled", finished_at=finished_at)
+            ActionRepository.mark_cancelled_in_session(
+                session,
+                superseded_ids,
+                finished_at,
             )
         row.status = CommandStatus.READY.value
 

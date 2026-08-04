@@ -316,6 +316,38 @@ async def test_attach_tmdb_mapping_rolls_back_pending_mapping():
 
 
 @pytest.mark.asyncio
+async def test_attach_tmdb_mapping_rollback_restores_existing_canonical_mapping():
+    source = MediaID.parse("tmdb:movie:19995")
+    canonical = MediaID.parse("tmdb:movie:12345")
+    previous_canonical = MediaExternalMappingRecord(
+        media_type="movie",
+        media_id=canonical,
+        tmdb_id=12345,
+        imdb_id="tt-old-canonical",
+        douban_id="old-canonical-douban",
+        season_number=0,
+        episode_count_override=None,
+        updated_at=1.0,
+    )
+    repo = FakeMappingRepo(previous_canonical)
+    service = _service(repo=repo, provider_id=12345, imdb_id="tt-new")
+
+    result = await service.attach_tmdb_mapping(_media(source), tmdb_id=12345)
+    service.rollback_tmdb_mapping_attach(result)
+
+    assert result.previous_mapping is None
+    assert result.previous_canonical_mapping == previous_canonical
+    assert repo.upserts[-1] == {
+        "media_id": canonical,
+        "tmdb_id": 12345,
+        "imdb_id": "tt-old-canonical",
+        "douban_id": "old-canonical-douban",
+        "season_number": 0,
+        "episode_count_override": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_attach_tmdb_mapping_rolls_back_only_target_tv_season():
     mid = MediaID.parse("tmdb:tv:19995")
     repo = FakeMappingRepo()

@@ -211,6 +211,24 @@ class ActionRepository:
             )
         )
 
+    @staticmethod
+    def mark_cancelled_in_session(session, action_ids: list[str], finished_at) -> None:
+        if not action_ids:
+            return
+        rows = session.execute(
+            select(ActionORM).where(
+                ActionORM.id.in_(action_ids),
+                ActionORM.status == ActionStatus.queued.value,
+            )
+        ).scalars().all()
+        for row in rows:
+            action = ActionRepository._to_model(row)
+            action.status = ActionStatus.cancelled
+            action.finished_at = finished_at
+            row.status = action.status.value
+            row.finished_at = finished_at.isoformat()
+            row.search_text = build_action_search_text(action)
+
     def insert(self, action: ActionRecord) -> str:
         with SessionLocal() as session:
             self.add_to_session(session, action)

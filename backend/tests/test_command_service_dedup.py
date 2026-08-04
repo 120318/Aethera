@@ -561,7 +561,11 @@ def test_finalize_staged_replacement_cancels_queued_and_marks_ready_atomically()
     payload = ProfileRefreshCommandRecordPayload(
         target=MediaTarget(media_id=MediaID.parse("tmdb:tv:1"), season_number=1),
     ).model_dump(mode="json")
-    ids = ["cmd-queued-before-mapping", "cmd-staged-after-mapping"]
+    ids = [
+        "cmd-existing-before-mapping",
+        "cmd-ready-before-mapping",
+        "cmd-staged-after-mapping",
+    ]
     with SessionLocal.begin() as session:
         session.add_all(
             [
@@ -581,6 +585,19 @@ def test_finalize_staged_replacement_cancels_queued_and_marks_ready_atomically()
                 CommandORM(
                     id=ids[1],
                     type=CommandType.PROFILE_REFRESH.value,
+                    status=CommandStatus.READY.value,
+                    payload_json=payload,
+                    initiator=CommandInitiator.SYSTEM.value,
+                    media_id="tmdb:tv:1",
+                    target_season_number=1,
+                    uniq_key=uniq_key,
+                    target_type=CommandTargetType.MEDIA.value,
+                    target_id="tmdb:tv:1",
+                    created_at=datetime.now().isoformat(),
+                ),
+                CommandORM(
+                    id=ids[2],
+                    type=CommandType.PROFILE_REFRESH.value,
                     status=CommandStatus.STAGED.value,
                     payload_json=payload,
                     initiator=CommandInitiator.SYSTEM.value,
@@ -593,9 +610,24 @@ def test_finalize_staged_replacement_cancels_queued_and_marks_ready_atomically()
                 ),
             ]
         )
+        ActionRepository.add_to_session(
+            session,
+            ActionRecord(
+                id=ids[0],
+                kind=ActionKind.command,
+                action_name=CommandType.PROFILE_REFRESH.value,
+                status=ActionStatus.queued,
+                actor=ActionActor.system,
+                trigger=ActionTrigger.system,
+                source=ActionSource.api,
+                target_type=ActionTargetType.media,
+                target_id="tmdb:tv:1",
+                correlation_id=ids[0],
+            ),
+        )
 
     try:
-        CommandRepository().finalize_staged_replacement(ids[1], lambda _session: None)
+        CommandRepository().finalize_staged_replacement(ids[2], lambda _session: None)
         with SessionLocal() as session:
             statuses = {
                 row.id: row.status
@@ -603,14 +635,21 @@ def test_finalize_staged_replacement_cancels_queued_and_marks_ready_atomically()
                     select(CommandORM).where(CommandORM.id.in_(ids))
                 ).scalars()
             }
+            cancelled_action = session.get(ActionORM, ids[0])
     finally:
         with SessionLocal.begin() as session:
+            session.execute(delete(ActionORM).where(ActionORM.id == ids[0]))
             session.execute(delete(CommandORM).where(CommandORM.id.in_(ids)))
 
     assert statuses == {
         ids[0]: CommandStatus.CANCELLED.value,
-        ids[1]: CommandStatus.READY.value,
+        ids[1]: CommandStatus.CANCELLED.value,
+        ids[2]: CommandStatus.READY.value,
     }
+    assert cancelled_action is not None
+    assert cancelled_action.status == ActionStatus.cancelled.value
+    assert "cancelled" in cancelled_action.search_text
+    assert "queued" not in cancelled_action.search_text
 
 
 @pytest.mark.asyncio
