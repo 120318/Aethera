@@ -39,11 +39,7 @@ class _FakeIndexerSiteHealthRepository:
             self.before_conditional_upsert = None
             callback()
         current = self.find_one(status.indexer_id, status.site_id)
-        matches = current is None if expected is None else bool(
-            current
-            and current.status == expected.status
-            and current.checked_at == expected.checked_at
-        )
+        matches = current is None if expected is None else current == expected
         if not matches:
             return False, current or status
         return True, self.upsert(status)
@@ -413,6 +409,89 @@ def test_indexer_site_success_does_not_overwrite_failure_committed_after_read(mo
     assert recovered.consecutive_failures == 4
     assert recovered.last_error_message == "newer failure"
     assert repo.acknowledged_calls == []
+
+
+def test_indexer_site_failure_recalculates_after_concurrent_failure(monkeypatch):
+    dispatched_events = []
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
+        lambda event: dispatched_events.append(event),
+    )
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="first failure",
+    )
+
+    def write_concurrent_failure():
+        current = repo.find_one("prowlarr", "audiences")
+        assert current is not None
+        concurrent_at = datetime.now() + timedelta(seconds=1)
+        repo.upsert(
+            current.model_copy(
+                update={
+                    "checked_at": concurrent_at,
+                    "last_failure_at": concurrent_at,
+                    "consecutive_failures": current.consecutive_failures + 1,
+                    "last_error_message": "concurrent failure",
+                }
+            )
+        )
+
+    repo.before_conditional_upsert = write_concurrent_failure
+    saved = state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="third failure",
+    )
+
+    assert saved.consecutive_failures == 3
+    assert saved.notify_pending is True
+    assert len(dispatched_events) == 1
+
+
+def test_indexer_site_failure_recalculates_after_notification_marker_changes(monkeypatch):
+    dispatched_events = []
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
+        lambda event: dispatched_events.append(event),
+    )
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
+    for _ in range(2):
+        state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+
+    notified_at = datetime.now()
+
+    def write_notification_marker():
+        current = repo.find_one("prowlarr", "audiences")
+        assert current is not None
+        repo.upsert(current.model_copy(update={"last_notified_at": notified_at}))
+
+    repo.before_conditional_upsert = write_notification_marker
+    saved = state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="third failure",
+    )
+
+    assert saved.consecutive_failures == 3
+    assert saved.last_notified_at == notified_at
+    assert dispatched_events == []
 
 
 def test_indexer_site_failure_does_not_emit_after_concurrent_recovery(monkeypatch):

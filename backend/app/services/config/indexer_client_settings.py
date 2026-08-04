@@ -199,44 +199,48 @@ class IndexerSiteHealthState:
         client_type: str = "jackett",
     ) -> IndexerSiteHealthStatus:
         current = self._get_record(indexer_id, site_id)
-        now = datetime.now()
-        previous_failures = current.consecutive_failures if current else 0
-        consecutive_failures = previous_failures + 1
-        should_emit = (
-            consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
-            and self._notify_cooldown_elapsed(current.last_notified_at if current else None, now)
-        )
-        should_reopen = bool(
-            consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
-            and not should_emit
-            and current
-            and current.last_success_at
-            and current.last_notified_at
-            and current.last_success_at > current.last_notified_at
-            and (
-                current.last_reopened_at is None
-                or current.last_success_at > current.last_reopened_at
+        while True:
+            now = datetime.now()
+            if current and current.checked_at and now <= current.checked_at:
+                now = current.checked_at + timedelta(microseconds=1)
+            previous_failures = current.consecutive_failures if current else 0
+            consecutive_failures = previous_failures + 1
+            should_emit = (
+                consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
+                and self._notify_cooldown_elapsed(current.last_notified_at if current else None, now)
             )
-        )
-        status = IndexerSiteHealthStatus(
-            indexer_id=indexer_id,
-            indexer_name=indexer_name,
-            site_id=site_id,
-            site_name=site_name,
-            status="unhealthy",
-            checked_at=now,
-            last_success_at=current.last_success_at if current else None,
-            last_failure_at=now,
-            consecutive_failures=consecutive_failures,
-            last_error_message=error_message,
-            notify_pending=consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD,
-            last_notified_at=current.last_notified_at if current else None,
-            last_reopened_at=current.last_reopened_at if current else None,
-            client_type=client_type,
-        )
-        applied, saved = self._upsert_if_current(status, current)
-        if not applied:
-            return saved
+            should_reopen = bool(
+                consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
+                and not should_emit
+                and current
+                and current.last_success_at
+                and current.last_notified_at
+                and current.last_success_at > current.last_notified_at
+                and (
+                    current.last_reopened_at is None
+                    or current.last_success_at > current.last_reopened_at
+                )
+            )
+            status = IndexerSiteHealthStatus(
+                indexer_id=indexer_id,
+                indexer_name=indexer_name,
+                site_id=site_id,
+                site_name=site_name,
+                status="unhealthy",
+                checked_at=now,
+                last_success_at=current.last_success_at if current else None,
+                last_failure_at=now,
+                consecutive_failures=consecutive_failures,
+                last_error_message=error_message,
+                notify_pending=consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD,
+                last_notified_at=current.last_notified_at if current else None,
+                last_reopened_at=current.last_reopened_at if current else None,
+                client_type=client_type,
+            )
+            applied, saved = self._upsert_if_current(status, current)
+            if applied:
+                break
+            current = saved
         if should_emit:
             self._emit_unhealthy_event(saved, now)
         elif should_reopen:

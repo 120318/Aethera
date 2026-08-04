@@ -106,11 +106,21 @@ class IndexerSiteHealthRepository:
 
     @staticmethod
     def _matches_outcome(row: IndexerSiteHealthORM | None, status: IndexerSiteHealthStatus) -> bool:
-        checked_at = status.checked_at.isoformat() if status.checked_at else None
+        def iso(value):
+            return value.isoformat() if value else None
+
         return bool(
             row
             and row.status == status.status
-            and row.checked_at == checked_at
+            and row.checked_at == iso(status.checked_at)
+            and row.last_success_at == iso(status.last_success_at)
+            and row.last_failure_at == iso(status.last_failure_at)
+            and row.consecutive_failures == status.consecutive_failures
+            and row.last_error_message == status.last_error_message
+            and bool(row.notify_pending) == status.notify_pending
+            and row.last_notified_at == iso(status.last_notified_at)
+            and row.last_reopened_at == iso(status.last_reopened_at)
+            and row.client_type == status.client_type
         )
 
     @staticmethod
