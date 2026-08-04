@@ -1,5 +1,10 @@
 from datetime import datetime, timedelta
 
+from sqlalchemy import select
+
+from app.db.repositories.indexer_site_health_repository import IndexerSiteHealthRepository
+from app.db.sql.models import EventAcknowledgementORM, EventORM
+from app.db.sql.session import SessionLocal
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.event import EventLevel
 from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
@@ -13,6 +18,7 @@ class _FakeIndexerSiteHealthRepository:
         self.acknowledged_calls: list[str] = []
         self.reopened_calls: list[str] = []
         self.before_acknowledge = None
+        self.before_mark_emitted = None
 
     def find_one(self, indexer_id: str, site_id: str) -> IndexerSiteHealthStatus | None:
         return self.records.get((indexer_id, site_id))
@@ -41,6 +47,22 @@ class _FakeIndexerSiteHealthRepository:
         self.records[(status.indexer_id, status.site_id)] = saved
         return True, 1
 
+    def mark_unhealthy_event_emitted(
+        self,
+        status: IndexerSiteHealthStatus,
+        notified_at: datetime,
+    ) -> bool:
+        if self.before_mark_emitted:
+            callback = self.before_mark_emitted
+            self.before_mark_emitted = None
+            callback()
+        current = self.find_one(status.indexer_id, status.site_id)
+        if not current or current.status != "unhealthy" or current.checked_at != status.checked_at:
+            return False
+        saved = current.model_copy(update={"last_notified_at": notified_at})
+        self.records[(status.indexer_id, status.site_id)] = saved
+        return True
+
     def reopen_unhealthy_events(
         self,
         status: IndexerSiteHealthStatus,
@@ -50,6 +72,8 @@ class _FakeIndexerSiteHealthRepository:
         if not current or current.status != "unhealthy" or current.checked_at != status.checked_at:
             return False, 0
         self.reopened_calls.append(correlation_id)
+        saved = current.model_copy(update={"last_reopened_at": status.checked_at})
+        self.records[(status.indexer_id, status.site_id)] = saved
         return True, 1
 
     def list_by_indexer(self, indexer_id: str) -> list[IndexerSiteHealthStatus]:
@@ -178,6 +202,40 @@ def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch
     assert repo.reopened_calls == ["indexer:prowlarr:site:audiences:unhealthy"]
 
 
+def test_indexer_site_recurring_failure_reopens_event_only_once(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.emit",
+        lambda _event: None,
+    )
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
+
+    for _ in range(3):
+        state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+    state.record_success(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+    )
+    for _ in range(4):
+        state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled again",
+        )
+
+    assert repo.reopened_calls == ["indexer:prowlarr:site:audiences:unhealthy"]
+
+
 def test_indexer_site_success_acknowledges_unhealthy_warning_event(monkeypatch):
     emitted_events = []
     monkeypatch.setattr(
@@ -284,6 +342,107 @@ def test_indexer_site_success_does_not_acknowledge_after_concurrent_failure(monk
     assert recovered.status == "unhealthy"
     assert recovered.notify_pending is True
     assert repo.acknowledged_calls == []
+
+
+def test_indexer_site_failure_does_not_overwrite_concurrent_recovery_after_emit(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.emit",
+        lambda _event: None,
+    )
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
+
+    def write_concurrent_recovery():
+        current = repo.find_one("prowlarr", "audiences")
+        assert current is not None
+        repo.upsert(
+            current.model_copy(
+                update={
+                    "status": "healthy",
+                    "checked_at": datetime.now() + timedelta(seconds=1),
+                    "consecutive_failures": 0,
+                    "notify_pending": False,
+                }
+            )
+        )
+
+    repo.before_mark_emitted = write_concurrent_recovery
+    for _ in range(3):
+        status = state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+
+    assert status.status == "healthy"
+    assert status.notify_pending is False
+    assert status.last_notified_at is None
+
+
+def test_reopen_unhealthy_events_reopens_only_latest_matching_event():
+    repo = IndexerSiteHealthRepository()
+    checked_at = datetime.now()
+    status = IndexerSiteHealthStatus(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        status="unhealthy",
+        checked_at=checked_at,
+        consecutive_failures=3,
+        notify_pending=True,
+    )
+    repo.upsert(status)
+    correlation_id = "indexer:prowlarr:site:audiences:unhealthy"
+    with SessionLocal.begin() as session:
+        session.add_all(
+            [
+                EventORM(
+                    id="indexer-old-warning",
+                    ts="2026-08-01T00:00:00",
+                    type=EventTypes.INDEXER_SITE_UNHEALTHY.value,
+                    level=EventLevel.warning.value,
+                    message_params_json={},
+                    search_text="",
+                    entities_json=[],
+                    meta_json={},
+                    correlation_id=correlation_id,
+                ),
+                EventORM(
+                    id="indexer-current-warning",
+                    ts="2026-08-02T00:00:00",
+                    type=EventTypes.INDEXER_SITE_UNHEALTHY.value,
+                    level=EventLevel.warning.value,
+                    message_params_json={},
+                    search_text="",
+                    entities_json=[],
+                    meta_json={},
+                    correlation_id=correlation_id,
+                ),
+                EventAcknowledgementORM(
+                    event_id="indexer-old-warning",
+                    acknowledged_at="2026-08-03T00:00:00",
+                ),
+                EventAcknowledgementORM(
+                    event_id="indexer-current-warning",
+                    acknowledged_at="2026-08-03T00:00:00",
+                ),
+            ]
+        )
+
+    applied, reopened_count = repo.reopen_unhealthy_events(status, correlation_id)
+
+    with SessionLocal() as session:
+        acknowledged_ids = set(session.execute(select(EventAcknowledgementORM.event_id)).scalars().all())
+
+    assert applied is True
+    assert reopened_count == 1
+    assert acknowledged_ids == {"indexer-old-warning"}
+    saved = repo.find_one("prowlarr", "audiences")
+    assert saved is not None
+    assert saved.last_reopened_at == checked_at
 
 
 def test_indexer_site_unhealthy_event_repeats_after_notification_cooldown(monkeypatch):

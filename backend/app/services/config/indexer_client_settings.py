@@ -90,6 +90,22 @@ class IndexerSiteHealthState:
             )
             return False
 
+    def _mark_unhealthy_event_emitted(
+        self,
+        status: IndexerSiteHealthStatus,
+        notified_at: datetime,
+    ) -> bool:
+        try:
+            return self._repo.mark_unhealthy_event_emitted(status, notified_at)
+        except Exception as exc:
+            logger.error(
+                "Failed to finalize indexer site unhealthy event for %s/%s: %s",
+                status.indexer_id,
+                status.site_id,
+                exc,
+            )
+            return False
+
     def _reopen_unhealthy_event(self, status: IndexerSiteHealthStatus) -> None:
         try:
             applied, reopened_count = self._repo.reopen_unhealthy_events(
@@ -158,6 +174,7 @@ class IndexerSiteHealthState:
             last_error_message=None,
             notify_pending=should_acknowledge_unhealthy_event,
             last_notified_at=current.last_notified_at if current else None,
+            last_reopened_at=current.last_reopened_at if current else None,
             client_type=client_type,
         )
         saved = self._upsert(status)
@@ -191,6 +208,10 @@ class IndexerSiteHealthState:
             and current.last_success_at
             and current.last_notified_at
             and current.last_success_at > current.last_notified_at
+            and (
+                current.last_reopened_at is None
+                or current.last_success_at > current.last_reopened_at
+            )
         )
         status = IndexerSiteHealthStatus(
             indexer_id=indexer_id,
@@ -205,15 +226,15 @@ class IndexerSiteHealthState:
             last_error_message=error_message,
             notify_pending=consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD,
             last_notified_at=current.last_notified_at if current else None,
+            last_reopened_at=current.last_reopened_at if current else None,
             client_type=client_type,
         )
         saved = self._upsert(status)
         if should_emit and self._emit_unhealthy_event(saved):
-            saved.last_notified_at = now
-            saved = self._upsert(saved)
+            self._mark_unhealthy_event_emitted(saved, now)
         elif should_reopen:
             self._reopen_unhealthy_event(saved)
-        return saved
+        return self._get_record(indexer_id, site_id) or saved
 
     @staticmethod
     def _notify_cooldown_elapsed(last_notified_at: datetime | None, now: datetime) -> bool:

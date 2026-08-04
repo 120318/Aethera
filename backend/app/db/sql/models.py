@@ -441,6 +441,7 @@ class IndexerSiteHealthORM(Base):
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     notify_pending: Mapped[bool] = mapped_column(Integer, nullable=False, default=0)
     last_notified_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_reopened_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     client_type: Mapped[str] = mapped_column(Text, nullable=False, default="jackett")
 
     __table_args__ = (

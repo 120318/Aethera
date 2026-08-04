@@ -29,6 +29,7 @@ class IndexerSiteHealthRepository:
                 "last_error_message": row.last_error_message,
                 "notify_pending": bool(row.notify_pending),
                 "last_notified_at": row.last_notified_at,
+                "last_reopened_at": row.last_reopened_at,
                 "client_type": row.client_type,
             }
         )
@@ -58,6 +59,7 @@ class IndexerSiteHealthRepository:
             row.last_error_message = status.last_error_message
             row.notify_pending = bool(status.notify_pending)
             row.last_notified_at = status.last_notified_at.isoformat() if status.last_notified_at else None
+            row.last_reopened_at = status.last_reopened_at.isoformat() if status.last_reopened_at else None
             row.client_type = status.client_type
             session.commit()
             return status
@@ -81,6 +83,35 @@ class IndexerSiteHealthRepository:
                 .where(EventORM.level == EventLevel.warning.value)
             ).scalars().all()
         )
+
+    @staticmethod
+    def _latest_unhealthy_event_id(session, correlation_id: str) -> str | None:
+        return session.execute(
+            select(EventORM.id)
+            .where(EventORM.correlation_id == correlation_id)
+            .where(EventORM.type == EventTypes.INDEXER_SITE_UNHEALTHY.value)
+            .where(EventORM.level == EventLevel.warning.value)
+            .order_by(EventORM.ts.desc(), EventORM.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+    def mark_unhealthy_event_emitted(
+        self,
+        status: IndexerSiteHealthStatus,
+        notified_at: datetime,
+    ) -> bool:
+        with SessionLocal() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
+            row = session.get(
+                IndexerSiteHealthORM,
+                {"indexer_id": status.indexer_id, "site_id": status.site_id},
+            )
+            if not self._matches_outcome(row, status) or row.status != "unhealthy" or not row.notify_pending:
+                session.rollback()
+                return False
+            row.last_notified_at = notified_at.isoformat()
+            session.commit()
+            return True
 
     def acknowledge_recovered_unhealthy_events(
         self,
@@ -143,13 +174,14 @@ class IndexerSiteHealthRepository:
                 session.rollback()
                 return False, 0
 
-            event_ids = self._matching_unhealthy_event_ids(session, correlation_id)
+            event_id = self._latest_unhealthy_event_id(session, correlation_id)
             reopened_count = 0
-            if event_ids:
+            if event_id:
                 result = session.execute(
-                    delete(EventAcknowledgementORM).where(EventAcknowledgementORM.event_id.in_(event_ids))
+                    delete(EventAcknowledgementORM).where(EventAcknowledgementORM.event_id == event_id)
                 )
                 reopened_count = int(result.rowcount or 0)
+            row.last_reopened_at = status.checked_at.isoformat() if status.checked_at else datetime.now().isoformat()
             session.commit()
             return True, reopened_count
 
