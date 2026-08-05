@@ -1,4 +1,5 @@
 import logging
+from functools import partial
 
 from pydantic import BaseModel
 
@@ -8,7 +9,11 @@ from app.schemas.media_id import MediaID
 from app.services.application.commands.target_labels import format_media_target_label
 from app.services.application.workflows.profile_refresh.service import profile_refresh_command_service
 from app.services.domain.media import media_service
-from app.services.domain.media.mapping import MediaExternalMappingService, media_external_mapping_service
+from app.services.domain.media.mapping import (
+    MediaExternalMappingService,
+    TMDBMappingAttachResult,
+    media_external_mapping_service,
+)
 
 logger = logging.getLogger("app.services.media_external_mapping")
 
@@ -25,6 +30,12 @@ class MediaExternalMappingApplicationService:
         mapping_service: MediaExternalMappingService | None = None,
     ) -> None:
         self.mapping_service = mapping_service or media_external_mapping_service
+
+    def _finalize_mapping(self, result: TMDBMappingAttachResult, session) -> None:
+        self.mapping_service.finalize_tmdb_mapping_attach(
+            result,
+            session=session,
+        )
 
     async def attach_tmdb_mapping(
         self,
@@ -58,15 +69,9 @@ class MediaExternalMappingApplicationService:
             raise
 
         try:
-            def finalize_mapping(session) -> None:
-                self.mapping_service.finalize_tmdb_mapping_attach(
-                    result,
-                    session=session,
-                )
-
             command = await profile_refresh_command_service.finalize_replacement(
                 command,
-                finalize_mapping,
+                partial(self._finalize_mapping, result),
             )
         except Exception:
             self.mapping_service.rollback_tmdb_mapping_attach(result)
