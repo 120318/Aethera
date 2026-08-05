@@ -302,6 +302,23 @@ class CommandRepository:
             ).scalars().first()
             return self._to_model(row) if row else None
 
+    async def claim_next_queued(self, started_at_iso: str) -> CommandRecord | None:
+        with SessionLocal() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
+            row = session.execute(
+                select(CommandORM)
+                .where(CommandORM.status == CommandStatus.QUEUED.value)
+                .order_by(CommandORM.created_at.asc())
+                .limit(1)
+            ).scalars().first()
+            if row is None:
+                session.rollback()
+                return None
+            row.status = CommandStatus.RUNNING.value
+            row.started_at = started_at_iso
+            session.commit()
+            return self._to_model(row)
+
     async def find_active_filtered(
         self,
         target_type: CommandTargetType | None = None,

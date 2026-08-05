@@ -226,7 +226,9 @@ async def test_run_next_queued_command_stores_app_exception_as_error_key(monkeyp
         async def execute(self, _command):
             raise InvalidRequestException("backendErrors.seasonRequired")
 
-    monkeypatch.setattr(service.repo, "find_next_queued", AsyncMock(return_value=command))
+    command.status = CommandStatus.RUNNING
+    claim_next = AsyncMock(return_value=command)
+    monkeypatch.setattr(service.repo, "claim_next_queued", claim_next)
     monkeypatch.setattr(service.repo, "find_by_id", AsyncMock(return_value=None))
     monkeypatch.setattr(service.repo, "update", AsyncMock(side_effect=lambda item, _cond: updated.append(item.model_copy(deep=True)) or True))
     monkeypatch.setattr(service, "_get_registry", lambda: FakeRegistry())
@@ -237,6 +239,7 @@ async def test_run_next_queued_command_stores_app_exception_as_error_key(monkeyp
     result = await service.run_next_queued_command()
 
     assert result is True
+    claim_next.assert_awaited_once()
     failed = updated[-1]
     assert failed.status == CommandStatus.FAILED
     assert failed.error is None
@@ -676,6 +679,49 @@ async def test_finalize_existing_ready_rolls_back_callback_failure():
 
     assert saved is not None
     assert saved.status == CommandStatus.READY
+
+
+@pytest.mark.asyncio
+async def test_atomic_claim_prevents_mapping_finalizer_from_cancelling_worker_command():
+    repo = CommandRepository()
+    uniq_key = "command:profile.refresh:tmdb:tv:1:season=1"
+    queued = _media_command(
+        "cmd-worker-claim",
+        CommandType.PROFILE_REFRESH,
+        season_number=1,
+    )
+    queued.uniq_key = uniq_key
+    queued.created_at = datetime.now() - timedelta(seconds=1)
+    staged = _media_command(
+        "cmd-mapping-replacement",
+        CommandType.PROFILE_REFRESH,
+        season_number=1,
+    )
+    staged.status = CommandStatus.STAGED
+    staged.uniq_key = uniq_key
+    await repo.insert(queued)
+    await repo.insert(staged)
+
+    try:
+        claimed = await repo.claim_next_queued(datetime.now().isoformat())
+        repo.finalize_staged_replacement(staged.id, lambda _session: None)
+        claimed_saved = await repo.find_by_id(queued.id)
+        replacement_saved = await repo.find_by_id(staged.id)
+    finally:
+        with SessionLocal.begin() as session:
+            session.execute(
+                delete(CommandORM).where(
+                    CommandORM.id.in_([queued.id, staged.id])
+                )
+            )
+
+    assert claimed is not None
+    assert claimed.id == queued.id
+    assert claimed.status == CommandStatus.RUNNING
+    assert claimed_saved is not None
+    assert claimed_saved.status == CommandStatus.RUNNING
+    assert replacement_saved is not None
+    assert replacement_saved.status == CommandStatus.READY
 
 
 @pytest.mark.asyncio

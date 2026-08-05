@@ -252,11 +252,10 @@ class CommandService:
         return None
 
     async def run_next_queued_command(self) -> bool:
-        command = await self.repo.find_next_queued()
+        started_at = datetime.now()
+        command = await self.repo.claim_next_queued(started_at.isoformat())
         if not command:
             return False
-        command.status = CommandStatus.RUNNING
-        command.started_at = datetime.now()
         attach_command_message_i18n(command)
         await self.repo.update(command, self.repo.cond_id(command.id))
         command_action = self._mark_command_running(command)
