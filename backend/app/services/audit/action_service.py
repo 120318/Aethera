@@ -60,6 +60,7 @@ class ActionService:
         started_at: datetime | None = None,
         finished_at: datetime | None = None,
         duration_ms: int | None = None,
+        persist: bool = True,
     ) -> ActionRecord:
         normalized_meta = _normalize_action_meta(meta)
         try:
@@ -111,7 +112,8 @@ class ActionService:
                 duration_ms=duration_ms,
             )
         attach_action_message_i18n(action)
-        self.repo.insert(action)
+        if persist:
+            self.repo.insert(action)
         return action
 
     def _update_action(

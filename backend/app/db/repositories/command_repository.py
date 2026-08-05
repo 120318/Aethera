@@ -3,11 +3,27 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import desc, select, update
+from datetime import datetime
 
+from sqlalchemy import delete, desc, select, text, update
+
+from app.db.repositories.action_repository import ActionRepository
 from app.db.sql.models import CommandORM
 from app.db.sql.session import SessionLocal
+from app.schemas.domain.action import ActionRecord
 from app.schemas.domain.command import CommandRecord, CommandStatus, CommandTargetType, CommandType
+
+
+ACTIVE_COMMAND_STATUSES = [
+    CommandStatus.READY.value,
+    CommandStatus.QUEUED.value,
+    CommandStatus.RUNNING.value,
+]
+DEDUPLICATED_COMMAND_STATUSES = [
+    CommandStatus.READY.value,
+    CommandStatus.QUEUED.value,
+    CommandStatus.RUNNING.value,
+]
 
 
 class CommandRepository:
@@ -138,11 +154,131 @@ class CommandRepository:
             session.commit()
             return bool(result.rowcount)
 
+    async def publish_staged_command(
+        self,
+        command: CommandRecord,
+        action: ActionRecord,
+    ) -> bool:
+        with SessionLocal() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
+            row = session.get(CommandORM, command.id)
+            if row is None or row.status != CommandStatus.READY.value:
+                session.rollback()
+                return False
+            ActionRepository.add_to_session(session, action)
+            row.status = CommandStatus.QUEUED.value
+            row.message_key = command.message_key
+            row.message_params_json = command.message_params
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            return True
+
+    async def mark_staged_command_ready(self, command_id: str) -> bool:
+        with SessionLocal() as session:
+            result = session.execute(
+                update(CommandORM)
+                .where(
+                    CommandORM.id == command_id,
+                    CommandORM.status == CommandStatus.STAGED.value,
+                )
+                .values(status=CommandStatus.READY.value)
+            )
+            session.commit()
+            return bool(result.rowcount)
+
+    def finalize_staged_replacement(self, command_id: str, before_ready) -> CommandRecord:
+        with SessionLocal.begin() as session:
+            row = session.get(CommandORM, command_id)
+            if row is None or row.status not in {
+                CommandStatus.STAGED.value,
+                CommandStatus.READY.value,
+            }:
+                raise RuntimeError(
+                    f"Deferred command is no longer available for finalization: {command_id}"
+                )
+            before_ready(session)
+            session.refresh(row)
+            self._finalize_staged_replacement(session, row)
+            session.flush()
+            return self._to_model(row)
+
+    @staticmethod
+    def _finalize_staged_replacement(session, row: CommandORM) -> None:
+        finished_at = datetime.now()
+        superseded_ids = [
+            item[0]
+            for item in session.execute(
+                select(CommandORM.id).where(
+                    CommandORM.uniq_key == row.uniq_key,
+                    CommandORM.status.in_([
+                        CommandStatus.READY.value,
+                        CommandStatus.QUEUED.value,
+                    ]),
+                    CommandORM.id != row.id,
+                )
+            ).all()
+        ]
+        if superseded_ids:
+            session.execute(
+                update(CommandORM)
+                .where(CommandORM.id.in_(superseded_ids))
+                .values(
+                    status=CommandStatus.CANCELLED.value,
+                    message_key=None,
+                    message_params_json={},
+                    error=None,
+                    error_key=None,
+                    error_params_json={},
+                    finished_at=finished_at.isoformat(),
+                )
+            )
+            ActionRepository.mark_cancelled_in_session(
+                session,
+                superseded_ids,
+                finished_at,
+            )
+        row.status = CommandStatus.READY.value
+
+    async def find_next_ready(self) -> CommandRecord | None:
+        with SessionLocal() as session:
+            row = session.execute(
+                select(CommandORM)
+                .where(CommandORM.status == CommandStatus.READY.value)
+                .order_by(CommandORM.created_at.asc())
+                .limit(1)
+            ).scalars().first()
+            return self._to_model(row) if row else None
+
+    async def delete_expired_staged_commands(self, created_before_iso: str) -> int:
+        with SessionLocal() as session:
+            result = session.execute(
+                delete(CommandORM).where(
+                    CommandORM.status == CommandStatus.STAGED.value,
+                    CommandORM.created_at < created_before_iso,
+                )
+            )
+            session.commit()
+            return int(result.rowcount or 0)
+
+    async def delete_staged_command(self, command_id: str) -> bool:
+        with SessionLocal() as session:
+            result = session.execute(
+                delete(CommandORM).where(
+                    CommandORM.id == command_id,
+                    CommandORM.status == CommandStatus.STAGED.value,
+                )
+            )
+            session.commit()
+            return bool(result.rowcount)
+
     async def find_active(self) -> list[CommandRecord]:
         with SessionLocal() as session:
             rows = session.execute(
                 select(CommandORM)
-                .where(CommandORM.status.in_([CommandStatus.QUEUED.value, CommandStatus.RUNNING.value]))
+                .where(CommandORM.status.in_(ACTIVE_COMMAND_STATUSES))
                 .order_by(desc(CommandORM.created_at))
             ).scalars().all()
             return [self._to_model(row) for row in rows]
@@ -166,6 +302,23 @@ class CommandRepository:
             ).scalars().first()
             return self._to_model(row) if row else None
 
+    async def claim_next_queued(self, started_at_iso: str) -> CommandRecord | None:
+        with SessionLocal() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
+            row = session.execute(
+                select(CommandORM)
+                .where(CommandORM.status == CommandStatus.QUEUED.value)
+                .order_by(CommandORM.created_at.asc())
+                .limit(1)
+            ).scalars().first()
+            if row is None:
+                session.rollback()
+                return None
+            row.status = CommandStatus.RUNNING.value
+            row.started_at = started_at_iso
+            session.commit()
+            return self._to_model(row)
+
     async def find_active_filtered(
         self,
         target_type: CommandTargetType | None = None,
@@ -175,7 +328,7 @@ class CommandRepository:
     ) -> list[CommandRecord]:
         with SessionLocal() as session:
             stmt = select(CommandORM).where(
-                CommandORM.status.in_([CommandStatus.QUEUED.value, CommandStatus.RUNNING.value])
+                CommandORM.status.in_(ACTIVE_COMMAND_STATUSES)
             )
             if target_type:
                 stmt = stmt.where(CommandORM.target_type == target_type.value)
@@ -199,7 +352,7 @@ class CommandRepository:
         with SessionLocal() as session:
             stmt = select(CommandORM).where(
                 CommandORM.media_id == media_id,
-                CommandORM.status.in_([CommandStatus.QUEUED.value, CommandStatus.RUNNING.value]),
+                CommandORM.status.in_(ACTIVE_COMMAND_STATUSES),
             )
             if target_season_number is not None:
                 stmt = stmt.where(CommandORM.target_season_number == target_season_number)
@@ -215,7 +368,7 @@ class CommandRepository:
                 select(CommandORM)
                 .where(
                     CommandORM.uniq_key == uniq_key,
-                    CommandORM.status.in_([CommandStatus.QUEUED.value, CommandStatus.RUNNING.value]),
+                    CommandORM.status.in_(DEDUPLICATED_COMMAND_STATUSES),
                 )
                 .order_by(desc(CommandORM.created_at))
                 .limit(1)

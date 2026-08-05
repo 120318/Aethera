@@ -33,6 +33,9 @@ class CommandWorker:
 
         try:
             while not self._stop_event.is_set():
+                recovered = await command_service.recover_next_deferred_command()
+                if recovered:
+                    continue
                 handled = await command_service.run_next_queued_command()
                 if handled:
                     continue

@@ -12,80 +12,88 @@ from app.schemas.media_id import MediaID, Provider
 
 
 class MediaIdentityRepository:
-    def merge_media_id(self, source_media_id: MediaID, target_media_id: MediaID) -> None:
+    def merge_media_id(self, source_media_id: MediaID, target_media_id: MediaID, *, session=None) -> None:
         if source_media_id == target_media_id:
             return
+
+        if session is None:
+            with SessionLocal.begin() as owned_session:
+                self._merge_media_id(owned_session, source_media_id, target_media_id)
+            return
+
+        self._merge_media_id(session, source_media_id, target_media_id)
+
+    def _merge_media_id(self, session, source_media_id: MediaID, target_media_id: MediaID) -> None:
 
         source = str(source_media_id)
         target = str(target_media_id)
         target_provider = target_media_id.provider.value
         target_provider_item_id = target_media_id.id
 
-        with SessionLocal.begin() as session:
-            self._replace_embedded_media_refs(session, source_media_id, target_media_id)
-            self._merge_singleton_rows(session, source, target)
-            self._merge_subscription_settings(session, source, target)
-            self._merge_metadata_sync(session, source, target)
+        self._replace_embedded_media_refs(session, source_media_id, target_media_id)
+        self._merge_singleton_rows(session, source, target)
+        self._merge_subscription_settings(session, source, target)
+        self._merge_metadata_sync(session, source, target)
 
-            for table in (
-                "library_files",
-                "library_episodes",
-                "actions",
-                "events",
-                "media_subscription_cycles",
-            ):
-                session.execute(text(f"UPDATE {table} SET media_id = :target WHERE media_id = :source"), {"source": source, "target": target})
+        for table in (
+            "library_files",
+            "library_episodes",
+            "actions",
+            "events",
+            "media_subscription_cycles",
+        ):
+            session.execute(text(f"UPDATE {table} SET media_id = :target WHERE media_id = :source"), {"source": source, "target": target})
 
-            session.execute(
-                text(
-                    """
-                    UPDATE tasks
-                    SET media_id = :target,
-                        provider = :provider,
-                        provider_item_id = :provider_item_id
-                    WHERE media_id = :source
-                    """
-                ),
-                {
-                    "source": source,
-                    "target": target,
-                    "provider": target_provider,
-                    "provider_item_id": target_provider_item_id,
-                },
-            )
-            session.execute(
-                text(
-                    """
-                    UPDATE commands
-                    SET media_id = :target,
-                        target_id = CASE WHEN target_type = 'media' AND target_id = :source THEN :target ELSE target_id END
-                    WHERE media_id = :source OR (target_type = 'media' AND target_id = :source)
-                    """
-                ),
-                {"source": source, "target": target},
-            )
+        session.execute(
+            text(
+                """
+                UPDATE tasks
+                SET media_id = :target,
+                    provider = :provider,
+                    provider_item_id = :provider_item_id
+                WHERE media_id = :source
+                """
+            ),
+            {
+                "source": source,
+                "target": target,
+                "provider": target_provider,
+                "provider_item_id": target_provider_item_id,
+            },
+        )
+        session.execute(
+            text(
+                """
+                UPDATE commands
+                SET media_id = :target,
+                    target_id = CASE WHEN target_type = 'media' AND target_id = :source THEN :target ELSE target_id END
+                WHERE media_id = :source OR (target_type = 'media' AND target_id = :source)
+                """
+            ),
+            {"source": source, "target": target},
+        )
 
-            self._retarget_source_mapping(session, source_media_id, target_media_id)
-            session.execute(
-                text(
-                    """
-                    UPDATE media_external_mappings
-                    SET media_id = :target,
-                        tmdb_id = CASE WHEN :target_provider = 'tmdb' THEN :target_tmdb_id ELSE tmdb_id END
-                    WHERE media_id = :source
-                    """
-                ),
-                {
-                    "source": source,
-                    "target": target,
-                    "target_provider": target_provider,
-                    "target_tmdb_id": int(target_media_id.id) if target_media_id.provider == Provider.tmdb else None,
-                },
-            )
+        self._retarget_source_mapping(session, source_media_id, target_media_id)
+        session.execute(
+            text(
+                """
+                UPDATE media_external_mappings
+                SET media_id = :target,
+                    tmdb_id = CASE WHEN :target_provider = 'tmdb' THEN :target_tmdb_id ELSE tmdb_id END
+                WHERE media_id = :source
+                """
+            ),
+            {
+                "source": source,
+                "target": target,
+                "target_provider": target_provider,
+                "target_tmdb_id": int(target_media_id.id) if target_media_id.provider == Provider.tmdb else None,
+            },
+        )
 
     def _retarget_source_mapping(self, session, source_media_id: MediaID, target_media_id: MediaID) -> None:
         target_tmdb_id = int(target_media_id.id) if target_media_id.provider == Provider.tmdb else None
-        source_predicate = None
+        source_column = None
         params = {
             "target": str(target_media_id),
             "target_tmdb_id": target_tmdb_id,
@@ -93,13 +101,89 @@ class MediaIdentityRepository:
             "media_type": source_media_id.media_type.value,
         }
         if source_media_id.provider == Provider.douban:
-            source_predicate = "douban_id = :source_external_id"
+            source_column = "douban_id"
+            source_parameter = "source_external_id"
             params["source_external_id"] = source_media_id.id
         elif source_media_id.provider == Provider.tmdb:
-            source_predicate = "tmdb_id = :source_tmdb_id"
+            source_column = "tmdb_id"
+            source_parameter = "source_tmdb_id"
             params["source_tmdb_id"] = int(source_media_id.id)
-        if not source_predicate:
+        if not source_column:
             return
+        source_predicate = f"{source_column} = :{source_parameter}"
+        conflicts = session.execute(
+            text(
+                f"""
+                SELECT source_rows.media_id AS source_media_id,
+                       source_rows.season_number AS season_number,
+                       source_rows.imdb_id AS source_imdb_id,
+                       source_rows.douban_id AS source_douban_id,
+                       source_rows.episode_count_override AS source_episode_count_override,
+                       target_rows.imdb_id AS target_imdb_id,
+                       target_rows.douban_id AS target_douban_id,
+                       target_rows.episode_count_override AS target_episode_count_override
+                FROM media_external_mappings source_rows
+                JOIN media_external_mappings target_rows
+                  ON target_rows.media_id = :target
+                 AND target_rows.season_number = source_rows.season_number
+                WHERE source_rows.{source_predicate}
+                  AND source_rows.media_type = :media_type
+                  AND source_rows.media_id != :target
+                ORDER BY source_rows.media_id ASC
+                """
+            ),
+            params,
+        ).mappings().all()
+        merged_by_season: dict[int, dict[str, Any]] = {}
+        for conflict in conflicts:
+            season_number = int(conflict["season_number"])
+            merged = merged_by_season.setdefault(
+                season_number,
+                {
+                    "imdb_id": conflict["target_imdb_id"],
+                    "douban_id": conflict["target_douban_id"],
+                    "episode_count_override": conflict["target_episode_count_override"],
+                },
+            )
+            merged["imdb_id"] = merged["imdb_id"] or conflict["source_imdb_id"]
+            merged["douban_id"] = merged["douban_id"] or conflict["source_douban_id"]
+            if merged["episode_count_override"] is None:
+                merged["episode_count_override"] = conflict["source_episode_count_override"]
+            session.execute(
+                text(
+                    """
+                    DELETE FROM media_external_mappings
+                    WHERE media_id = :source_media_id
+                      AND season_number = :season_number
+                    """
+                ),
+                {
+                    "source_media_id": conflict["source_media_id"],
+                    "season_number": conflict["season_number"],
+                },
+            )
+        for season_number, merged in merged_by_season.items():
+            session.execute(
+                text(
+                    """
+                    UPDATE media_external_mappings
+                    SET imdb_id = :imdb_id,
+                        douban_id = :douban_id,
+                        episode_count_override = :episode_count_override,
+                        updated_at = :updated_at
+                    WHERE media_id = :target
+                      AND season_number = :season_number
+                    """
+                ),
+                {
+                    "target": str(target_media_id),
+                    "season_number": season_number,
+                    "imdb_id": merged["imdb_id"],
+                    "douban_id": merged["douban_id"],
+                    "episode_count_override": merged["episode_count_override"],
+                    "updated_at": params["updated_at"],
+                },
+            )
         session.execute(
             text(
                 f"""

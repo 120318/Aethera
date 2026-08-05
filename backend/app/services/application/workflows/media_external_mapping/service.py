@@ -1,11 +1,21 @@
+import logging
+from functools import partial
+
 from pydantic import BaseModel
 
 from app.schemas.domain.command import CommandInitiator, CommandRecord
 from app.schemas.domain.media_types import MediaType
 from app.schemas.media_id import MediaID
+from app.services.application.commands.target_labels import format_media_target_label
 from app.services.application.workflows.profile_refresh.service import profile_refresh_command_service
 from app.services.domain.media import media_service
-from app.services.domain.media.mapping import MediaExternalMappingService, media_external_mapping_service
+from app.services.domain.media.mapping import (
+    MediaExternalMappingService,
+    TMDBMappingAttachResult,
+    media_external_mapping_service,
+)
+
+logger = logging.getLogger("app.services.media_external_mapping")
 
 
 class MediaExternalMappingAttachCommandResult(BaseModel):
@@ -20,6 +30,12 @@ class MediaExternalMappingApplicationService:
         mapping_service: MediaExternalMappingService | None = None,
     ) -> None:
         self.mapping_service = mapping_service or media_external_mapping_service
+
+    def _finalize_mapping(self, result: TMDBMappingAttachResult, session) -> None:
+        self.mapping_service.finalize_tmdb_mapping_attach(
+            result,
+            session=session,
+        )
 
     async def attach_tmdb_mapping(
         self,
@@ -45,18 +61,35 @@ class MediaExternalMappingApplicationService:
                 season_number=target_season_number,
                 initiator=CommandInitiator.SYSTEM,
                 force_requeue=True,
+                target_label=format_media_target_label(media),
+                defer_publish=True,
             )
         except Exception:
             self.mapping_service.rollback_tmdb_mapping_attach(result)
             raise
 
-        self.mapping_service.finalize_tmdb_mapping_attach(result)
-        await media_service.apply_source_mapping_snapshot(
-            result.canonical_media_id,
-            season_number=target_season_number,
-            douban_id=None,
-            episode_count_override=episode_count_override,
-        )
+        try:
+            command = await profile_refresh_command_service.finalize_replacement(
+                command,
+                partial(self._finalize_mapping, result),
+            )
+        except Exception:
+            self.mapping_service.rollback_tmdb_mapping_attach(result)
+            await profile_refresh_command_service.discard(command)
+            raise
+        try:
+            await media_service.apply_source_mapping_snapshot(
+                result.canonical_media_id,
+                season_number=target_season_number,
+                douban_id=None,
+                episode_count_override=episode_count_override,
+            )
+        except Exception:
+            logger.exception(
+                "Mapping snapshot failed; deferred refresh retained: command=%s",
+                command.id,
+            )
+        command = await profile_refresh_command_service.publish(command)
         return MediaExternalMappingAttachCommandResult(
             media_id=result.canonical_media_id,
             command=command,

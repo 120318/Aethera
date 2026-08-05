@@ -8,7 +8,7 @@ import { useNotificationCenterStore } from '@/stores/notification-center'
 import { t } from '@/i18n'
 const RECENT_LIMIT = 20
 const FINISHED_STATUSES = ['succeeded', 'failed', 'cancelled']
-const ACTIVE_STATUSES = ['queued', 'running']
+const ACTIVE_STATUSES = ['ready', 'queued', 'running']
 
 function commandMediaTarget(command) {
   const target = command?.target
@@ -196,7 +196,7 @@ export const useOperationsStore = defineStore('operations', () => {
   function cacheCommand(command) {
     if (!command?.id) return null
 
-    if (command.status === 'queued' || command.status === 'running') {
+    if (commandIsActive(command)) {
       activeCommands.value = [
         command,
         ...activeCommands.value.filter(item => item?.id !== command.id),

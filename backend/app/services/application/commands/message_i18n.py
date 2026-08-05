@@ -26,6 +26,8 @@ COMMAND_KEY_BY_TYPE = {
 }
 
 STATUS_KEY_BY_STATUS = {
+    CommandStatus.STAGED: "queued",
+    CommandStatus.READY: "queued",
     CommandStatus.QUEUED: "queued",
     CommandStatus.RUNNING: "running",
     CommandStatus.SUCCEEDED: "succeeded",

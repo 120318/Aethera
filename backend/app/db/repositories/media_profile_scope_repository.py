@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from app.db.sql.models import MediaProfileScopeORM
 from app.db.sql.session import SessionLocal
@@ -109,6 +109,32 @@ class MediaProfileScopeRepository:
                     setattr(row, key, value)
             session.commit()
             return True
+
+    async def update_mapping_snapshot(
+        self,
+        media_id: MediaID,
+        season_number: int,
+        *,
+        douban_id: str | None = None,
+        episode_count_override: int | None = None,
+        updated_at: float,
+    ) -> bool:
+        values = {"updated_at": updated_at}
+        if douban_id is not None:
+            values["douban_id"] = douban_id
+        if episode_count_override is not None:
+            values["episode_count_override"] = episode_count_override
+        with SessionLocal() as session:
+            result = session.execute(
+                update(MediaProfileScopeORM)
+                .where(
+                    MediaProfileScopeORM.media_id == str(media_id),
+                    MediaProfileScopeORM.season_number == int(season_number),
+                )
+                .values(**values)
+            )
+            session.commit()
+            return bool(result.rowcount)
 
     async def upsert_scopes(self, scopes: list[MediaProfileScope]) -> bool:
         for scope in scopes:

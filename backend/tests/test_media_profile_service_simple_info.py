@@ -3,7 +3,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from sqlalchemy import delete
 
+from app.db.repositories.media_profile_scope_repository import MediaProfileScopeRepository
+from app.db.sql.models import MediaProfileScopeORM
+from app.db.sql.session import SessionLocal
 from app.schemas.domain.media import EpisodeInfo, MediaFullInfo, MediaSeasonInfo, PersonInfo
 from app.schemas.domain.media_context import MediaCapabilities
 from app.schemas.domain.media_profile_scope import MediaProfileScope, MediaProfileScopeAiring
@@ -612,15 +616,10 @@ async def test_apply_source_mapping_snapshot_updates_existing_scope(monkeypatch)
     service = MediaProfileService(provider_service=None, schedule_service=MediaScheduleService())
     media_id = MediaID.parse("tmdb:tv:312823")
     profile = _ready_profile(media_id)
-    existing_scope = _scope(media_id, 2, episode_count=54, douban_id="36055705")
-    saved = []
-
-    async def fake_upsert_scope(next_scope):
-        saved.append(next_scope)
+    update_snapshot = AsyncMock(return_value=True)
 
     monkeypatch.setattr(service.profile_repo, "find_by_media_id", AsyncMock(return_value=profile))
-    monkeypatch.setattr(service.scope_repo, "find_by_media_id_and_season", AsyncMock(return_value=existing_scope))
-    monkeypatch.setattr(service.scope_repo, "upsert_scope", fake_upsert_scope)
+    monkeypatch.setattr(service.scope_repo, "update_mapping_snapshot", update_snapshot)
 
     await service.apply_source_mapping_snapshot(
         media_id,
@@ -629,9 +628,53 @@ async def test_apply_source_mapping_snapshot_updates_existing_scope(monkeypatch)
         episode_count_override=24,
     )
 
-    assert saved
-    assert saved[-1].douban_id == "36055705"
-    assert saved[-1].episode_count_override == 24
+    update_snapshot.assert_awaited_once()
+    assert update_snapshot.await_args.args == (media_id, 2)
+    assert update_snapshot.await_args.kwargs["douban_id"] is None
+    assert update_snapshot.await_args.kwargs["episode_count_override"] == 24
+    assert update_snapshot.await_args.kwargs["updated_at"] > 0
+
+
+@pytest.mark.asyncio
+async def test_mapping_snapshot_update_preserves_refreshed_scope_fields():
+    repo = MediaProfileScopeRepository()
+    media_id = MediaID.parse("tmdb:tv:312824")
+    scope = MediaProfileScope(
+        media_id=media_id,
+        season_number=2,
+        media_type=MediaType.tv,
+        name="Fresh provider title",
+        episode_count=54,
+        status_label="Returning Series",
+        douban_id="old-douban-id",
+        updated_at=100.0,
+    )
+    await repo.upsert_scope(scope)
+
+    try:
+        updated = await repo.update_mapping_snapshot(
+            media_id,
+            2,
+            douban_id="new-douban-id",
+            episode_count_override=24,
+            updated_at=200.0,
+        )
+        saved = await repo.find_by_media_id_and_season(media_id, 2)
+    finally:
+        with SessionLocal.begin() as session:
+            session.execute(
+                delete(MediaProfileScopeORM).where(
+                    MediaProfileScopeORM.media_id == str(media_id)
+                )
+            )
+
+    assert updated is True
+    assert saved is not None
+    assert saved.name == "Fresh provider title"
+    assert saved.episode_count == 54
+    assert saved.status_label == "Returning Series"
+    assert saved.douban_id == "new-douban-id"
+    assert saved.episode_count_override == 24
 
 
 @pytest.mark.asyncio

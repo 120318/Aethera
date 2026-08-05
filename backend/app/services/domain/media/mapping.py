@@ -20,6 +20,7 @@ class TMDBMappingAttachResult(BaseModel):
     source_media_id: MediaID
     season_number: int | None = None
     previous_mapping: MediaExternalMappingRecord | None = None
+    previous_canonical_mapping: MediaExternalMappingRecord | None = None
     source_douban_media_id: MediaID | None = None
 
 
@@ -75,6 +76,14 @@ class MediaExternalMappingService:
             )
         )
         canonical_media_id = MediaID(provider=Provider.tmdb, media_type=media.media_type, id=str(tmdb_id))
+        previous_canonical_mapping = (
+            self.mapping_repo.find_by_media_id_and_season(
+                canonical_media_id,
+                target_season_number,
+            )
+            if media.media_type == MediaType.tv
+            else self.mapping_repo.find_by_media_id(canonical_media_id)
+        )
         self.mapping_repo.upsert(
             media_id=canonical_media_id,
             tmdb_id=tmdb_id,
@@ -88,24 +97,62 @@ class MediaExternalMappingService:
             source_media_id=media.media_id,
             season_number=target_season_number,
             previous_mapping=previous_mapping,
+            previous_canonical_mapping=previous_canonical_mapping,
             source_douban_media_id=MediaID(provider=Provider.douban, media_type=media.media_type, id=media.douban_id) if media.douban_id else None,
         )
 
-    def finalize_tmdb_mapping_attach(self, result: TMDBMappingAttachResult) -> None:
+    def finalize_tmdb_mapping_attach(self, result: TMDBMappingAttachResult, *, session=None) -> None:
         source_media_id = result.source_media_id
         if source_media_id != result.canonical_media_id:
-            self.identity_repo.merge_media_id(source_media_id, result.canonical_media_id)
+            if session is None:
+                self.identity_repo.merge_media_id(source_media_id, result.canonical_media_id)
+            else:
+                self.identity_repo.merge_media_id(
+                    source_media_id,
+                    result.canonical_media_id,
+                    session=session,
+                )
 
         previous_mapping = result.previous_mapping
         if previous_mapping and previous_mapping.media_id != result.canonical_media_id:
             if previous_mapping.media_id != source_media_id:
-                self.identity_repo.merge_media_id(previous_mapping.media_id, result.canonical_media_id)
-            self.mapping_repo.remove(previous_mapping.media_id, previous_mapping.season_number)
+                if session is None:
+                    self.identity_repo.merge_media_id(
+                        previous_mapping.media_id,
+                        result.canonical_media_id,
+                    )
+                else:
+                    self.identity_repo.merge_media_id(
+                        previous_mapping.media_id,
+                        result.canonical_media_id,
+                        session=session,
+                    )
+            if session is None:
+                self.mapping_repo.remove(
+                    previous_mapping.media_id,
+                    previous_mapping.season_number,
+                )
+            else:
+                self.mapping_repo.remove(
+                    previous_mapping.media_id,
+                    previous_mapping.season_number,
+                    session=session,
+                )
 
     def rollback_tmdb_mapping_attach(self, result: TMDBMappingAttachResult) -> None:
         self.mapping_repo.remove(result.canonical_media_id, result.season_number)
+        previous_canonical_mapping = result.previous_canonical_mapping
+        if previous_canonical_mapping:
+            self.mapping_repo.upsert(
+                media_id=previous_canonical_mapping.media_id,
+                tmdb_id=previous_canonical_mapping.tmdb_id,
+                imdb_id=previous_canonical_mapping.imdb_id,
+                douban_id=previous_canonical_mapping.douban_id,
+                season_number=previous_canonical_mapping.season_number,
+                episode_count_override=previous_canonical_mapping.episode_count_override,
+            )
         previous_mapping = result.previous_mapping
-        if previous_mapping:
+        if previous_mapping and previous_mapping.media_id != result.canonical_media_id:
             self.mapping_repo.upsert(
                 media_id=previous_mapping.media_id,
                 tmdb_id=previous_mapping.tmdb_id,
@@ -114,6 +161,8 @@ class MediaExternalMappingService:
                 season_number=previous_mapping.season_number,
                 episode_count_override=previous_mapping.episode_count_override,
             )
+            return
+        if previous_canonical_mapping:
             return
         if result.source_douban_media_id:
             self.mapping_repo.remove(result.source_douban_media_id, result.season_number)
