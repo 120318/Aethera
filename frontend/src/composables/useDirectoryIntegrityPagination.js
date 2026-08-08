@@ -5,6 +5,7 @@ export function useDirectoryIntegrityPagination({
   directoryFilter,
   scopeFilter,
   issueTypeFilters,
+  itemCount,
   onPageChange,
 }) {
   const rows = ref(10)
@@ -14,6 +15,13 @@ export function useDirectoryIntegrityPagination({
   watch(page, (nextPage) => {
     const nextFirst = (Math.max(1, nextPage) - 1) * rows.value
     if (first.value !== nextFirst) first.value = nextFirst
+  })
+  watch(itemCount, (count) => {
+    const lastPage = Math.max(1, Math.ceil(count / rows.value))
+    const currentPage = Math.floor(first.value / rows.value) + 1
+    if (currentPage <= lastPage) return
+    first.value = (lastPage - 1) * rows.value
+    onPageChange({ page: lastPage, history: 'replace' })
   })
 
   watch(directoryFilter, () => {

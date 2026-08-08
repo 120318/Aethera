@@ -354,13 +354,6 @@ const policyRows = ref([])
 const detailDialogVisible = ref(false)
 const detailShowRaw = ref(false)
 const selectedDetailItem = ref(null)
-const { first, rows, onPage } = useDirectoryIntegrityPagination({
-  page: toRef(props, 'page'),
-  directoryFilter,
-  scopeFilter,
-  issueTypeFilters,
-  onPageChange: payload => emit('page-change', payload),
-})
 
 const integrityResult = computed({
   get: () => props.result,
@@ -457,6 +450,14 @@ const filteredDirectoryIntegrityItems = computed(() => {
     if (issueTypes.size > 0 && !issueTypes.has(item.issue_type)) return false
     return true
   })
+})
+const { first, rows, onPage } = useDirectoryIntegrityPagination({
+  page: toRef(props, 'page'),
+  directoryFilter,
+  scopeFilter,
+  issueTypeFilters,
+  itemCount: computed(() => filteredDirectoryIntegrityItems.value.length),
+  onPageChange: payload => emit('page-change', payload),
 })
 
 const currentDirectorySummary = computed(() => ({
