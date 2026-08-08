@@ -62,17 +62,32 @@ class MediaServerSyncPipeline:
             return
 
         target_dir = Path(media_root_dir) if media_root_dir else media_server_sync_target.resolve_media_root_dir(media, file_path, transfer_results)
-        await self.apply_media_server_changes(
-            media_server=media_server,
-            changes=[
+        changes = [
+            MediaServerChange(
+                media_id=media.media_id,
+                target_path=str(target_dir),
+                change_type=change_type,
+                is_media_root=True,
+                reason="media_sync_refresh",
+            )
+        ]
+        seen_episode_paths: set[str] = set()
+        for target in transfer_results or []:
+            episode_nfo_path = str(Path(target.destination_path).with_suffix(".nfo"))
+            if not target.episode_number or episode_nfo_path in seen_episode_paths:
+                continue
+            seen_episode_paths.add(episode_nfo_path)
+            changes.append(
                 MediaServerChange(
                     media_id=media.media_id,
-                    target_path=str(target_dir),
+                    target_path=episode_nfo_path,
                     change_type=change_type,
-                    is_media_root=True,
-                    reason="media_sync_refresh",
+                    reason="episode_nfo_refresh",
                 )
-            ],
+            )
+        await self.apply_media_server_changes(
+            media_server=media_server,
+            changes=changes,
         )
 
     async def apply_media_server_changes(

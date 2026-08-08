@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -11,6 +12,9 @@ from app.services.domain.library.sidecar_files import library_sidecar_files
 from app.services.domain.media import media_service
 from app.services.integration.media_server import nfo as media_server_nfo
 from app.services.integration.media_server import nfo_inspection
+
+CJK_EPISODE_PREFIX_CODEPOINT = 31532
+CJK_EPISODE_SUFFIX_CODEPOINT = 38598
 
 
 @dataclass(frozen=True)
@@ -158,6 +162,7 @@ class MediaServerSyncNfoPlanService:
                 continue
             episode_number = int(target.episode_number)
             episode_info = await media_service.get_episode_info_for_media(media, season_number, episode_number)
+            episode_info = self._with_schedule_episode_title(media, episode_info, season_number, episode_number)
             item = (episode_number, episode_info)
             if fallback is None:
                 fallback = item
@@ -218,8 +223,14 @@ class MediaServerSyncNfoPlanService:
                 return True
             episode_number = int(target.episode_number)
             episode_info = await media_service.get_episode_info_for_media(media, season_number, episode_number)
-            require_title, require_plot = self._episode_required_fields(episode_info, season_details, episode_number)
-            if not nfo_inspection.is_episode_nfo_complete(path, require_title=require_title, require_plot=require_plot):
+            episode_info = self._with_schedule_episode_title(media, episode_info, season_number, episode_number)
+            title, overview = self._episode_expected_fields(episode_info, season_details, episode_number)
+            if not nfo_inspection.is_episode_nfo_complete(
+                path,
+                require_title=bool(title),
+                require_plot=bool(overview),
+                expected_title=title,
+            ):
                 return True
         return False
 
@@ -235,6 +246,15 @@ class MediaServerSyncNfoPlanService:
         season_details: SeasonDetails | None,
         episode_number: int,
     ) -> tuple[bool, bool]:
+        title, overview = self._episode_expected_fields(episode_info, season_details, episode_number)
+        return (bool(title), bool(overview))
+
+    def _episode_expected_fields(
+        self,
+        episode_info: EpisodeInfo | None,
+        season_details: SeasonDetails | None,
+        episode_number: int,
+    ) -> tuple[str, str]:
         title = str(episode_info.title or "").strip() if episode_info else ""
         overview = str(episode_info.overview or "").strip() if episode_info else ""
         if (not title or not overview) and season_details:
@@ -244,7 +264,56 @@ class MediaServerSyncNfoPlanService:
                 title = title or str(episode.title or "").strip()
                 overview = overview or str(episode.overview or "").strip()
                 break
-        return (bool(title), bool(overview))
+        return (title, overview)
+
+    def _with_schedule_episode_title(
+        self,
+        media: MediaFullInfo,
+        episode_info: EpisodeInfo | None,
+        season_number: int,
+        episode_number: int,
+    ) -> EpisodeInfo | None:
+        current_title = str(episode_info.title or "").strip() if episode_info else ""
+        if current_title and not self._is_placeholder_episode_title(current_title, episode_number):
+            return episode_info
+        schedule_title = next(
+            (
+                str(airing.episode_title or "").strip()
+                for airing in media.airings
+                if airing.kind == "tv_episode_air"
+                and airing.season_number == season_number
+                and airing.episode_number == episode_number
+                and str(airing.episode_title or "").strip()
+            ),
+            "",
+        )
+        if not schedule_title or self._is_placeholder_episode_title(schedule_title, episode_number):
+            return episode_info
+        if episode_info:
+            return episode_info.model_copy(update={"title": schedule_title})
+        return EpisodeInfo(
+            season_number=season_number,
+            episode_number=episode_number,
+            title=schedule_title,
+        )
+
+    @staticmethod
+    def _is_placeholder_episode_title(title: str, episode_number: int) -> bool:
+        normalized = re.sub(r"\s+", " ", title.strip()).casefold()
+        number = str(int(episode_number))
+        compact = normalized.replace(" ", "")
+        chinese_placeholder = (
+            len(compact) > 2
+            and ord(compact[0]) == CJK_EPISODE_PREFIX_CODEPOINT
+            and ord(compact[-1]) == CJK_EPISODE_SUFFIX_CODEPOINT
+            and compact[1:-1].lstrip("0") == number
+        )
+        patterns = (
+            rf"episode\s*0*{number}",
+            rf"ep\s*0*{number}",
+            rf"e\s*0*{number}",
+        )
+        return chinese_placeholder or any(re.fullmatch(pattern, normalized, flags=re.IGNORECASE) for pattern in patterns)
 
 
 media_server_sync_nfo_plan = MediaServerSyncNfoPlanService()

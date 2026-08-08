@@ -3,10 +3,12 @@ from pathlib import Path
 
 import pytest
 
+from app.schemas.config import JellyfinConfig
 from app.schemas.domain.media import EpisodeInfo, MediaFullInfo, SeasonDetails
 from app.schemas.domain.media_context import MediaCapabilities
-from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.media_server_sync import MediaServerSyncTargetFile
+from app.schemas.domain.media_types import MediaType
+from app.schemas.domain.schedule import ScheduleAiring
 from app.schemas.media_id import MediaID
 from app.services.application.workflows.media_server_sync import nfo_plan
 from app.services.application.workflows.media_server_sync import pipeline
@@ -239,3 +241,77 @@ async def test_generate_tv_nfo_keeps_multi_episode_file_metadata_complete(tmp_pa
     assert episode_nfo.findtext("episode") == "17"
     assert episode_nfo.findtext("title") == "The Last One"
     assert episode_nfo.findtext("plot") == "Part one overview"
+
+
+@pytest.mark.asyncio
+async def test_generate_tv_nfo_replaces_placeholder_title_from_schedule(tmp_path: Path, monkeypatch):
+    show_dir = tmp_path / "Show"
+    season_dir = show_dir / "Season 01"
+    season_dir.mkdir(parents=True)
+    episode_file = season_dir / "Show.S01E16.mkv"
+    episode_file.write_bytes(b"")
+    media = _tv().model_copy(
+        update={
+            "airings": [
+                ScheduleAiring(
+                    date="2026-08-06",
+                    kind="tv_episode_air",
+                    season_number=1,
+                    episode_number=16,
+                    episode_title="佛爷入黑天门山手撕怪物",
+                )
+            ]
+        }
+    )
+
+    async def fake_episode_info(media, season_number, episode_number):
+        return EpisodeInfo(
+            id=7578304,
+            season_number=season_number,
+            episode_number=episode_number,
+            title="第 16 集",
+            overview="",
+        )
+
+    async def fake_season_details(media, season_number):
+        return SeasonDetails(season_number=season_number)
+
+    monkeypatch.setattr(nfo_plan.media_service, "get_episode_info_for_media", fake_episode_info)
+    monkeypatch.setattr(nfo_plan.media_service, "get_season_details_for_media", fake_season_details)
+
+    await nfo_plan.media_server_sync_nfo_plan.write_nfo_files(
+        media,
+        str(episode_file),
+        transfer_results=[MediaServerSyncTargetFile(destination_path=str(episode_file), episode_number=16)],
+        media_root_dir=str(show_dir),
+    )
+
+    episode_nfo = ET.parse(episode_file.with_suffix(".nfo")).getroot()
+    assert episode_nfo.findtext("title") == "佛爷入黑天门山手撕怪物"
+    assert episode_nfo.find("uniqueid[@type='tmdb']").text == "7578304"
+
+
+@pytest.mark.asyncio
+async def test_refresh_media_server_notifies_changed_episode_path(monkeypatch):
+    pipeline_service = MediaServerSyncPipeline()
+    captured_changes = []
+
+    async def fake_apply_media_server_changes(*, media_server, changes):
+        captured_changes.extend(changes)
+        return True
+
+    monkeypatch.setattr(pipeline_service, "apply_media_server_changes", fake_apply_media_server_changes)
+
+    episode_path = "/data/library/tv/Show/Season 01/Show.S01E16.mkv"
+    await pipeline_service.refresh_media_server(
+        _tv(),
+        episode_path,
+        [MediaServerSyncTargetFile(destination_path=episode_path, episode_number=16)],
+        media_server=JellyfinConfig(id="jellyfin"),
+        media_root_dir="/data/library/tv/Show",
+    )
+
+    assert [(change.target_path, change.reason) for change in captured_changes] == [
+        ("/data/library/tv/Show", "media_sync_refresh"),
+        ("/data/library/tv/Show/Season 01/Show.S01E16.nfo", "episode_nfo_refresh"),
+    ]
