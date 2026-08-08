@@ -162,7 +162,13 @@ class MediaServerSyncNfoPlanService:
                 continue
             episode_number = int(target.episode_number)
             episode_info = await media_service.get_episode_info_for_media(media, season_number, episode_number)
-            episode_info = self._with_schedule_episode_title(media, episode_info, season_number, episode_number)
+            episode_info = self._with_preferred_episode_title(
+                media,
+                episode_info,
+                season_details,
+                season_number,
+                episode_number,
+            )
             item = (episode_number, episode_info)
             if fallback is None:
                 fallback = item
@@ -256,17 +262,18 @@ class MediaServerSyncNfoPlanService:
                 break
         return (title, overview)
 
-    def _with_schedule_episode_title(
+    def _with_preferred_episode_title(
         self,
         media: MediaFullInfo,
         episode_info: EpisodeInfo | None,
+        season_details: SeasonDetails | None,
         season_number: int,
         episode_number: int,
     ) -> EpisodeInfo | None:
         current_title = str(episode_info.title or "").strip() if episode_info else ""
-        if current_title and not self._is_placeholder_episode_title(current_title, episode_number):
+        if current_title and not self._is_placeholder_episode_title(current_title):
             return episode_info
-        schedule_title = next(
+        preferred_title = next(
             (
                 str(airing.episode_title or "").strip()
                 for airing in media.airings
@@ -274,17 +281,29 @@ class MediaServerSyncNfoPlanService:
                 and airing.season_number == season_number
                 and airing.episode_number == episode_number
                 and str(airing.episode_title or "").strip()
+                and not self._is_placeholder_episode_title(str(airing.episode_title or ""))
             ),
             "",
         )
-        if not schedule_title or self._is_placeholder_episode_title(schedule_title, episode_number):
+        if not preferred_title and season_details:
+            preferred_title = next(
+                (
+                    str(episode.title or "").strip()
+                    for episode in season_details.episodes
+                    if episode.episode_number == episode_number
+                    and str(episode.title or "").strip()
+                    and not self._is_placeholder_episode_title(str(episode.title or ""))
+                ),
+                "",
+            )
+        if not preferred_title:
             return episode_info
         if episode_info:
-            return episode_info.model_copy(update={"title": schedule_title})
+            return episode_info.model_copy(update={"title": preferred_title})
         return EpisodeInfo(
             season_number=season_number,
             episode_number=episode_number,
-            title=schedule_title,
+            title=preferred_title,
         )
 
     @staticmethod

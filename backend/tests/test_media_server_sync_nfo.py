@@ -395,6 +395,58 @@ async def test_generate_tv_nfo_replaces_placeholder_title_from_schedule(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_generate_tv_nfo_replaces_placeholder_title_from_season_details(tmp_path: Path, monkeypatch):
+    show_dir = tmp_path / "Show"
+    season_dir = show_dir / "Season 01"
+    season_dir.mkdir(parents=True)
+    episode_file = season_dir / "Show.S01E16.mkv"
+    episode_file.write_bytes(b"")
+    episode_file.with_suffix(".nfo").write_text(
+        "<episodedetails><title>Episode 16</title><plot>Episode overview</plot></episodedetails>"
+    )
+
+    async def fake_episode_info(media, season_number, episode_number):
+        return EpisodeInfo(
+            id=7578304,
+            season_number=season_number,
+            episode_number=episode_number,
+            title="Episode 16",
+            overview="Episode overview",
+        )
+
+    async def fake_season_details(media, season_number):
+        return SeasonDetails(
+            season_number=season_number,
+            episodes=[
+                EpisodeInfo(
+                    season_number=season_number,
+                    episode_number=16,
+                    title="佛爷入黑天门山手撕怪物",
+                    overview="Episode overview",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(nfo_plan.media_service, "get_episode_info_for_media", fake_episode_info)
+    monkeypatch.setattr(nfo_plan.media_service, "get_season_details_for_media", fake_season_details)
+    target = MediaServerSyncTargetFile(destination_path=str(episode_file), episode_number=16)
+    sync_input = MediaServerSyncInput(transfer_results=[target])
+
+    assert await nfo_plan.media_server_sync_nfo_plan.episode_nfo_targets_needing_sync(_tv(), sync_input) == [target]
+
+    await nfo_plan.media_server_sync_nfo_plan.write_nfo_files(
+        _tv(),
+        str(episode_file),
+        transfer_results=[target],
+        media_root_dir=str(show_dir),
+    )
+
+    episode_nfo = ET.parse(episode_file.with_suffix(".nfo")).getroot()
+    assert episode_nfo.findtext("title") == "佛爷入黑天门山手撕怪物"
+    assert await nfo_plan.media_server_sync_nfo_plan.episode_nfo_targets_needing_sync(_tv(), sync_input) == []
+
+
+@pytest.mark.asyncio
 async def test_refresh_media_server_notifies_changed_episode_path(monkeypatch):
     pipeline_service = MediaServerSyncPipeline()
     captured_changes = []
