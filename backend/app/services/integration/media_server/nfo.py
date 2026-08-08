@@ -105,7 +105,11 @@ def build_episode_nfo(
         ET.SubElement(root, "runtime").text = runtime
     if tmdb_id:
         uniqueid = ET.SubElement(root, "uniqueid", type="tmdb", default="true")
-        uniqueid.text = str(episode_info.id if episode_info else f"tmdb-{tmdb_id}-{season_number}-{episode_number}")
+        uniqueid.text = str(
+            episode_info.id
+            if episode_info and episode_info.id
+            else f"tmdb-{tmdb_id}-{season_number}-{episode_number}"
+        )
     return _to_xml(root)
 
 

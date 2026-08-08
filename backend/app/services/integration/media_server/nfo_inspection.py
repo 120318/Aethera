@@ -23,13 +23,25 @@ def is_episode_nfo_complete(
     *,
     require_title: bool = True,
     require_plot: bool = True,
+    expected_title: str | None = None,
 ) -> bool:
     required_fields: list[str] = []
     if require_title:
         required_fields.append("title")
     if require_plot:
         required_fields.append("plot")
-    return _has_required_text(path, required_fields)
+    root = _parse_root(path)
+    if root is None or not _root_has_required_text(root, required_fields):
+        return False
+    normalized_expected_title = (expected_title or "").strip()
+    if not normalized_expected_title:
+        return True
+    return _element_text(root, "title") == normalized_expected_title
+
+
+def episode_nfo_title(path: Path | None) -> str:
+    root = _parse_root(path)
+    return _element_text(root, "title") if root is not None else ""
 
 
 def _common_required_fields(media: MediaFullInfo) -> list[str]:
@@ -40,16 +52,26 @@ def _common_required_fields(media: MediaFullInfo) -> list[str]:
 
 
 def _has_required_text(path: Path | None, field_names: list[str]) -> bool:
-    if path is None or not path.exists():
+    root = _parse_root(path)
+    if root is None:
         return False
-    try:
-        root = ET.parse(path).getroot()
-    except (ET.ParseError, OSError):
-        return False
+    return _root_has_required_text(root, field_names)
+
+
+def _root_has_required_text(root: ET.Element, field_names: list[str]) -> bool:
     for field_name in field_names:
         if not _element_text(root, field_name):
             return False
     return True
+
+
+def _parse_root(path: Path | None) -> ET.Element | None:
+    if path is None or not path.exists():
+        return None
+    try:
+        return ET.parse(path).getroot()
+    except (ET.ParseError, OSError):
+        return None
 
 
 def _element_text(root: ET.Element, field_name: str) -> str:

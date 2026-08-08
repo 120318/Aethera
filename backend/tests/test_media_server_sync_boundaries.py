@@ -11,6 +11,7 @@ from app.schemas.domain.media_context import MediaCapabilities
 from app.schemas.domain.media_server_sync import MediaServerSyncDetectNeeds, MediaServerSyncState
 from app.schemas.domain.media_server_sync import MediaServerSyncTargetFile
 from app.schemas.domain.media_types import MediaType
+from app.schemas.domain.schedule import ScheduleAiring
 from app.schemas.media_id import MediaID
 from app.services.application.workflows.media_server_sync.artifacts import media_server_sync_artifacts
 from app.services.application.workflows.media_server_sync.needs import media_server_sync_needs
@@ -581,6 +582,67 @@ async def test_media_server_sync_needs_does_not_require_unavailable_episode_plot
     )
 
     assert not needs.should_run
+
+
+@pytest.mark.asyncio
+async def test_media_server_sync_needs_rewrites_placeholder_episode_title(tmp_path: Path, monkeypatch):
+    media = _tv().model_copy(
+        update={
+            "airings": [
+                ScheduleAiring(
+                    date="2026-08-06",
+                    kind="tv_episode_air",
+                    season_number=1,
+                    episode_number=16,
+                    episode_title="佛爷入黑天门山手撕怪物",
+                )
+            ]
+        }
+    )
+    video = tmp_path / "Show" / "Season 01" / "Show.S01E16.mkv"
+    video.parent.mkdir(parents=True)
+    video.write_text("video")
+    (tmp_path / "Show" / "tvshow.nfo").write_text(_tvshow_nfo_text())
+    (tmp_path / "Show" / "Season 01" / "season.nfo").write_text(_season_nfo_text())
+    video.with_suffix(".nfo").write_text(_episode_nfo_text(title="第 16 集", plot="Existing overview"))
+    layout = LibraryMediaLayout(
+        media_id=media.media_id,
+        media_type=media.media_type,
+        entries=[
+            LibraryMediaLayoutEntry(
+                file_id="file-16",
+                absolute_path=str(video),
+                is_video=True,
+                episode_numbers=[16],
+            )
+        ],
+        primary_anchor_file=str(video),
+    )
+
+    async def fake_episode_info(media, season_number, episode_number):
+        return EpisodeInfo(
+            season_number=season_number,
+            episode_number=episode_number,
+            title="第 16 集",
+            overview="Existing overview",
+        )
+
+    async def fake_season_details(media, season_number):
+        return SeasonDetails(season_number=season_number)
+
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.nfo_plan.media_service.get_episode_info_for_media", fake_episode_info)
+    monkeypatch.setattr("app.services.application.workflows.media_server_sync.nfo_plan.media_service.get_season_details_for_media", fake_season_details)
+
+    needs = await media_server_sync_needs.detect(
+        media,
+        _state(media.media_id, last_success_at=time.time()),
+        MediaServerSyncConfig(),
+        layout,
+    )
+
+    assert needs.should_run
+    assert needs.missing_flags == ["episode_nfo_incomplete"]
+    assert [(item.destination_path, item.episode_number) for item in needs.transfer_results] == [(str(video), 16)]
 
 
 @pytest.mark.asyncio
