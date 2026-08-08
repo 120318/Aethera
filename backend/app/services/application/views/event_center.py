@@ -1,3 +1,5 @@
+import asyncio
+
 from app.schemas.domain.download import TaskData, TaskStatus
 from app.schemas.domain.event import EventCenterBellState, EventCenterDownload, EventCenterResponse
 from app.services.audit.event_service import event_service
@@ -8,6 +10,10 @@ ACTIVE_DOWNLOAD_STATUSES = [
     TaskStatus.PENDING,
     TaskStatus.DOWNLOADING,
     TaskStatus.PAUSED,
+]
+RUNNING_DOWNLOAD_STATUSES = [
+    TaskStatus.PENDING,
+    TaskStatus.DOWNLOADING,
 ]
 EVENT_CENTER_DOWNLOAD_LIMIT = 50
 
@@ -29,7 +35,13 @@ class EventCenterViewService:
 
     async def get_center(self) -> EventCenterResponse:
         center = event_service.get_center()
-        tasks = await download_service.get_tasks(status=ACTIVE_DOWNLOAD_STATUSES)
+        tasks, active_download_count = await asyncio.gather(
+            download_service.get_tasks(
+                status=ACTIVE_DOWNLOAD_STATUSES,
+                limit=EVENT_CENTER_DOWNLOAD_LIMIT,
+            ),
+            download_service.count_tasks(status=RUNNING_DOWNLOAD_STATUSES),
+        )
         center.active_downloads = [
             EventCenterDownload(
                 id=task.id,
@@ -40,10 +52,10 @@ class EventCenterViewService:
                 created_at=task.created_at,
                 updated_at=task.updated_at,
             )
-            for task in tasks[:EVENT_CENTER_DOWNLOAD_LIMIT]
+            for task in tasks
         ]
-        center.summary.active_download_count = len(tasks)
-        if center.summary.bell_state == EventCenterBellState.idle and tasks:
+        center.summary.active_download_count = active_download_count
+        if center.summary.bell_state == EventCenterBellState.idle and active_download_count:
             center.summary.bell_state = EventCenterBellState.running
         return center
 

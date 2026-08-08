@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import logging
-from sqlalchemy import delete, desc, select, update
+from sqlalchemy import delete, desc, func, select, update
 
 from app.db.sql.models import TaskORM
 from app.db.sql.session import SessionLocal
@@ -223,6 +223,20 @@ class TaskRepository:
                 stmt = stmt.limit(limit)
             rows = session.execute(stmt).scalars().all()
             return [self._to_model(row) for row in rows]
+
+    async def count_with_filters(
+        self,
+        *,
+        status: list[str] | None = None,
+        media_id: MediaID | None = None,
+    ) -> int:
+        with SessionLocal() as session:
+            stmt = select(func.count()).select_from(TaskORM)
+            if media_id:
+                stmt = stmt.where(TaskORM.media_id == str(media_id))
+            if status:
+                stmt = stmt.where(TaskORM.status.in_(status))
+            return int(session.execute(stmt).scalar_one())
 
     async def list_media_ids(self) -> list[MediaID]:
         with SessionLocal() as session:
