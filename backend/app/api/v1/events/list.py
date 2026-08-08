@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from app.api.deps import OptionalMediaIDParam
 from app.schemas.media_id import MediaID
 from app.schemas.domain.event import Event, EventCenterResponse, EventLevel, EventSource, EventType
+from app.services.application.views.event_center import event_center_view_service
 from app.services.audit.event_service import event_service
 
 router = APIRouter()
@@ -59,7 +60,7 @@ async def list_events(
 
 @router.get("/center", response_model=EventCenterResponse)
 async def get_event_center() -> EventCenterResponse:
-    return event_service.get_center()
+    return await event_center_view_service.get_center()
 
 
 @router.post("/center/acknowledge-all", response_model=EventAcknowledgeResponse)

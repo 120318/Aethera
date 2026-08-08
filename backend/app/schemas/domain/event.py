@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas.media_id import MediaID
 from app.schemas.domain.action import ActionRecord
+from app.schemas.domain.download import TaskStatus
 from app.schemas.domain.media import MediaIdentity
 
 
@@ -128,12 +129,24 @@ class EventCenterBellState(str, Enum):
 
 class EventCenterSummary(BaseModel):
     active_action_count: int = 0
+    active_download_count: int = 0
     warning_event_count: int = 0
     error_event_count: int = 0
     bell_state: EventCenterBellState = EventCenterBellState.idle
 
 
+class EventCenterDownload(BaseModel):
+    id: str
+    status: TaskStatus
+    progress: float = Field(default=0.0, ge=0.0, le=1.0)
+    title: str
+    media: MediaIdentity | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class EventCenterResponse(BaseModel):
     summary: EventCenterSummary
     active_actions: list[ActionRecord] = Field(default_factory=list)
+    active_downloads: list[EventCenterDownload] = Field(default_factory=list)
     events: list[Event] = Field(default_factory=list)

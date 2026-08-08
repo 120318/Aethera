@@ -1756,7 +1756,9 @@ export default {
     noRunningDescription: 'No services are running right now',
     eventMeta: 'Event',
     runningMeta: 'Processing',
+    downloadMeta: 'Download task',
     runningCount: 'Running {count}',
+    downloadingCount: 'Downloading {count}',
     warningCount: 'Warnings {count}',
     errorCount: 'Errors {count}',
     markRead: 'Mark as read',
@@ -1765,6 +1767,13 @@ export default {
     tooltipWarning: 'Notification center: {count} warnings',
     tooltipRunning: 'Notification center: {count} running',
     tooltipIdle: 'Notification center',
+    downloadType: 'Download task',
+    downloadMessage: '{title} · {progress}%',
+    downloadStatuses: {
+      pending: 'Pending',
+      downloading: 'Downloading',
+      paused: 'Paused',
+    },
     levels: {
       warning: 'Warning',
       error: 'Error',

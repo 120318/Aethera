@@ -1,8 +1,14 @@
 from datetime import datetime
 from types import SimpleNamespace
 
+import pytest
+
 from app.schemas.domain.action import ActionKind, ActionRecord, ActionStatus
-from app.schemas.domain.event import Event, EventCenterBellState, EventLevel, EventType
+from app.schemas.domain.download import TaskStatus
+from app.schemas.domain.event import Event, EventCenterBellState, EventCenterResponse, EventCenterSummary, EventLevel, EventType
+from app.schemas.domain.media import MediaIdentity
+from app.schemas.media_id import MediaID
+from app.services.application.views.event_center import EventCenterViewService
 from app.services.audit.action_service import ActionService
 from app.services.audit.event_service import EventService
 
@@ -108,3 +114,42 @@ def test_event_center_acknowledges_all_attention_events(monkeypatch):
     assert center.summary.error_event_count == 0
     assert center.summary.warning_event_count == 0
     assert center.events == []
+
+
+@pytest.mark.asyncio
+async def test_event_center_includes_active_downloads_and_sets_running_state(monkeypatch):
+    service = EventCenterViewService()
+    media = MediaIdentity(
+        media_id=MediaID.parse("tmdb:tv:2"),
+        season_number=1,
+        title="Show",
+        year=2026,
+    )
+    task = SimpleNamespace(
+        id="task-1",
+        status=TaskStatus.DOWNLOADING,
+        progress=0.42,
+        context=SimpleNamespace(search_result=None, resource_title="Show.S01E01", media=media),
+        metadata=None,
+        created_at=datetime(2026, 1, 1),
+        updated_at=datetime(2026, 1, 2),
+    )
+    monkeypatch.setattr(
+        "app.services.application.views.event_center.event_service",
+        SimpleNamespace(get_center=lambda: EventCenterResponse(summary=EventCenterSummary())),
+    )
+    monkeypatch.setattr(
+        "app.services.application.views.event_center.download_service",
+        SimpleNamespace(get_tasks=lambda **_kwargs: _async_value([task])),
+    )
+
+    center = await service.get_center()
+
+    assert center.summary.active_download_count == 1
+    assert center.summary.bell_state == EventCenterBellState.running
+    assert center.active_downloads[0].title == "Show.S01E01"
+    assert center.active_downloads[0].media == media
+
+
+async def _async_value(value):
+    return value
