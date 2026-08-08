@@ -544,6 +544,29 @@ def test_build_scopes_from_media_preserves_existing_douban_overview_when_refresh
     assert scopes[0].douban_overview == "Existing Douban overview"
 
 
+def test_build_scopes_from_media_clears_overview_when_douban_mapping_changes():
+    media_id = MediaID.parse("tmdb:tv:273119")
+    media = MediaFullInfo(
+        media_id=media_id,
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=273119,
+        douban_id="36721174",
+        douban_overview=None,
+        season_number=1,
+        seasons=[MediaSeasonInfo(season_number=1, episode_count=16, douban_id="36721174")],
+    )
+
+    scopes = build_scopes_from_media(
+        media,
+        [_scope(media_id, 1, douban_id="36721173", douban_overview="Old Douban overview")],
+    )
+
+    assert scopes[0].douban_id == "36721174"
+    assert scopes[0].douban_overview is None
+
+
 def test_build_scopes_from_media_uses_movie_douban_id():
     media_id = MediaID.parse("tmdb:movie:100")
     media = MediaFullInfo(

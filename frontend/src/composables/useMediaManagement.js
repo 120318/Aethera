@@ -74,8 +74,17 @@ export function useMediaManagement(options = {}) {
       }
       const data = await listMediaManagementItems(params)
       if (requestId !== loadRequestId) return
+      const nextTotal = Number(data?.total || 0)
+      const lastPage = Math.max(1, Math.ceil(nextTotal / rows.value))
+      const currentPage = Math.floor(first.value / rows.value) + 1
+      total.value = nextTotal
+      if (currentPage > lastPage) {
+        items.value = []
+        first.value = (lastPage - 1) * rows.value
+        options.onPageChange?.({ page: lastPage, history: 'replace' })
+        return
+      }
       items.value = data?.items || []
-      total.value = data?.total || 0
     } finally {
       if (requestId === loadRequestId) {
         initialLoading.value = false

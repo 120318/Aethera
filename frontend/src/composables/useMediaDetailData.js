@@ -229,40 +229,6 @@ export function useMediaDetailData() {
     tabData.tasks = tabData.tasks.filter(task => task?.id !== taskId)
   }
 
-  function setDetailSeasonContext(seasonNumber) {
-    const normalized = Number(seasonNumber)
-    if (!detail.value || !Number.isInteger(normalized) || normalized <= 0) return
-    const selectedSeason = Array.isArray(detail.value.seasons)
-      ? detail.value.seasons.find((season) => Number(season?.season_number) === normalized)
-      : null
-    const selectedDoubanId = selectedSeason?.douban_id || null
-    const doubanVoteAverage = selectedSeason?.douban_vote_average ?? null
-    const doubanRatingCount = selectedSeason?.douban_rating_count ?? null
-    const tmdbVoteAverage = detail.value.tmdb_vote_average ?? (detail.value.rating_source === 'tmdb' ? detail.value.vote_average : null)
-    const tmdbRatingCount = detail.value.tmdb_rating_count ?? (detail.value.rating_source === 'tmdb' ? detail.value.rating_count : null)
-    const ratingUpdates = selectedDoubanId
-      ? {
-          vote_average: doubanVoteAverage,
-          rating_count: doubanRatingCount,
-          vote_count: doubanRatingCount,
-          rating_source: 'douban',
-        }
-      : {
-          vote_average: tmdbVoteAverage,
-          rating_count: tmdbRatingCount,
-          vote_count: tmdbRatingCount,
-          rating_source: tmdbVoteAverage != null ? 'tmdb' : null,
-        }
-    detail.value = {
-      ...detail.value,
-      season_number: normalized,
-      episodes_count: selectedSeason?.episode_count_override ?? selectedSeason?.episode_count ?? detail.value.episodes_count,
-      episode_count_override: selectedSeason?.episode_count_override ?? null,
-      douban_id: selectedDoubanId,
-      ...ratingUpdates,
-    }
-  }
-
   function mapTaskData(tasks) {
     return tasks.map((task) => mapTaskItem(task))
   }
@@ -284,6 +250,5 @@ export function useMediaDetailData() {
     loadTaskInfo,
     replaceTaskItem,
     markTaskDeleted,
-    setDetailSeasonContext,
   }
 }
