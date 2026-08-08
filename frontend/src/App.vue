@@ -64,7 +64,12 @@
       :class="mainClass"
       :style="mainStyle"
     >
-      <router-view />
+      <router-view v-slot="{ Component, route: viewRoute }">
+        <component
+          :is="Component"
+          :key="viewRoute.name === 'MediaDetail' ? viewRoute.params.mediaId : viewRoute.name"
+        />
+      </router-view>
     </main>
 
     <footer

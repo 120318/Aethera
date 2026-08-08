@@ -138,6 +138,8 @@
         <DirectoryIntegrityTab
           v-model:result="directoryIntegrityResult"
           :loading="directoryIntegrityLoading"
+          :page="routePage(route.query.page)"
+          @page-change="updatePageQuery"
         />
       </section>
     </AppTabs>
@@ -174,6 +176,21 @@ function hashToTab(hash) {
   return HASH_TO_TAB[hash] || 'media'
 }
 
+function routePage(value) {
+  const raw = Array.isArray(value) ? value[0] : value
+  const page = Number(raw)
+  return Number.isInteger(page) && page > 0 ? page : 1
+}
+
+function updatePageQuery({ page, history }) {
+  const query = { ...route.query }
+  if (page > 1) query.page = String(page)
+  else delete query.page
+  const hasCanonicalQuery = page > 1 ? String(route.query.page || '') === String(page) : route.query.page == null
+  if (hasCanonicalQuery) return
+  router[history]({ path: route.path, query, hash: route.hash })
+}
+
 const activeTab = ref(hashToTab(route.hash))
 const managementTabs = computed(() => [
   { label: t('mediaManagement.tabs.mediaList'), value: 'media' },
@@ -191,6 +208,7 @@ const {
   first,
   rows,
   onPage,
+  setPage,
   summaryCards,
   mediaTypeOptions,
   statusOptions,
@@ -203,7 +221,10 @@ const {
   handleQuickDeleteFiles,
   loadMediaTab,
   loadDirectoryIntegrityTab,
-} = useMediaManagementPage()
+} = useMediaManagementPage({
+  initialPage: routePage(route.query.page),
+  onPageChange: updatePageQuery,
+})
 
 const summarySkeletonCount = computed(() => summaryCards.value.length || 6)
 
@@ -218,13 +239,28 @@ watch(
 )
 
 watch(
+  () => route.query.page,
+  (nextPage) => {
+    if (activeTab.value !== 'media') return
+    const page = routePage(nextPage)
+    if (first.value !== (page - 1) * rows.value) setPage(page)
+  },
+)
+
+watch(
   activeTab,
-  (nextTab) => {
+  (nextTab, previousTab) => {
     const desiredHash = TAB_TO_HASH[nextTab] || TAB_TO_HASH.media
-    if (route.hash !== desiredHash) {
+    const query = { ...route.query }
+    const changedTab = Boolean(previousTab && previousTab !== nextTab)
+    if (changedTab) {
+      delete query.page
+      if (nextTab === 'media') setPage(1)
+    }
+    if (route.hash !== desiredHash || changedTab) {
       router.replace({
         path: route.path,
-        query: route.query,
+        query,
         hash: desiredHash,
       })
     }
@@ -241,6 +277,9 @@ function loadActiveTab(tab) {
 }
 
 onMounted(() => {
+  if (route.query.page != null && String(route.query.page) !== String(routePage(route.query.page))) {
+    updatePageQuery({ page: routePage(route.query.page), history: 'replace' })
+  }
   if (route.hash) return
   router.replace({
     path: route.path,

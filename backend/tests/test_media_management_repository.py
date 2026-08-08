@@ -18,6 +18,7 @@ from app.db.sql.models import (
 )
 from app.db.sql.session import SessionLocal, engine
 from app.schemas.domain.download import TaskStatus
+from app.schemas.domain.event import EventType
 from app.schemas.domain.library import LibraryFileArtifactStatus, LibraryFileArtifactType
 
 
@@ -198,18 +199,20 @@ def _insert_artifact(
     status: LibraryFileArtifactStatus,
     updated_at: float,
     last_success_at: float | None = None,
+    created_at: float | None = None,
+    artifact_type: LibraryFileArtifactType = LibraryFileArtifactType.nfo,
 ) -> None:
     session.add(
         LibraryFileArtifactORM(
             id=artifact_id,
             library_file_id=file_id,
-            artifact_type=LibraryFileArtifactType.nfo.value,
+            artifact_type=artifact_type.value,
             expected_path=f"/library/{artifact_id}.nfo",
             status=status.value,
             last_success_at=last_success_at,
             last_error=None,
             next_retry_at=None,
-            created_at=updated_at,
+            created_at=created_at if created_at is not None else updated_at,
             updated_at=updated_at,
         )
     )
@@ -306,7 +309,7 @@ def test_media_management_repository_scopes_recent_events_by_tv_season():
     assert rows_by_season[2].last_event_message_key == "Season 2 error"
 
 
-def test_media_management_repository_counts_succeeded_artifacts_as_activity():
+def test_media_management_repository_counts_only_new_nfo_and_danmu_artifacts_as_activity():
     with SessionLocal() as session:
         _insert_profile(session, "tmdb:movie:1", "Movie A", 2024, media_type="movie")
         _insert_profile(session, "tmdb:movie:2", "Movie B", 2024, media_type="movie")
@@ -319,6 +322,7 @@ def test_media_management_repository_counts_succeeded_artifacts_as_activity():
             status=LibraryFileArtifactStatus.succeeded,
             updated_at=2000.0,
             last_success_at=2000.0,
+            created_at=1200.0,
         )
         _insert_artifact(
             session,
@@ -327,16 +331,42 @@ def test_media_management_repository_counts_succeeded_artifacts_as_activity():
             status=LibraryFileArtifactStatus.failed,
             updated_at=3000.0,
         )
+        _insert_artifact(
+            session,
+            "file-2",
+            "artifact-poster",
+            status=LibraryFileArtifactStatus.succeeded,
+            updated_at=4000.0,
+            last_success_at=4000.0,
+            artifact_type=LibraryFileArtifactType.poster,
+        )
+        _insert_event(
+            session,
+            "tmdb:movie:1",
+            EventType.MEDIA_SERVER_SYNC_COMPLETED.value,
+            "info",
+            "NFO updated",
+            "1970-01-01T01:23:20",
+        )
+        _insert_event(
+            session,
+            "tmdb:movie:2",
+            EventType.DANMU_GENERATE_COMPLETED.value,
+            "info",
+            "Danmu updated",
+            "1970-01-01T01:40:00",
+        )
         _insert_task(session, "tmdb:movie:2", "task-2", "completed", "1970-01-01T00:25:00")
         session.commit()
 
     page = media_management_repository.list_page(sort="activity", direction="desc", limit=10, offset=0)
 
     assert page.total == 2
-    assert [str(row.media_id) for row in page.rows] == ["tmdb:movie:1", "tmdb:movie:2"]
-    assert page.rows[0].activity_ts == 2000.0
-    assert page.rows[0].last_artifact_ts == 2000.0
-    assert page.rows[1].last_artifact_ts is None
+    assert [str(row.media_id) for row in page.rows] == ["tmdb:movie:2", "tmdb:movie:1"]
+    assert page.rows[0].activity_ts == 1500.0
+    assert page.rows[0].last_artifact_ts is None
+    assert page.rows[1].activity_ts == 1200.0
+    assert page.rows[1].last_artifact_ts == 1200.0
 
 
 def test_media_management_active_task_statuses_include_migrating():

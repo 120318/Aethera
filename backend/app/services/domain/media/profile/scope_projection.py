@@ -183,6 +183,14 @@ def _scope_douban_vote_average(
     return selected_rating if selected_rating is not None else existing.douban_vote_average if existing else None
 
 
+def _scope_douban_overview(
+    media: MediaFullInfo,
+    existing: MediaProfileScope | None,
+) -> str | None:
+    incoming = str(media.douban_overview or "").strip()
+    return incoming or (existing.douban_overview if existing else None)
+
+
 def _scope_douban_rating_count(
     media: MediaFullInfo,
     selected_season,
@@ -250,6 +258,7 @@ def build_scope_from_media(media: MediaFullInfo, existing: MediaProfileScope | N
         episode_count_override=media.episode_count_override or (selected_season.episode_count_override if selected_season else None),
         poster_path=selected_season.poster_path if selected_season else existing.poster_path if existing else media.poster_path,
         douban_id=_scope_douban_id(media, selected_season, existing),
+        douban_overview=_scope_douban_overview(media, existing),
         douban_vote_average=_scope_douban_vote_average(media, selected_season, existing),
         douban_rating_count=_scope_douban_rating_count(media, selected_season, existing),
         first_air_date=media.first_air_date or (schedule.first_air_date if schedule else None) or (existing.first_air_date if existing else None),

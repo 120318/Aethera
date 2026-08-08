@@ -19,7 +19,8 @@ from app.db.sql.models import (
 )
 from app.db.sql.session import SessionLocal
 from app.schemas.domain.download import TaskStatus
-from app.schemas.domain.library import LibraryFileArtifactStatus
+from app.schemas.domain.event import EventType
+from app.schemas.domain.library import LibraryFileArtifactStatus, LibraryFileArtifactType
 from app.schemas.domain.media_types import MediaType
 from app.schemas.runtime.media_management import MediaManagementRowsPage, MediaManagementSummary, MediaManagementListRow
 from app.utils.library_paths import MEDIA_FILE_EXTENSIONS
@@ -29,6 +30,11 @@ NON_BUSINESS_EVENT_PREFIXES = (
     "addon.run.",
     "notification.",
     "scheduler.",
+)
+
+NON_ACTIVITY_EVENT_TYPES = (
+    EventType.MEDIA_SERVER_SYNC_COMPLETED.value,
+    EventType.DANMU_GENERATE_COMPLETED.value,
 )
 
 ACTIVE_TASK_STATUSES = (
@@ -311,15 +317,11 @@ class MediaManagementRepository:
             LibraryEpisodeORM.season,
             MediaManagementRepository._task_season_expr(),
         )
-        artifact_activity_ts = func.coalesce(
-            LibraryFileArtifactORM.last_success_at,
-            LibraryFileArtifactORM.updated_at,
-        )
         return (
             select(
                 resolved_media_id.label("media_id"),
                 artifact_season.label("season_number"),
-                func.max(artifact_activity_ts).label("last_artifact_ts"),
+                func.max(LibraryFileArtifactORM.created_at).label("last_artifact_ts"),
             )
             .select_from(LibraryFileArtifactORM)
             .join(LibraryFileORM, LibraryFileORM.id == LibraryFileArtifactORM.library_file_id)
@@ -327,6 +329,13 @@ class MediaManagementRepository:
             .outerjoin(TaskORM, TaskORM.id == LibraryFileORM.task_id)
             .where(
                 LibraryFileArtifactORM.status == LibraryFileArtifactStatus.succeeded.value,
+                LibraryFileArtifactORM.artifact_type.in_(
+                    (
+                        LibraryFileArtifactType.nfo.value,
+                        LibraryFileArtifactType.danmu_xml.value,
+                        LibraryFileArtifactType.danmu_ass.value,
+                    )
+                ),
                 resolved_media_id.is_not(None),
             )
             .group_by(resolved_media_id, artifact_season)
@@ -352,6 +361,7 @@ class MediaManagementRepository:
             )
             .where(EventORM.media_id.is_not(None))
             .where(excluded)
+            .where(EventORM.type.not_in(NON_ACTIVITY_EVENT_TYPES))
             .subquery("media_management_ranked_events")
         )
         return (

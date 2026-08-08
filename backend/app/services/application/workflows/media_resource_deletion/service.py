@@ -1,5 +1,6 @@
 from typing import Literal
 
+from app.schemas.domain.event import EventActor
 from app.schemas.exception.exceptions import DownloadException
 from app.schemas.media_id import MediaID
 from app.services.domain.download import download_service
@@ -17,6 +18,7 @@ class MediaResourceDeletionService:
         mode: Literal["tasks_only", "tasks_and_library"],
         delete_files: bool,
         force: bool,
+        actor: EventActor = EventActor.system,
     ) -> tuple[int, int]:
         async with domain_lock_service.acquire_media_delete(media_id, mode) as acquired:
             if not acquired:
@@ -28,6 +30,7 @@ class MediaResourceDeletionService:
                     media_id,
                     force=force,
                     season=season_number,
+                    actor=actor,
                 )
                 if season_number is None:
                     await library_service.archive_media_entry(media_id)

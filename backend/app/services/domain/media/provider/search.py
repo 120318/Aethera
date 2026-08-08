@@ -3,16 +3,12 @@ import logging
 
 import httpx
 
-from app.clients.douban import DoubanClient
 from app.schemas.config import BrowseSource
 from app.schemas.domain.media import MediaIdentity
-from app.schemas.domain.media_source import MediaSourceLookup, MediaSourceName
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.search_models import MediaSearchResult
-from app.schemas.domain.vendor import Vendor
 from app.schemas.exception import ConfigurationException, MediaNotFoundException
 from app.schemas.media_id import MediaID, Provider
-from app.services.domain.media.provider.normalization import dedupe_vendors, subject_type
 
 logger = logging.getLogger("app.services.media")
 
@@ -150,14 +146,3 @@ async def search_tmdb(
         return collected[start:start + limit]
     except (httpx.HTTPError, RuntimeError, ValueError):
         return []
-
-
-async def get_source_vendors(client: DoubanClient | None, lookup: MediaSourceLookup) -> list[Vendor]:
-    if lookup.source != MediaSourceName.douban or not client:
-        return []
-    try:
-        detail = await client.get_subject_detail(lookup.source_id, subject_type(lookup.media_type))
-    except (httpx.HTTPError, RuntimeError, ValueError):
-        logger.warning("Failed to get douban vendors for %s:%s", lookup.media_type.value, lookup.source_id)
-        return []
-    return dedupe_vendors(detail.vendors or []) if detail else []

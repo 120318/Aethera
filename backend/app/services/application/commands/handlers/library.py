@@ -5,6 +5,7 @@ import uuid
 from app.schemas.exception.exceptions import InvalidRequestException, ResourceNotFoundException
 from app.schemas.domain.command import (
     CommandCreateRequest,
+    CommandInitiator,
     CommandRecord,
     CommandResult,
     CommandTargetType,
@@ -15,6 +16,7 @@ from app.schemas.domain.command import (
     LibraryFileStorageChangeCommandRecordPayload,
     MediaDeleteCommandRecordPayload,
 )
+from app.schemas.domain.event import EventActor
 from app.schemas.domain.library import LibraryFile
 from app.schemas.runtime.command_runtime import CommandActionContext
 from app.services.application.workflows.danmu import danmu_application_service
@@ -65,6 +67,7 @@ class LibraryFileDeleteCommandHandler:
 
     async def execute(self, command: CommandRecord) -> CommandResult:
         payload = command.payload
+        actor = EventActor.user if command.initiator == CommandInitiator.MANUAL else EventActor.system
         library_file = await library_service.find_file_by_id(payload.file_id)
         expected_total_count = 0
         task_id = library_file.task_id if library_file else None
@@ -75,10 +78,10 @@ class LibraryFileDeleteCommandHandler:
             files = await library_service.get_files_by_media(payload.target.media_id)
             for item in files:
                 if item.task_id == task_id and library_service.matches_package_root(item, payload.package_root):
-                    await library_service.delete_file_by_id(item.id, force=payload.force)
+                    await library_service.delete_file_by_id(item.id, force=payload.force, actor=actor)
                     deleted_count += 1
         else:
-            await library_service.delete_file_by_id(payload.file_id, force=payload.force)
+            await library_service.delete_file_by_id(payload.file_id, force=payload.force, actor=actor)
             deleted_count = 1
         if task_id and expected_total_count > 0:
             await download_service.refresh_completed_task_health(
@@ -325,12 +328,14 @@ class MediaDeleteCommandHandler:
 
     async def execute(self, command: CommandRecord) -> CommandResult:
         payload = command.payload
+        actor = EventActor.user if command.initiator == CommandInitiator.MANUAL else EventActor.system
         deleted_tasks_count, deleted_library_files_count = await media_resource_deletion_service.delete_media_resources(
             payload.target.media_id,
             season_number=payload.target.season_number,
             mode=payload.mode,
             delete_files=payload.delete_files,
             force=payload.force,
+            actor=actor,
         )
 
         return CommandResult(

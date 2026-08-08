@@ -3,7 +3,7 @@ import { onUnmounted, ref, watch } from 'vue'
 import { getMediaManagementSummary, listMediaManagementItems } from '@/api/mediaManagement'
 import { upsertManagedItem } from '@/composables/mediaManagementPageSupport'
 
-export function useMediaManagement() {
+export function useMediaManagement(options = {}) {
   const summary = ref({
     total: 0,
     subscribed: 0,
@@ -18,8 +18,9 @@ export function useMediaManagement() {
   const initialLoading = ref(false)
   const refreshing = ref(false)
   const total = ref(0)
-  const first = ref(0)
   const rows = ref(10)
+  const initialPage = Number(options.initialPage)
+  const first = ref(Number.isInteger(initialPage) && initialPage > 1 ? (initialPage - 1) * rows.value : 0)
 
   const filters = ref({
     statuses: [],
@@ -122,6 +123,23 @@ export function useMediaManagement() {
   function onPage(event) {
     first.value = event.first
     rows.value = event.rows
+    options.onPageChange?.({
+      page: Math.floor(event.first / event.rows) + 1,
+      history: 'push',
+    })
+  }
+
+  function setPage(page) {
+    const normalized = Number(page)
+    const nextPage = Number.isInteger(normalized) && normalized > 0 ? normalized : 1
+    first.value = (nextPage - 1) * rows.value
+  }
+
+  function resetPage() {
+    const changed = first.value !== 0
+    first.value = 0
+    options.onPageChange?.({ page: 1, history: 'replace' })
+    return changed
   }
 
   watch([first, rows], () => {
@@ -131,15 +149,14 @@ export function useMediaManagement() {
   watch(
     () => [filters.value.mediaType, filters.value.sort, ...(filters.value.statuses || [])],
     () => {
-      first.value = 0
-      loadItems()
+      if (!resetPage()) loadItems()
     }
   )
 
   watch(
     () => filters.value.query,
     () => {
-      first.value = 0
+      resetPage()
       if (queryTimer) {
         window.clearTimeout(queryTimer)
       }
@@ -167,6 +184,7 @@ export function useMediaManagement() {
     first,
     rows,
     onPage,
+    setPage,
     patchItem,
     restoreItem,
     refreshSummary,

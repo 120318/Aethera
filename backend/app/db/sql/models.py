@@ -257,6 +257,7 @@ class MediaProfileScopeORM(Base):
     episode_count_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     poster_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     douban_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    douban_overview: Mapped[str | None] = mapped_column(Text, nullable=True)
     douban_vote_average: Mapped[float | None] = mapped_column(Float, nullable=True)
     douban_rating_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     first_air_date: Mapped[str | None] = mapped_column(Text, nullable=True)
