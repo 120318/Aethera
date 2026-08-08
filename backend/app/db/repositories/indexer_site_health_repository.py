@@ -163,6 +163,18 @@ class IndexerSiteHealthRepository:
             if not self._matches_outcome(row, status) or row.status != "unhealthy" or not row.notify_pending:
                 session.rollback()
                 return False
+            previous_event_ids = self._matching_unhealthy_event_ids(session, event.correlation_id or "")
+            if previous_event_ids:
+                session.execute(
+                    sqlite_insert(EventAcknowledgementORM)
+                    .values(
+                        [
+                            {"event_id": event_id, "acknowledged_at": notified_at.isoformat()}
+                            for event_id in previous_event_ids
+                        ]
+                    )
+                    .on_conflict_do_nothing(index_elements=[EventAcknowledgementORM.event_id])
+                )
             EventRepository.add_to_session(session, event)
             for dispatch_record in dispatch_records:
                 EventDispatchRepository.add_to_session(session, dispatch_record)

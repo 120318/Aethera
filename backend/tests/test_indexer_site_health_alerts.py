@@ -5,6 +5,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from app.db.repositories.indexer_site_health_repository import IndexerSiteHealthRepository
+from app.db.repositories.event_repository import EventRepository
 from app.db.sql.models import (
     EventAcknowledgementORM,
     EventDispatchORM,
@@ -805,6 +806,55 @@ def test_emit_unhealthy_event_queues_dispatch_and_cooldown_atomically():
     assert persisted_dispatch is not None
     assert saved is not None
     assert saved.last_notified_at == checked_at
+
+
+def test_emit_unhealthy_event_acknowledges_previous_matching_alert():
+    repo = IndexerSiteHealthRepository()
+    checked_at = datetime.now()
+    correlation_id = "indexer:dedupe-indexer:site:dedupe-site:unhealthy"
+    status = IndexerSiteHealthStatus(
+        indexer_id="dedupe-indexer",
+        site_id="dedupe-site",
+        status="unhealthy",
+        checked_at=checked_at,
+        consecutive_failures=27,
+        notify_pending=True,
+    )
+    repo.upsert(status)
+    previous_event = Event(
+        id="previous-dedupe-warning",
+        type=EventTypes.INDEXER_SITE_UNHEALTHY,
+        level=EventLevel.warning,
+        correlation_id=correlation_id,
+    )
+    current_event = Event(
+        id="current-dedupe-warning",
+        type=EventTypes.INDEXER_SITE_UNHEALTHY,
+        level=EventLevel.warning,
+        correlation_id=correlation_id,
+    )
+    with SessionLocal.begin() as session:
+        EventRepository.add_to_session(session, previous_event)
+
+    applied = repo.emit_unhealthy_event_if_current(status, current_event, [], checked_at)
+
+    with SessionLocal.begin() as session:
+        acknowledged_ids = set(session.execute(select(EventAcknowledgementORM.event_id)).scalars().all())
+        persisted_current = session.get(EventORM, current_event.id)
+        session.execute(
+            delete(EventAcknowledgementORM).where(EventAcknowledgementORM.event_id == previous_event.id)
+        )
+        session.execute(delete(EventORM).where(EventORM.id.in_([previous_event.id, current_event.id])))
+        session.execute(
+            delete(IndexerSiteHealthORM).where(
+                IndexerSiteHealthORM.indexer_id == status.indexer_id,
+                IndexerSiteHealthORM.site_id == status.site_id,
+            )
+        )
+
+    assert applied is True
+    assert persisted_current is not None
+    assert acknowledged_ids == {previous_event.id}
 
 
 def test_emit_unhealthy_event_rolls_back_when_dispatch_queue_insert_fails():

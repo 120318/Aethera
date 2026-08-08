@@ -100,6 +100,13 @@ class DownloadService:
             offset=offset,
         )
 
+    async def count_tasks(
+        self,
+        status: list[TaskStatus] | None = None,
+        media_id: MediaID | None = None,
+    ) -> int:
+        return await self.task_service.count_tasks(status=status, media_id=media_id)
+
     async def list_media_tasks_for_overview(self, *, status: list[TaskStatus] | None = None, media_id: MediaID | None = None) -> list[TaskData]:
         return await self.task_service.list_media_tasks_for_overview(status=status, media_id=media_id)
 

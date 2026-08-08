@@ -137,6 +137,17 @@ class DownloadTaskService:
         )
         return self.enrich_tasks_with_downloader_info(tasks)
 
+    async def count_tasks(
+        self,
+        *,
+        status: list[TaskStatus] | None = None,
+        media_id: MediaID | None = None,
+    ) -> int:
+        return await self._repo.count_with_filters(
+            status=self.normalize_status_values(status),
+            media_id=media_id,
+        )
+
     async def list_media_tasks_for_overview(
         self,
         *,

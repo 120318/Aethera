@@ -6,6 +6,7 @@ import { t } from '@/i18n'
 
 const EMPTY_SUMMARY = {
   active_action_count: 0,
+  active_download_count: 0,
   warning_event_count: 0,
   error_event_count: 0,
   bell_state: 'idle',
@@ -16,6 +17,7 @@ export const useNotificationCenterStore = defineStore('notification-center', () 
   const visible = ref(false)
   const summary = ref({ ...EMPTY_SUMMARY })
   const activeActions = ref([])
+  const activeDownloads = ref([])
   const events = ref([])
   const loading = ref(false)
   const markingAllRead = ref(false)
@@ -33,10 +35,17 @@ export const useNotificationCenterStore = defineStore('notification-center', () 
         timestamp: event.ts,
         record: event,
       })),
+      ...activeDownloads.value.map(download => ({
+        id: `download:${download.id}`,
+        kind: 'download',
+        priority: 1,
+        timestamp: download.updated_at || download.created_at,
+        record: download,
+      })),
       ...activeActions.value.map(action => ({
         id: `action:${action.id}`,
         kind: 'action',
-        priority: 1,
+        priority: 2,
         timestamp: action.started_at || action.ts,
         record: action,
       })),
@@ -49,7 +58,9 @@ export const useNotificationCenterStore = defineStore('notification-center', () 
   const badgeCount = computed(() => {
     if (bellState.value === 'error') return summary.value.error_event_count || 0
     if (bellState.value === 'warning') return summary.value.warning_event_count || 0
-    if (bellState.value === 'running') return summary.value.active_action_count || 0
+    if (bellState.value === 'running') {
+      return (summary.value.active_action_count || 0) + (summary.value.active_download_count || 0)
+    }
     return 0
   })
   const hasActiveSignal = computed(() => bellState.value === 'error' || bellState.value === 'warning' || bellState.value === 'running')
@@ -73,6 +84,7 @@ export const useNotificationCenterStore = defineStore('notification-center', () 
       const data = await getEventCenter()
       summary.value = data?.summary || { ...EMPTY_SUMMARY }
       activeActions.value = data?.active_actions || []
+      activeDownloads.value = data?.active_downloads || []
       events.value = data?.events || []
       if (summary.value.bell_state === 'idle') {
         activityBoostUntil.value = 0
@@ -111,6 +123,7 @@ export const useNotificationCenterStore = defineStore('notification-center', () 
     visible,
     summary,
     activeActions,
+    activeDownloads,
     events,
     centerItems,
     loading,

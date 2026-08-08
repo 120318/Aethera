@@ -1757,7 +1757,9 @@ export default {
     noRunningDescription: '当前没有正在运行的服务',
     eventMeta: '事件',
     runningMeta: '正在处理',
+    downloadMeta: '下载任务',
     runningCount: '运行中 {count}',
+    downloadingCount: '下载中 {count}',
     warningCount: '警告 {count}',
     errorCount: '错误 {count}',
     markRead: '标为已读',
@@ -1766,6 +1768,13 @@ export default {
     tooltipWarning: '通知中心：{count} 个警告',
     tooltipRunning: '通知中心：{count} 个任务运行中',
     tooltipIdle: '通知中心',
+    downloadType: '下载任务',
+    downloadMessage: '{title} · {progress}%',
+    downloadStatuses: {
+      pending: '等待下载',
+      downloading: '下载中',
+      paused: '已暂停',
+    },
     levels: {
       warning: '警告',
       error: '错误',

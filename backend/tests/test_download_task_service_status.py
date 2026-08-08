@@ -14,6 +14,7 @@ from app.services.integration.download.client import DownloadClientCapabilities
 class _FakeRepo:
     def __init__(self, tasks: list[TaskData]) -> None:
         self.tasks = {task.id: task for task in tasks}
+        self.count_filters = []
 
     async def find_by_ids(self, task_ids: list[str]) -> list[TaskData]:
         return [self.tasks[task_id] for task_id in task_ids if task_id in self.tasks]
@@ -23,6 +24,17 @@ class _FakeRepo:
 
     async def delete_by_id(self, task_id: str) -> bool:
         return self.tasks.pop(task_id, None) is not None
+
+    async def count_with_filters(self, *, status=None, media_id=None) -> int:
+        self.count_filters.append({"status": status, "media_id": media_id})
+        return len(
+            [
+                task
+                for task in self.tasks.values()
+                if (not status or task.status.value in status)
+                and (media_id is None or task.media_id == media_id)
+            ]
+        )
 
 
 class _FakeClient:
@@ -111,6 +123,25 @@ async def test_get_torrent_status_by_task_ids_assigns_shared_hash_status_to_all_
 
     assert result == {task_a.id: status, task_b.id: status}
     assert client.requested_hashes == [["shared-hash"]]
+
+
+@pytest.mark.asyncio
+async def test_count_tasks_uses_status_count_query_without_loading_task_rows():
+    task = _task("task-1")
+    repo = _FakeRepo([task])
+    service = DownloadTaskService(
+        repo,
+        _FakeClientFactory(_FakeClient([])),
+        downloader_display_map_provider=lambda: {},
+        refresh_completed_task_health=lambda *_: None,
+    )
+
+    count = await service.count_tasks(status=[TaskStatus.PENDING, TaskStatus.DOWNLOADING])
+
+    assert count == 1
+    assert repo.count_filters == [
+        {"status": [TaskStatus.PENDING.value, TaskStatus.DOWNLOADING.value], "media_id": None}
+    ]
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,14 @@
 from datetime import datetime
 from types import SimpleNamespace
 
+import pytest
+
 from app.schemas.domain.action import ActionKind, ActionRecord, ActionStatus
-from app.schemas.domain.event import Event, EventCenterBellState, EventLevel, EventType
+from app.schemas.domain.download import TaskStatus
+from app.schemas.domain.event import Event, EventCenterBellState, EventCenterResponse, EventCenterSummary, EventLevel, EventType
+from app.schemas.domain.media import MediaIdentity
+from app.schemas.media_id import MediaID
+from app.services.application.views.event_center import EventCenterViewService
 from app.services.audit.action_service import ActionService
 from app.services.audit.event_service import EventService
 
@@ -108,3 +114,157 @@ def test_event_center_acknowledges_all_attention_events(monkeypatch):
     assert center.summary.error_event_count == 0
     assert center.summary.warning_event_count == 0
     assert center.events == []
+
+
+@pytest.mark.asyncio
+async def test_event_center_includes_active_downloads_and_sets_running_state(monkeypatch):
+    service = EventCenterViewService()
+    media = MediaIdentity(
+        media_id=MediaID.parse("tmdb:tv:2"),
+        season_number=1,
+        title="Show",
+        year=2026,
+    )
+    task = SimpleNamespace(
+        id="task-1",
+        status=TaskStatus.DOWNLOADING,
+        progress=0.42,
+        context=SimpleNamespace(search_result=None, resource_title="Show.S01E01", media=media),
+        metadata=None,
+        created_at=datetime(2026, 1, 1),
+        updated_at=datetime(2026, 1, 2),
+    )
+    monkeypatch.setattr(
+        "app.services.application.views.event_center.event_service",
+        SimpleNamespace(get_center=lambda: EventCenterResponse(summary=EventCenterSummary())),
+    )
+    calls = {"list": []}
+
+    async def get_tasks(**kwargs):
+        calls["list"].append(kwargs)
+        return (
+            [task]
+            if kwargs["status"] == [TaskStatus.PENDING, TaskStatus.DOWNLOADING]
+            else []
+        )
+
+    async def count_tasks(**kwargs):
+        calls["count"] = kwargs
+        return 1
+
+    monkeypatch.setattr(
+        "app.services.application.views.event_center.download_service",
+        SimpleNamespace(get_tasks=get_tasks, count_tasks=count_tasks),
+    )
+
+    center = await service.get_center()
+
+    assert center.summary.active_download_count == 1
+    assert center.summary.bell_state == EventCenterBellState.running
+    assert center.active_downloads[0].title == "Show.S01E01"
+    assert center.active_downloads[0].media == media
+    assert calls["list"] == [
+        {"status": [TaskStatus.PENDING, TaskStatus.DOWNLOADING], "limit": 50},
+        {"status": [TaskStatus.PAUSED], "limit": 49},
+    ]
+    assert calls["count"]["status"] == [TaskStatus.PENDING, TaskStatus.DOWNLOADING]
+
+
+@pytest.mark.asyncio
+async def test_event_center_lists_paused_download_without_running_signal(monkeypatch):
+    service = EventCenterViewService()
+    media = MediaIdentity(
+        media_id=MediaID.parse("tmdb:tv:3"),
+        season_number=1,
+        title="Paused show",
+        year=2026,
+    )
+    task = SimpleNamespace(
+        id="task-paused",
+        status=TaskStatus.PAUSED,
+        progress=0.42,
+        context=SimpleNamespace(search_result=None, resource_title="Paused release", media=media),
+        metadata=None,
+        created_at=datetime(2026, 1, 1),
+        updated_at=datetime(2026, 1, 2),
+    )
+    monkeypatch.setattr(
+        "app.services.application.views.event_center.event_service",
+        SimpleNamespace(get_center=lambda: EventCenterResponse(summary=EventCenterSummary())),
+    )
+    monkeypatch.setattr(
+        "app.services.application.views.event_center.download_service",
+        SimpleNamespace(
+            get_tasks=lambda **kwargs: _async_value(
+                [task] if kwargs["status"] == [TaskStatus.PAUSED] else []
+            ),
+            count_tasks=lambda **_kwargs: _async_value(0),
+        ),
+    )
+
+    center = await service.get_center()
+
+    assert center.summary.active_download_count == 0
+    assert center.summary.bell_state == EventCenterBellState.idle
+    assert [item.id for item in center.active_downloads] == ["task-paused"]
+    assert center.active_downloads[0].media == media
+
+
+@pytest.mark.asyncio
+async def test_event_center_prioritizes_running_downloads_before_paused_fillers(monkeypatch):
+    service = EventCenterViewService()
+    media = MediaIdentity(
+        media_id=MediaID.parse("tmdb:tv:4"),
+        season_number=1,
+        title="Show",
+        year=2026,
+    )
+
+    def task(task_id: str, status: TaskStatus):
+        return SimpleNamespace(
+            id=task_id,
+            status=status,
+            progress=0.42,
+            context=SimpleNamespace(search_result=None, resource_title=task_id, media=media),
+            metadata=None,
+            created_at=datetime(2026, 1, 1),
+            updated_at=datetime(2026, 1, 2),
+        )
+
+    running_task = task("running", TaskStatus.DOWNLOADING)
+    paused_tasks = [task(f"paused-{index}", TaskStatus.PAUSED) for index in range(60)]
+    calls = []
+
+    async def get_tasks(**kwargs):
+        calls.append(kwargs)
+        if kwargs["status"] == [TaskStatus.PENDING, TaskStatus.DOWNLOADING]:
+            return [running_task]
+        return paused_tasks[: kwargs["limit"]]
+
+    monkeypatch.setattr(
+        "app.services.application.views.event_center.event_service",
+        SimpleNamespace(get_center=lambda: EventCenterResponse(summary=EventCenterSummary())),
+    )
+    monkeypatch.setattr(
+        "app.services.application.views.event_center.download_service",
+        SimpleNamespace(
+            get_tasks=get_tasks,
+            count_tasks=lambda **_kwargs: _async_value(1),
+        ),
+    )
+
+    center = await service.get_center()
+
+    assert len(center.active_downloads) == 50
+    assert center.active_downloads[0].id == "running"
+    assert [item.id for item in center.active_downloads[1:]] == [
+        f"paused-{index}" for index in range(49)
+    ]
+    assert calls == [
+        {"status": [TaskStatus.PENDING, TaskStatus.DOWNLOADING], "limit": 50},
+        {"status": [TaskStatus.PAUSED], "limit": 49},
+    ]
+
+
+async def _async_value(value):
+    return value

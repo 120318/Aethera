@@ -13,6 +13,7 @@
 
       <div class="flex flex-wrap items-center gap-item text-caption text-muted">
         <AppTag :label="$t('notificationCenter.runningCount', { count: summary.active_action_count || 0 })" tone="accent" />
+        <AppTag :label="$t('notificationCenter.downloadingCount', { count: summary.active_download_count || 0 })" tone="accent" />
         <AppTag :label="$t('notificationCenter.warningCount', { count: summary.warning_event_count || 0 })" tone="warn" />
         <AppTag :label="$t('notificationCenter.errorCount', { count: summary.error_event_count || 0 })" tone="danger" />
         <Button
@@ -245,22 +246,30 @@ function itemRecord(item) {
 
 function itemStatusLabel(item) {
   if (item?.kind === 'event') return t(`notificationCenter.levels.${itemRecord(item).level}`)
+  if (item?.kind === 'download') return t(`notificationCenter.downloadStatuses.${itemRecord(item).status}`)
   return getStatusLabel(itemRecord(item).status)
 }
 
 function itemStatusTone(item) {
   if (item?.kind === 'event') return itemRecord(item).level === 'error' ? 'danger' : 'warn'
+  if (item?.kind === 'download') return itemRecord(item).status === 'paused' ? 'warn' : 'accent'
   return getStatusTone(itemRecord(item).status)
 }
 
 function itemStatusIcon(item) {
   if (item?.kind === 'event') return itemRecord(item).level === 'error' ? 'pi pi-times-circle' : 'pi pi-exclamation-triangle'
+  if (item?.kind === 'download') {
+    if (itemRecord(item).status === 'paused') return 'pi pi-pause-circle'
+    if (itemRecord(item).status === 'pending') return 'pi pi-clock'
+    return 'pi pi-spin pi-spinner'
+  }
   return itemRecord(item).status === 'running' ? 'pi pi-spin pi-spinner' : ''
 }
 
 function itemTypeLabel(item) {
   const record = itemRecord(item)
   if (item?.kind === 'event') return eventTypeLabel(record)
+  if (item?.kind === 'download') return t('notificationCenter.downloadType')
   return getActionTypeLabel(record)
 }
 
@@ -271,18 +280,28 @@ function itemTarget(item) {
 
 function itemMessage(item) {
   const record = itemRecord(item)
-  return item?.kind === 'event' ? eventMessage(record) : actionMessage(record)
+  if (item?.kind === 'event') return eventMessage(record)
+  if (item?.kind === 'download') {
+    return t('notificationCenter.downloadMessage', {
+      title: record.title || t('notificationCenter.noMessage'),
+      progress: Math.round(Number(record.progress || 0) * 100),
+    })
+  }
+  return actionMessage(record)
 }
 
 function itemTimestamp(item) {
   const record = itemRecord(item)
-  return item?.kind === 'event' ? record.ts : actionTimestamp(record)
+  if (item?.kind === 'event') return record.ts
+  if (item?.kind === 'download') return record.updated_at || record.created_at
+  return actionTimestamp(record)
 }
 
 function itemMetaText(item) {
   if (item?.kind === 'event') {
     return t('notificationCenter.eventMeta')
   }
+  if (item?.kind === 'download') return t('notificationCenter.downloadMeta')
   return t('notificationCenter.runningMeta')
 }
 

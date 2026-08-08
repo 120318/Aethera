@@ -49,7 +49,8 @@ export function useAppShell() {
       return t('notificationCenter.tooltipWarning', { count: summary.value.warning_event_count || 0 })
     }
     if (bellState.value === 'running') {
-      return t('notificationCenter.tooltipRunning', { count: summary.value.active_action_count || 0 })
+      const count = (summary.value.active_action_count || 0) + (summary.value.active_download_count || 0)
+      return t('notificationCenter.tooltipRunning', { count })
     }
     return t('notificationCenter.tooltipIdle')
   })
