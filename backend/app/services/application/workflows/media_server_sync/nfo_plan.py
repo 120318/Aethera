@@ -196,6 +196,14 @@ class MediaServerSyncNfoPlanService:
                 continue
             if not include_incomplete:
                 continue
+            existing_title = nfo_inspection.episode_nfo_title(path)
+            has_placeholder_title = any(
+                target.episode_number is not None
+                and self._is_placeholder_episode_title(existing_title, int(target.episode_number))
+                for target in grouped_targets
+            )
+            if nfo_inspection.is_episode_nfo_complete(path) and not has_placeholder_title:
+                continue
             season_number, _ = self._episode_target_numbers(media, Path(destination_path), None)
             if season_number is None:
                 targets.extend(grouped_targets)
@@ -210,7 +218,6 @@ class MediaServerSyncNfoPlanService:
                 continue
             episode_number, episode_info = selected
             title, overview = self._episode_expected_fields(episode_info, season_details, episode_number)
-            existing_title = nfo_inspection.episode_nfo_title(path)
             expected_title = title if self._is_placeholder_episode_title(existing_title, episode_number) else None
             if not nfo_inspection.is_episode_nfo_complete(
                 path,

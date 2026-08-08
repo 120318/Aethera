@@ -279,6 +279,36 @@ async def test_multi_episode_nfo_check_uses_selected_episode_metadata(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_complete_specific_episode_nfo_skips_provider_metadata(tmp_path: Path, monkeypatch):
+    episode_file = tmp_path / "Show" / "Season 01" / "Show.S01E01.mkv"
+    episode_file.parent.mkdir(parents=True)
+    episode_file.write_bytes(b"")
+    episode_file.with_suffix(".nfo").write_text(
+        "<episodedetails><title>Pilot</title><plot>Episode overview</plot></episodedetails>"
+    )
+
+    async def fail_episode_info(media, season_number, episode_number):
+        raise AssertionError("complete specific NFO must not load episode metadata")
+
+    async def fail_season_details(media, season_number):
+        raise AssertionError("complete specific NFO must not load season metadata")
+
+    monkeypatch.setattr(nfo_plan.media_service, "get_episode_info_for_media", fail_episode_info)
+    monkeypatch.setattr(nfo_plan.media_service, "get_season_details_for_media", fail_season_details)
+
+    targets = await nfo_plan.media_server_sync_nfo_plan.episode_nfo_targets_needing_sync(
+        _tv(),
+        MediaServerSyncInput(
+            transfer_results=[
+                MediaServerSyncTargetFile(destination_path=str(episode_file), episode_number=1),
+            ]
+        ),
+    )
+
+    assert targets == []
+
+
+@pytest.mark.asyncio
 async def test_generate_tv_nfo_replaces_placeholder_title_from_schedule(tmp_path: Path, monkeypatch):
     show_dir = tmp_path / "Show"
     season_dir = show_dir / "Season 01"
