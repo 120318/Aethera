@@ -140,7 +140,7 @@ class EventCenterDownload(BaseModel):
     status: TaskStatus
     progress: float = Field(default=0.0, ge=0.0, le=1.0)
     title: str
-    media: MediaIdentity | None = None
+    media: MediaIdentity
     created_at: datetime
     updated_at: datetime
 
