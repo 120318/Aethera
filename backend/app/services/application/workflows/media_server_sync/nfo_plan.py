@@ -196,8 +196,6 @@ class MediaServerSyncNfoPlanService:
                 continue
             if not include_incomplete:
                 continue
-            if nfo_inspection.is_episode_nfo_complete(path):
-                continue
             season_number, _ = self._episode_target_numbers(media, Path(destination_path), None)
             if season_number is None:
                 targets.extend(grouped_targets)
@@ -206,33 +204,22 @@ class MediaServerSyncNfoPlanService:
             if season_number not in season_details_map:
                 season_details = await media_service.get_season_details_for_media(media, season_number)
                 season_details_map[season_number] = season_details
-            if await self._episode_group_needs_sync(media, season_number, grouped_targets, season_details, path):
+            selected = await self._select_episode_nfo_target(media, season_number, grouped_targets, season_details)
+            if selected is None:
                 targets.extend(grouped_targets)
-        return targets
-
-    async def _episode_group_needs_sync(
-        self,
-        media: MediaFullInfo,
-        season_number: int,
-        targets: list[MediaServerSyncTargetFile],
-        season_details: SeasonDetails | None,
-        path: Path,
-    ) -> bool:
-        for target in targets:
-            if not target.episode_number:
-                return True
-            episode_number = int(target.episode_number)
-            episode_info = await media_service.get_episode_info_for_media(media, season_number, episode_number)
-            episode_info = self._with_schedule_episode_title(media, episode_info, season_number, episode_number)
+                continue
+            episode_number, episode_info = selected
             title, overview = self._episode_expected_fields(episode_info, season_details, episode_number)
+            existing_title = nfo_inspection.episode_nfo_title(path)
+            expected_title = title if self._is_placeholder_episode_title(existing_title, episode_number) else None
             if not nfo_inspection.is_episode_nfo_complete(
                 path,
                 require_title=bool(title),
                 require_plot=bool(overview),
-                expected_title=title,
+                expected_title=expected_title,
             ):
-                return True
-        return False
+                targets.extend(grouped_targets)
+        return targets
 
     def _episode_target_numbers(self, media: MediaFullInfo, path: Path, episode_number: int | None) -> tuple[int | None, int | None]:
         _, season_number = media_server_sync_target.get_season_dir_and_number(path, media)

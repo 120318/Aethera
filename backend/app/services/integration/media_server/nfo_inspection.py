@@ -39,6 +39,11 @@ def is_episode_nfo_complete(
     return _element_text(root, "title") == normalized_expected_title
 
 
+def episode_nfo_title(path: Path | None) -> str:
+    root = _parse_root(path)
+    return _element_text(root, "title") if root is not None else ""
+
+
 def _common_required_fields(media: MediaFullInfo) -> list[str]:
     fields = ["title"]
     if (media.overview or "").strip():

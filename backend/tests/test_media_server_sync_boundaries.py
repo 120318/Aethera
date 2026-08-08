@@ -604,7 +604,7 @@ async def test_media_server_sync_needs_rewrites_placeholder_episode_title(tmp_pa
     video.write_text("video")
     (tmp_path / "Show" / "tvshow.nfo").write_text(_tvshow_nfo_text())
     (tmp_path / "Show" / "Season 01" / "season.nfo").write_text(_season_nfo_text())
-    video.with_suffix(".nfo").write_text(_episode_nfo_text(title="第 16 集", plot=""))
+    video.with_suffix(".nfo").write_text(_episode_nfo_text(title="第 16 集", plot="Existing overview"))
     layout = LibraryMediaLayout(
         media_id=media.media_id,
         media_type=media.media_type,
@@ -624,7 +624,7 @@ async def test_media_server_sync_needs_rewrites_placeholder_episode_title(tmp_pa
             season_number=season_number,
             episode_number=episode_number,
             title="第 16 集",
-            overview="",
+            overview="Existing overview",
         )
 
     async def fake_season_details(media, season_number):
