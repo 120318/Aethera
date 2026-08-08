@@ -279,6 +279,44 @@ async def test_multi_episode_nfo_check_uses_selected_episode_metadata(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_multi_episode_nfo_replaces_non_selected_episode_placeholder(tmp_path: Path, monkeypatch):
+    episode_file = tmp_path / "Show" / "Season 10" / "Show.S10E17E18.mkv"
+    episode_file.parent.mkdir(parents=True)
+    episode_file.write_bytes(b"")
+    episode_file.with_suffix(".nfo").write_text(
+        "<episodedetails><title>Episode 18</title><plot>Part one overview</plot></episodedetails>"
+    )
+    episode_infos = {
+        17: EpisodeInfo(season_number=10, episode_number=17, title="The Last One", overview="Part one overview"),
+        18: EpisodeInfo(season_number=10, episode_number=18, title="The Second One", overview="Part two overview"),
+    }
+
+    async def fake_episode_info(media, season_number, episode_number):
+        return episode_infos[episode_number]
+
+    async def fake_season_details(media, season_number):
+        return SeasonDetails(season_number=season_number, episodes=list(episode_infos.values()))
+
+    monkeypatch.setattr(nfo_plan.media_service, "get_episode_info_for_media", fake_episode_info)
+    monkeypatch.setattr(nfo_plan.media_service, "get_season_details_for_media", fake_season_details)
+
+    targets = await nfo_plan.media_server_sync_nfo_plan.episode_nfo_targets_needing_sync(
+        _tv().model_copy(update={"season_number": 10}),
+        MediaServerSyncInput(
+            transfer_results=[
+                MediaServerSyncTargetFile(destination_path=str(episode_file), episode_number=17),
+                MediaServerSyncTargetFile(destination_path=str(episode_file), episode_number=18),
+            ]
+        ),
+    )
+
+    assert targets == [
+        MediaServerSyncTargetFile(destination_path=str(episode_file), episode_number=17),
+        MediaServerSyncTargetFile(destination_path=str(episode_file), episode_number=18),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_complete_specific_episode_nfo_skips_provider_metadata(tmp_path: Path, monkeypatch):
     episode_file = tmp_path / "Show" / "Season 01" / "Show.S01E01.mkv"
     episode_file.parent.mkdir(parents=True)

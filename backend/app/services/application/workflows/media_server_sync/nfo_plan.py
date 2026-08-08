@@ -197,11 +197,7 @@ class MediaServerSyncNfoPlanService:
             if not include_incomplete:
                 continue
             existing_title = nfo_inspection.episode_nfo_title(path)
-            has_placeholder_title = any(
-                target.episode_number is not None
-                and self._is_placeholder_episode_title(existing_title, int(target.episode_number))
-                for target in grouped_targets
-            )
+            has_placeholder_title = self._is_placeholder_episode_title(existing_title)
             if nfo_inspection.is_episode_nfo_complete(path) and not has_placeholder_title:
                 continue
             season_number, _ = self._episode_target_numbers(media, Path(destination_path), None)
@@ -218,7 +214,7 @@ class MediaServerSyncNfoPlanService:
                 continue
             episode_number, episode_info = selected
             title, overview = self._episode_expected_fields(episode_info, season_details, episode_number)
-            expected_title = title if self._is_placeholder_episode_title(existing_title, episode_number) else None
+            expected_title = title if has_placeholder_title else None
             if not nfo_inspection.is_episode_nfo_complete(
                 path,
                 require_title=bool(title),
@@ -292,20 +288,22 @@ class MediaServerSyncNfoPlanService:
         )
 
     @staticmethod
-    def _is_placeholder_episode_title(title: str, episode_number: int) -> bool:
+    def _is_placeholder_episode_title(title: str, episode_number: int | None = None) -> bool:
         normalized = re.sub(r"\s+", " ", title.strip()).casefold()
-        number = str(int(episode_number))
         compact = normalized.replace(" ", "")
+        placeholder_number = compact[1:-1] if len(compact) > 2 else ""
         chinese_placeholder = (
             len(compact) > 2
             and ord(compact[0]) == CJK_EPISODE_PREFIX_CODEPOINT
             and ord(compact[-1]) == CJK_EPISODE_SUFFIX_CODEPOINT
-            and compact[1:-1].lstrip("0") == number
+            and placeholder_number.isdigit()
+            and (episode_number is None or placeholder_number.lstrip("0") == str(int(episode_number)))
         )
+        number_pattern = r"\d+" if episode_number is None else rf"0*{int(episode_number)}"
         patterns = (
-            rf"episode\s*0*{number}",
-            rf"ep\s*0*{number}",
-            rf"e\s*0*{number}",
+            rf"episode\s*{number_pattern}",
+            rf"ep\s*{number_pattern}",
+            rf"e\s*{number_pattern}",
         )
         return chinese_placeholder or any(re.fullmatch(pattern, normalized, flags=re.IGNORECASE) for pattern in patterns)
 
