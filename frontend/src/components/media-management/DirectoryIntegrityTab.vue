@@ -274,7 +274,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import Button from 'primevue/button'
@@ -294,6 +294,7 @@ import {
   scanDirectoryIntegrity,
 } from '@/api/config'
 import { useCommandRuntime } from '@/composables/useCommandRuntime'
+import { useDirectoryIntegrityPagination } from '@/composables/useDirectoryIntegrityPagination'
 import { useNotificationStore } from '@/stores/notification'
 import { useOperationsStore } from '@/stores/operations'
 import {
@@ -323,9 +324,13 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  page: {
+    type: Number,
+    default: 1,
+  },
 })
 
-const emit = defineEmits(['update:result'])
+const emit = defineEmits(['update:result', 'page-change'])
 
 const confirm = useConfirm()
 const notification = useNotificationStore()
@@ -346,8 +351,6 @@ const policyDialogVisible = ref(false)
 const policyLoading = ref(false)
 const policySaving = ref(false)
 const policyRows = ref([])
-const first = ref(0)
-const rows = ref(10)
 const detailDialogVisible = ref(false)
 const detailShowRaw = ref(false)
 const selectedDetailItem = ref(null)
@@ -448,6 +451,14 @@ const filteredDirectoryIntegrityItems = computed(() => {
     return true
   })
 })
+const { first, rows, onPage } = useDirectoryIntegrityPagination({
+  page: toRef(props, 'page'),
+  directoryFilter,
+  scopeFilter,
+  issueTypeFilters,
+  itemCount: computed(() => filteredDirectoryIntegrityItems.value.length),
+  onPageChange: payload => emit('page-change', payload),
+})
 
 const currentDirectorySummary = computed(() => ({
   ...currentDirectoryBaseSummary.value,
@@ -532,7 +543,6 @@ const prettySelectedDetailItem = computed(() => JSON.stringify(buildDetailRawPay
 watch(filteredDirectoryIntegrityItems, () => {
   const visible = new Set(filteredDirectoryIntegrityItems.value.map(item => item.id))
   selectedItemIds.value = selectedItemIds.value.filter(id => visible.has(id))
-  first.value = 0
 })
 
 watch(directoryOptionSummaries, () => {
@@ -598,11 +608,6 @@ function releaseScanPollingTarget(targetId) {
 
 function toggleAllVisibleRepairable(checked) {
   selectedItemIds.value = checked ? [...visibleRepairableIds.value] : []
-}
-
-function onPage(event) {
-  first.value = event.first
-  rows.value = event.rows
 }
 
 function openDetailDialog(item) {

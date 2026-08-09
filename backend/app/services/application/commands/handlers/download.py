@@ -25,6 +25,7 @@ from app.schemas.domain.command import (
 from app.schemas.domain.media import MediaTarget
 from app.schemas.runtime.command_runtime import CommandActionContext
 from app.schemas.domain.download import DownloadTaskCreateInput, TaskData, TaskSource
+from app.schemas.domain.event import EventActor
 from app.services.domain.download.downloader_change import TaskDownloaderChangeRequest
 from app.services.application.commands.target_labels import format_media_target_label
 from app.services.application.workflows.danmu import danmu_application_service
@@ -483,6 +484,7 @@ class TaskDeleteCommandHandler(TaskCommandSupport):
 
     async def execute(self, command: CommandRecord) -> CommandResult:
         payload = command.payload
+        actor = EventActor.user if command.initiator == CommandInitiator.MANUAL else EventActor.system
         deleted_library_files_count = 0
         deleted_task = False
         if payload.delete_task or payload.delete_library_files:
@@ -491,6 +493,7 @@ class TaskDeleteCommandHandler(TaskCommandSupport):
                 delete_files=payload.delete_files,
                 force=payload.force,
                 delete_library_files=payload.delete_library_files,
+                actor=actor,
             )
         return CommandResult(
             deleted_library_files_count=deleted_library_files_count,

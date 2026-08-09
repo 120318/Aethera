@@ -103,7 +103,6 @@ export function useMediaDetailPage() {
     applyDetailPageData,
     replaceTaskItem,
     markTaskDeleted,
-    setDetailSeasonContext,
   } = useMediaDetailData()
   const isTvMedia = computed(() => (
     detail.value?.type === 'tv'
@@ -577,11 +576,11 @@ export function useMediaDetailPage() {
 
   async function refreshSeasonScopedData(seasonNumber) {
     if (!mediaId.value || !seasonNumber) return
-    setDetailSeasonContext(seasonNumber)
     resetSeasonScopedData()
     resetResourceLoadMarker()
     resetSearchResultsForSeasonChange()
     await Promise.all([
+      fetchDetail(mediaId.value, seasonNumber),
       activeTab.value === 'resources' ? loadResourceInfoTracked(mediaId.value, seasonNumber) : Promise.resolve(),
       loadDetailOverview(mediaId.value, seasonNumber),
       loadTaskInfo(mediaId.value, seasonNumber),

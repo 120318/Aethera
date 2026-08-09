@@ -47,6 +47,7 @@ class MediaProfileScope(BaseModel):
     episode_count_override: int | None = None
     poster_path: str | None = None
     douban_id: str | None = None
+    douban_overview: str | None = None
     douban_vote_average: float | None = None
     douban_rating_count: int | None = None
     first_air_date: str | None = None

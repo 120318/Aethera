@@ -53,6 +53,15 @@ def test_manual_notification_suppression_keeps_task_change_failures_notifiable()
     )
 
 
+def test_manual_media_delete_notification_is_suppressed_without_hiding_system_deletes():
+    assert is_manual_notification_suppressed(
+        Event(id="event-1", type=EventType.MEDIA_DELETED, level=EventLevel.info, actor=EventActor.user)
+    )
+    assert not is_manual_notification_suppressed(
+        Event(id="event-2", type=EventType.MEDIA_DELETED, level=EventLevel.info, actor=EventActor.system)
+    )
+
+
 @pytest.mark.asyncio
 async def test_notification_send_failure_marks_action_without_emitting_event(monkeypatch):
     captured = {}

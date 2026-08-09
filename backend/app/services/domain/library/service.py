@@ -362,11 +362,23 @@ class LibraryService:
     async def delete_task_library_records(self, task_id: str) -> int:
         return await self._deletion.delete_task_library_records(task_id)
 
-    async def delete_task_library_files(self, task_id: str, force: bool = False) -> int:
-        return await self._deletion.delete_task_library_files(task_id, force=force)
+    async def delete_task_library_files(
+        self,
+        task_id: str,
+        force: bool = False,
+        *,
+        actor: EventActor = EventActor.system,
+    ) -> int:
+        return await self._deletion.delete_task_library_files(task_id, force=force, actor=actor)
 
-    async def delete_file_by_id(self, file_id: str, force: bool = False) -> bool:
-        return await self._deletion.delete_file_by_id(file_id, force=force)
+    async def delete_file_by_id(
+        self,
+        file_id: str,
+        force: bool = False,
+        *,
+        actor: EventActor = EventActor.system,
+    ) -> bool:
+        return await self._deletion.delete_file_by_id(file_id, force=force, actor=actor)
 
     async def delete_media_library_files(
         self,
@@ -374,8 +386,9 @@ class LibraryService:
         *,
         season: int | None = None,
         force: bool = False,
+        actor: EventActor = EventActor.system,
     ) -> int:
-        return await self._deletion.delete_media_library_files(media_id, season=season, force=force)
+        return await self._deletion.delete_media_library_files(media_id, season=season, force=force, actor=actor)
 
     async def archive_media_entry(self, media_id: MediaID) -> None:
         await self._deletion.archive_media_entry(media_id)

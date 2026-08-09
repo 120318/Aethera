@@ -30,6 +30,7 @@ from app.schemas.domain.command import (
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media import MediaExecutionSnapshot, MediaIdentity, MediaTarget
 from app.schemas.domain.download import TaskContext, TaskData, TaskStatus
+from app.schemas.domain.event import EventActor
 from app.schemas.runtime.directory_integrity import (
     DirectoryIntegrityIssueType,
     DirectoryIntegrityItem,
@@ -302,6 +303,7 @@ async def test_task_delete_handler_refreshes_health_when_library_side_disappears
         delete_files=True,
         force=False,
         delete_library_files=True,
+        actor=EventActor.user,
     )
 
 
@@ -326,6 +328,7 @@ async def test_media_delete_handler_counts_partial_success_when_some_tasks_are_a
         mode=command.payload.mode,
         delete_files=command.payload.delete_files,
         force=command.payload.force,
+        actor=EventActor.user,
     )
 
 

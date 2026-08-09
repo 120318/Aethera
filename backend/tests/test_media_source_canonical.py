@@ -33,6 +33,7 @@ class FakeDoubanClient:
             title="text text" if subject_type == "tv" else "Sample",
             original_title="Example",
             year=2025,
+            overview="Douban plot",
             rating=SimpleNamespace(value=8.5, count=1000),
             vendors=[],
             episodes_count=None,

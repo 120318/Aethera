@@ -8,6 +8,7 @@ import pytest
 os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
 from app.schemas.domain.library import LibraryFile
+from app.schemas.domain.event import EventActor
 from app.schemas.domain.media import MediaSimpleInfo
 from app.schemas.domain.media_types import MediaType
 from app.schemas.media_id import MediaID
@@ -81,13 +82,14 @@ async def test_delete_media_library_files_emits_delete_event_with_file_paths_whe
         lambda event, meta=None: emitted.update({"event": event, "meta": meta}),
     )
 
-    deleted_count = await service.delete_media_library_files(media_id)
+    deleted_count = await service.delete_media_library_files(media_id, actor=EventActor.user)
 
     assert deleted_count == 1
     assert emitted["meta"].media_id == media_id
     assert emitted["meta"].paths == ["/library/Movie (2024)/Movie.mkv"]
     assert emitted["meta"].delete_scope == "file"
     assert emitted["meta"].media_root_dir is None
+    assert emitted["event"].actor == EventActor.user
 
 
 @pytest.mark.asyncio
@@ -96,10 +98,11 @@ async def test_delete_media_resources_refreshes_profile_lifecycle(monkeypatch):
     service = MediaResourceDeletionService()
     archive_mock = AsyncMock()
     lifecycle_mock = AsyncMock(return_value=True)
+    delete_library_files_mock = AsyncMock(return_value=1)
 
     monkeypatch.setattr(
         "app.services.application.workflows.media_resource_deletion.service.library_service.delete_media_library_files",
-        AsyncMock(return_value=1),
+        delete_library_files_mock,
     )
     monkeypatch.setattr(
         "app.services.application.workflows.media_resource_deletion.service.library_service.archive_media_entry",
@@ -119,10 +122,17 @@ async def test_delete_media_resources_refreshes_profile_lifecycle(monkeypatch):
         mode="tasks_and_library",
         delete_files=True,
         force=False,
+        actor=EventActor.user,
     )
 
     assert deleted_tasks_count == 0
     assert deleted_library_files_count == 1
+    delete_library_files_mock.assert_awaited_once_with(
+        media_id,
+        force=False,
+        season=None,
+        actor=EventActor.user,
+    )
     archive_mock.assert_awaited_once_with(media_id)
     lifecycle_mock.assert_awaited_once_with(media_id)
 

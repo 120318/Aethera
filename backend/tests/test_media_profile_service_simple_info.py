@@ -95,6 +95,7 @@ def _scope(
     episode_count: int | None = None,
     episode_count_override: int | None = None,
     douban_id: str | None = None,
+    douban_overview: str | None = None,
     douban_vote_average: float | None = None,
     douban_rating_count: int | None = None,
     status_label: str | None = None,
@@ -110,6 +111,7 @@ def _scope(
         episode_count=episode_count,
         episode_count_override=episode_count_override,
         douban_id=douban_id,
+        douban_overview=douban_overview,
         douban_vote_average=douban_vote_average,
         douban_rating_count=douban_rating_count,
         status_label=status_label,
@@ -206,6 +208,28 @@ def test_profile_read_model_keeps_scope_douban_rating_source_without_score():
     assert media.rating_source == "douban"
     assert media.vote_average is None
     assert media.rating_count is None
+
+
+def test_profile_read_model_prefers_scoped_douban_overview_with_tmdb_fallback():
+    service = MediaProfileService(provider_service=None, schedule_service=MediaScheduleService())
+    media_id = MediaID.parse("tmdb:tv:273119")
+    profile = _ready_profile(media_id)
+    profile.overview = "TMDB overview"
+
+    douban_media = service.read_model.to_full(
+        media_id,
+        profile,
+        selected_scope=_scope(media_id, 1, douban_id="36721173", douban_overview="Douban overview"),
+    )
+    fallback_media = service.read_model.to_full(
+        media_id,
+        profile,
+        selected_scope=_scope(media_id, 2, douban_id="36721174"),
+    )
+
+    assert douban_media.overview == "Douban overview"
+    assert douban_media.douban_overview == "Douban overview"
+    assert fallback_media.overview == "TMDB overview"
 
 
 def test_build_profile_from_media_stores_only_current_tv_season_airings():
@@ -498,6 +522,51 @@ def test_build_scopes_from_media_preserves_existing_tv_scope_douban_id():
     assert scopes[0].douban_id == "36055705"
 
 
+def test_build_scopes_from_media_preserves_existing_douban_overview_when_refresh_is_empty():
+    media_id = MediaID.parse("tmdb:tv:273119")
+    media = MediaFullInfo(
+        media_id=media_id,
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=273119,
+        douban_id="36721173",
+        douban_overview=None,
+        season_number=1,
+        seasons=[MediaSeasonInfo(season_number=1, episode_count=16, douban_id="36721173")],
+    )
+
+    scopes = build_scopes_from_media(
+        media,
+        [_scope(media_id, 1, douban_id="36721173", douban_overview="Existing Douban overview")],
+    )
+
+    assert scopes[0].douban_overview == "Existing Douban overview"
+
+
+def test_build_scopes_from_media_clears_overview_when_douban_mapping_changes():
+    media_id = MediaID.parse("tmdb:tv:273119")
+    media = MediaFullInfo(
+        media_id=media_id,
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=273119,
+        douban_id="36721174",
+        douban_overview=None,
+        season_number=1,
+        seasons=[MediaSeasonInfo(season_number=1, episode_count=16, douban_id="36721174")],
+    )
+
+    scopes = build_scopes_from_media(
+        media,
+        [_scope(media_id, 1, douban_id="36721173", douban_overview="Old Douban overview")],
+    )
+
+    assert scopes[0].douban_id == "36721174"
+    assert scopes[0].douban_overview is None
+
+
 def test_build_scopes_from_media_uses_movie_douban_id():
     media_id = MediaID.parse("tmdb:movie:100")
     media = MediaFullInfo(
@@ -647,6 +716,7 @@ async def test_mapping_snapshot_update_preserves_refreshed_scope_fields():
         episode_count=54,
         status_label="Returning Series",
         douban_id="old-douban-id",
+        douban_overview="Old Douban overview",
         updated_at=100.0,
     )
     await repo.upsert_scope(scope)
@@ -674,7 +744,43 @@ async def test_mapping_snapshot_update_preserves_refreshed_scope_fields():
     assert saved.episode_count == 54
     assert saved.status_label == "Returning Series"
     assert saved.douban_id == "new-douban-id"
+    assert saved.douban_overview is None
     assert saved.episode_count_override == 24
+
+
+@pytest.mark.asyncio
+async def test_mapping_snapshot_update_preserves_overview_for_same_douban_mapping():
+    repo = MediaProfileScopeRepository()
+    media_id = MediaID.parse("tmdb:tv:312825")
+    await repo.upsert_scope(
+        MediaProfileScope(
+            media_id=media_id,
+            season_number=2,
+            media_type=MediaType.tv,
+            douban_id="same-douban-id",
+            douban_overview="Current Douban overview",
+            updated_at=100.0,
+        )
+    )
+
+    try:
+        await repo.update_mapping_snapshot(
+            media_id,
+            2,
+            douban_id="same-douban-id",
+            updated_at=200.0,
+        )
+        saved = await repo.find_by_media_id_and_season(media_id, 2)
+    finally:
+        with SessionLocal.begin() as session:
+            session.execute(
+                delete(MediaProfileScopeORM).where(
+                    MediaProfileScopeORM.media_id == str(media_id)
+                )
+            )
+
+    assert saved is not None
+    assert saved.douban_overview == "Current Douban overview"
 
 
 @pytest.mark.asyncio

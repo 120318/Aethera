@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 
 from app.db.sql.models import MediaProfileScopeORM
 from app.db.sql.session import SessionLocal
@@ -22,6 +22,7 @@ class MediaProfileScopeRepository:
                 "episode_count_override": row.episode_count_override,
                 "poster_path": row.poster_path,
                 "douban_id": row.douban_id,
+                "douban_overview": row.douban_overview,
                 "douban_vote_average": row.douban_vote_average,
                 "douban_rating_count": row.douban_rating_count,
                 "first_air_date": row.first_air_date,
@@ -83,6 +84,7 @@ class MediaProfileScopeRepository:
                 "episode_count_override": scope.episode_count_override,
                 "poster_path": scope.poster_path,
                 "douban_id": scope.douban_id,
+                "douban_overview": scope.douban_overview,
                 "douban_vote_average": scope.douban_vote_average,
                 "douban_rating_count": scope.douban_rating_count,
                 "first_air_date": scope.first_air_date,
@@ -119,22 +121,19 @@ class MediaProfileScopeRepository:
         episode_count_override: int | None = None,
         updated_at: float,
     ) -> bool:
-        values = {"updated_at": updated_at}
-        if douban_id is not None:
-            values["douban_id"] = douban_id
-        if episode_count_override is not None:
-            values["episode_count_override"] = episode_count_override
         with SessionLocal() as session:
-            result = session.execute(
-                update(MediaProfileScopeORM)
-                .where(
-                    MediaProfileScopeORM.media_id == str(media_id),
-                    MediaProfileScopeORM.season_number == int(season_number),
-                )
-                .values(**values)
-            )
+            row = session.get(MediaProfileScopeORM, (str(media_id), int(season_number)))
+            if row is None:
+                return False
+            if douban_id is not None:
+                if row.douban_id != douban_id:
+                    row.douban_overview = None
+                row.douban_id = douban_id
+            if episode_count_override is not None:
+                row.episode_count_override = episode_count_override
+            row.updated_at = updated_at
             session.commit()
-            return bool(result.rowcount)
+            return True
 
     async def upsert_scopes(self, scopes: list[MediaProfileScope]) -> bool:
         for scope in scopes:

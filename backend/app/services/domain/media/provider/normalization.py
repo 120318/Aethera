@@ -340,6 +340,7 @@ def build_tmdb_media_info(
     season_number: int | None,
     vendors: list[Vendor],
     douban_id: str | None = None,
+    douban_overview: str | None = None,
     episode_count_override: int | None = None,
 ) -> MediaFullInfo:
     has_display_rating = vote_average is not None and vote_average > 0
@@ -450,6 +451,7 @@ def build_tmdb_media_info(
         primary_metadata_source="tmdb",
         tvdb_id=details.external_ids.tvdb_id,
         overview=details.overview,
+        douban_overview=douban_overview,
         genres=details.genres,
         poster_path=details.poster_path,
         backdrop_path=details.backdrop_path,

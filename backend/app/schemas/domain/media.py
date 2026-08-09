@@ -147,6 +147,7 @@ class MediaFullInfo(MediaIdentity):
     metadata_capabilities: MediaCapabilities = Field(default_factory=MediaCapabilities)
     tvdb_id: Optional[str] = None
     overview: Optional[str] = None
+    douban_overview: Optional[str] = None
     genres: List[str] = []
     poster_path: Optional[str] = None
     backdrop_path: Optional[str] = None

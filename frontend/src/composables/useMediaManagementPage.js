@@ -26,7 +26,7 @@ import { resolveLocalizedRecordMessage } from '@/utils/localizedMessage'
 
 const MEDIA_DELETE_COMMAND_TYPES = ['media.delete']
 
-export function useMediaManagementPage() {
+export function useMediaManagementPage(options = {}) {
   const { t } = useI18n()
   const notification = useNotificationStore()
   const operations = useOperationsStore()
@@ -43,11 +43,12 @@ export function useMediaManagementPage() {
     first,
     rows,
     onPage,
+    setPage,
     patchItem,
     restoreItem,
     refreshSummary,
     refreshAll,
-  } = useMediaManagement()
+  } = useMediaManagement(options)
 
   const actionLoading = ref('')
   const directoryIntegrityResult = ref(null)
@@ -226,6 +227,7 @@ export function useMediaManagementPage() {
     first,
     rows,
     onPage,
+    setPage,
     summaryCards,
     directoryIntegrityResult,
     directoryIntegrityLoading,

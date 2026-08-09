@@ -58,7 +58,7 @@
                         v-tooltip.top="itemTarget(item)"
                         :to="getItemMediaRoute(item)"
                         class="truncate font-medium text-muted no-underline transition-colors hover:text-color"
-                        @click.stop
+                        @click.stop="handleMediaLinkClick"
                       >
                         {{ itemTarget(item) }}
                       </RouterLink>
@@ -152,6 +152,10 @@ const unreadEventCount = computed(() => (summary.value.warning_event_count || 0)
 
 function handleVisibleChange(value) {
   emit('update:visible', value)
+}
+
+function handleMediaLinkClick() {
+  emit('update:visible', false)
 }
 
 function parseMeta(record) {

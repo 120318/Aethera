@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from app.clients.factory import ClientFactory
 from app.db.repositories.task_repository import TaskRepository
 from app.schemas.domain.download import BatchJobResult, DownloadTaskCreateInput, TaskData, TaskEpisodeCoverage, TaskErrorStage, TaskSource, TaskStatus
+from app.schemas.domain.event import EventActor
 from app.schemas.domain.resource_search import ResourceSearchResult
 from app.schemas.domain.torrent_status import TorrentStatus
 from app.schemas.media_id import MediaID
@@ -134,12 +135,21 @@ class DownloadService:
     async def resume_task(self, task_id: str) -> bool:
         return await self.task_service.resume_task(task_id)
 
-    async def delete_task_with_cleanup(self, task_id: str, *, delete_files: bool = False, force: bool = False, delete_library_files: bool = False) -> tuple[int, bool]:
+    async def delete_task_with_cleanup(
+        self,
+        task_id: str,
+        *,
+        delete_files: bool = False,
+        force: bool = False,
+        delete_library_files: bool = False,
+        actor: EventActor = EventActor.system,
+    ) -> tuple[int, bool]:
         return await self.task_service.delete_task_with_cleanup(
             task_id,
             delete_files=delete_files,
             force=force,
             delete_library_files=delete_library_files,
+            actor=actor,
         )
 
     async def delete_task(self, task_id: str, delete_files: bool = False, force_delete_record: bool = False) -> bool:

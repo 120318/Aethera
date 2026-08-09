@@ -14,7 +14,7 @@ from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.schedule import MovieReleaseDateDetail
 from app.schemas.domain.vendor import Vendor
 from app.schemas.exception import MediaNotFoundException
-from app.schemas.integration.media.provider import ProviderMediaBundle, ProviderRating
+from app.schemas.integration.media.provider import ProviderMediaBundle, ProviderMediaDetail, ProviderRating
 from app.schemas.integration.media.provider import ProviderReleaseDateEntry, ProviderReleaseRegion
 from app.schemas.media_id import MediaID, Provider
 from app.services.domain.media.profile.context import media_profile_context_service
@@ -27,7 +27,6 @@ from app.services.domain.media.provider.normalization import (
     resolve_tmdb_selected_season,
     subject_type,
 )
-from app.services.domain.media.provider.search import get_source_vendors
 from app.services.integration.tmdb.schedule import tmdb_schedule_gateway
 from app.utils import build_loose_tmdb_search_title, build_tmdb_search_title
 
@@ -38,8 +37,21 @@ T = TypeVar("T")
 
 @dataclass(frozen=True)
 class DoubanMediaContext:
-    vendors: list[Vendor]
-    rating: ProviderRating
+    detail: ProviderMediaDetail | None = None
+
+    @property
+    def vendors(self) -> list[Vendor]:
+        return list(self.detail.vendors) if self.detail else []
+
+    @property
+    def rating(self) -> ProviderRating:
+        return self.detail.rating if self.detail else ProviderRating()
+
+    @property
+    def overview(self) -> str | None:
+        if not self.detail or not self.detail.overview:
+            return None
+        return self.detail.overview.strip() or None
 
 
 class MediaProviderDetail:
@@ -142,6 +154,7 @@ class MediaProviderDetail:
             season_number=season_number if mid.media_type == MediaType.tv else None,
             vendors=dedupe_vendors(list(douban_context.vendors) + list(tmdb_vendors)),
             douban_id=effective_douban_id,
+            douban_overview=douban_context.overview,
             episode_count_override=effective_episode_count_override,
         ))
         timings["build_enrich_media"] = (time.perf_counter() - phase_started_at) * 1000
@@ -187,6 +200,7 @@ class MediaProviderDetail:
                 rating_count=douban_context.rating.count if has_douban_rating else None,
                 rating_source="douban",
                 vendors=douban_context.vendors,
+                douban_overview=douban_context.overview,
                 episode_count_override=existing_mapping.episode_count_override if lookup.media_type == MediaType.tv else None,
             )
         try:
@@ -262,6 +276,7 @@ class MediaProviderDetail:
                 season_number=season_number,
                 vendors=dedupe_vendors(merged_vendors),
                 douban_id=detail.provider_id,
+                douban_overview=detail.overview,
                 episode_count_override=None,
             ))
 
@@ -286,31 +301,22 @@ class MediaProviderDetail:
         media_type: MediaType,
     ) -> DoubanMediaContext:
         if not douban_id:
-            timings["source_vendors"] = 0.0
-            timings["douban_rating"] = 0.0
-            return DoubanMediaContext(vendors=[], rating=ProviderRating())
-        douban_lookup = MediaSourceLookup(source=MediaSourceName.douban, source_id=douban_id, media_type=media_type)
-        vendors, rating = await asyncio.gather(
-            self._timed(timings, "source_vendors", get_source_vendors(self.clients.get_douban_client(), douban_lookup)),
-            self._timed(timings, "douban_rating", self.resolve_douban_rating(douban_id, media_type)),
-        )
-        return DoubanMediaContext(vendors=list(vendors), rating=rating)
-
-    async def resolve_douban_rating(self, douban_id: str | None, media_type: MediaType) -> ProviderRating:
-        if not douban_id:
-            return ProviderRating()
+            timings["douban_detail"] = 0.0
+            return DoubanMediaContext()
         client = self.clients.get_douban_client()
         if not client:
-            return ProviderRating()
+            timings["douban_detail"] = 0.0
+            return DoubanMediaContext()
         try:
-            detail = await client.get_subject_detail(douban_id, subject_type(media_type))
+            detail = await self._timed(
+                timings,
+                "douban_detail",
+                client.get_subject_detail(douban_id, subject_type(media_type)),
+            )
         except (httpx.HTTPError, RuntimeError, ValueError):
-            return ProviderRating()
-        if not detail:
-            return ProviderRating()
-        if self.has_rating(detail.rating):
-            return detail.rating
-        return ProviderRating()
+            logger.warning("Failed to get Douban detail for %s:%s", media_type.value, douban_id)
+            return DoubanMediaContext()
+        return DoubanMediaContext(detail=detail)
 
     async def build_tmdb_detail_from_mapping(
         self,
@@ -324,6 +330,7 @@ class MediaProviderDetail:
         rating_count: int | None,
         rating_source: str,
         vendors,
+        douban_overview: str | None = None,
         episode_count_override: int | None = None,
     ) -> MediaFullInfo:
         started_at = time.perf_counter()
@@ -354,6 +361,7 @@ class MediaProviderDetail:
             season_number=season_number if media_id.media_type == MediaType.tv else None,
             vendors=dedupe_vendors(list(vendors or []) + list(tmdb_vendors or [])),
             douban_id=douban_id,
+            douban_overview=douban_overview,
             episode_count_override=episode_count_override if media_id.media_type == MediaType.tv else None,
         ))
         timings["build_enrich_media"] = (time.perf_counter() - phase_started_at) * 1000

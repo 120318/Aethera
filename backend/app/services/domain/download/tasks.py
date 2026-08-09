@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 import qbittorrentapi
 
 from app.schemas.domain.download import TaskData, TaskStatus
+from app.schemas.domain.event import EventActor
 from app.schemas.domain.torrent_status import TorrentStatus
 from app.schemas.exception.exceptions import DownloadException
 from app.services.domain.directory import directory_service
@@ -231,6 +232,7 @@ class DownloadTaskService:
         delete_files: bool = False,
         force: bool = False,
         delete_library_files: bool = False,
+        actor: EventActor = EventActor.system,
     ) -> tuple[int, bool]:
         async with domain_lock_service.acquire_task_op(task_id) as acquired:
             if not acquired:
@@ -240,7 +242,11 @@ class DownloadTaskService:
             expected_total_count = 0
             if delete_library_files:
                 expected_total_count = await library_service.count_task_primary_files(task_id)
-                deleted_library_files_count = await library_service.delete_task_library_files(task_id=task_id, force=force)
+                deleted_library_files_count = await library_service.delete_task_library_files(
+                    task_id=task_id,
+                    force=force,
+                    actor=actor,
+                )
                 if expected_total_count > 0:
                     await self._refresh_completed_task_health(task_id, expected_total_count)
 

@@ -76,15 +76,14 @@ async def test_tmdb_movie_info_uses_douban_rating_when_douban_id_is_cached(monke
         "get_cached_tmdb_mapping",
         AsyncMock(return_value=(None, None, "1292052", None, None)),
     )
-    monkeypatch.setattr(
-        "app.services.domain.media.provider.detail.get_source_vendors",
-        AsyncMock(return_value=[]),
+    douban_client = SimpleNamespace(
+        get_subject_detail=AsyncMock(return_value=SimpleNamespace(
+            overview="Douban plot",
+            rating=ProviderRating(value=9.2, count=4567),
+            vendors=[],
+        )),
     )
-    monkeypatch.setattr(
-        service.detail,
-        "resolve_douban_rating",
-        AsyncMock(return_value=ProviderRating(value=9.2, count=4567)),
-    )
+    monkeypatch.setattr(service.clients, "get_douban_client", lambda: douban_client)
 
     media = await service.info(MediaID.parse("tmdb:movie:19995"))
 
@@ -94,6 +93,8 @@ async def test_tmdb_movie_info_uses_douban_rating_when_douban_id_is_cached(monke
     assert media.rating_count == 4567
     assert media.vote_count == 4567
     assert media.rating_source == "douban"
+    assert media.douban_overview == "Douban plot"
+    douban_client.get_subject_detail.assert_awaited_once_with("1292052", "movie")
 
 
 @pytest.mark.asyncio
@@ -111,11 +112,6 @@ async def test_tmdb_tv_info_shows_empty_douban_rating_when_douban_detail_rating_
         "get_cached_tmdb_mapping",
         AsyncMock(return_value=(None, None, "37125831", None, None)),
     )
-    monkeypatch.setattr(
-        "app.services.domain.media.provider.detail.get_source_vendors",
-        AsyncMock(return_value=[]),
-    )
-
     douban_client = SimpleNamespace(
         get_subject_detail=AsyncMock(return_value=SimpleNamespace(
             title="Sample",

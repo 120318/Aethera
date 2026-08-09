@@ -74,7 +74,13 @@ class LibraryDeletionWorker:
         )
         return files_deleted
 
-    async def delete_task_library_files(self, task_id: str, force: bool = False) -> int:
+    async def delete_task_library_files(
+        self,
+        task_id: str,
+        force: bool = False,
+        *,
+        actor: EventActor = EventActor.system,
+    ) -> int:
         files = await self.query.get_files_by_task(task_id)
         media_id = files[0].media_id if files else None
         delete_events = self._group_delete_event_files(files)
@@ -94,10 +100,17 @@ class LibraryDeletionWorker:
                     directory_id=directory_id,
                     delete_scope="file",
                     season_number=self._library_files_season_number(event_files),
+                    actor=actor,
                 )
         return deleted_count
 
-    async def delete_file_by_id(self, file_id: str, force: bool = False) -> bool:
+    async def delete_file_by_id(
+        self,
+        file_id: str,
+        force: bool = False,
+        *,
+        actor: EventActor = EventActor.system,
+    ) -> bool:
         async with domain_lock_service.acquire_library_file_op(file_id) as acquired:
             if not acquired:
                 raise DownloadException("backendErrors.fileBusy")
@@ -117,6 +130,7 @@ class LibraryDeletionWorker:
                 directory_id=library_file.directory_id,
                 delete_scope="file",
                 season_number=self._library_files_season_number([library_file]),
+                actor=actor,
             )
             return True
 
@@ -126,6 +140,7 @@ class LibraryDeletionWorker:
         *,
         force: bool = False,
         season: int | None = None,
+        actor: EventActor = EventActor.system,
     ) -> int:
         files = await self.query.get_files_by_media(media_id, season=season)
         file_ids = list({file.id for file in files if file.id})
@@ -164,6 +179,7 @@ class LibraryDeletionWorker:
                 delete_scope="media_root" if media_root_dir else "file",
                 media_root_dir=media_root_dir,
                 season_number=season or self._library_files_season_number(event_files),
+                actor=actor,
             )
         return deleted_count
 
@@ -208,6 +224,7 @@ class LibraryDeletionWorker:
         delete_scope: str,
         media_root_dir: str | None = None,
         season_number: int | None = None,
+        actor: EventActor = EventActor.system,
     ) -> None:
         if not paths:
             return
@@ -222,7 +239,7 @@ class LibraryDeletionWorker:
             MediaEventCreate(
                 type=EventTypes.MEDIA_DELETED,
                 media=media,
-                actor=EventActor.system,
+                actor=actor,
                 source=EventSource.base,
                 entities=[EventEntityRef(type="media", id=str(media_id))],
             ),

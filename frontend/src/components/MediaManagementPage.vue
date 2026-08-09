@@ -7,7 +7,12 @@
       </div>
     </div>
 
-    <AppTabs v-model="activeTab" :tabs="managementTabs" content-body-class="media-management-tab-body">
+    <AppTabs
+      :model-value="activeTab"
+      :tabs="managementTabs"
+      content-body-class="media-management-tab-body"
+      @update:model-value="handleTabChange"
+    >
       <section v-if="activeTab === 'media'" class="flex flex-col gap-item">
         <div v-if="summaryLoading" class="summary-grid">
           <div v-for="index in summarySkeletonCount" :key="index" class="ui-panel summary-card p-container flex flex-col gap-item">
@@ -138,6 +143,8 @@
         <DirectoryIntegrityTab
           v-model:result="directoryIntegrityResult"
           :loading="directoryIntegrityLoading"
+          :page="routePage(route.query.page)"
+          @page-change="updatePageQuery"
         />
       </section>
     </AppTabs>
@@ -174,6 +181,21 @@ function hashToTab(hash) {
   return HASH_TO_TAB[hash] || 'media'
 }
 
+function routePage(value) {
+  const raw = Array.isArray(value) ? value[0] : value
+  const page = Number(raw)
+  return Number.isInteger(page) && page > 0 ? page : 1
+}
+
+function updatePageQuery({ page, history }) {
+  const query = { ...route.query }
+  if (page > 1) query.page = String(page)
+  else delete query.page
+  const hasCanonicalQuery = page > 1 ? String(route.query.page || '') === String(page) : route.query.page == null
+  if (hasCanonicalQuery) return
+  router[history]({ path: route.path, query, hash: route.hash })
+}
+
 const activeTab = ref(hashToTab(route.hash))
 const managementTabs = computed(() => [
   { label: t('mediaManagement.tabs.mediaList'), value: 'media' },
@@ -191,6 +213,7 @@ const {
   first,
   rows,
   onPage,
+  setPage,
   summaryCards,
   mediaTypeOptions,
   statusOptions,
@@ -203,7 +226,10 @@ const {
   handleQuickDeleteFiles,
   loadMediaTab,
   loadDirectoryIntegrityTab,
-} = useMediaManagementPage()
+} = useMediaManagementPage({
+  initialPage: routePage(route.query.page),
+  onPageChange: updatePageQuery,
+})
 
 const summarySkeletonCount = computed(() => summaryCards.value.length || 6)
 
@@ -214,6 +240,15 @@ watch(
     if (activeTab.value !== nextTab) {
       activeTab.value = nextTab
     }
+  },
+)
+
+watch(
+  () => route.query.page,
+  (nextPage) => {
+    if (hashToTab(route.hash) !== 'media') return
+    const page = routePage(nextPage)
+    if (first.value !== (page - 1) * rows.value) setPage(page)
   },
 )
 
@@ -233,6 +268,18 @@ watch(
   { immediate: true },
 )
 
+function handleTabChange(nextTab) {
+  if (nextTab === activeTab.value) return
+  const query = { ...route.query }
+  delete query.page
+  if (nextTab === 'media') setPage(1)
+  router.replace({
+    path: route.path,
+    query,
+    hash: TAB_TO_HASH[nextTab] || TAB_TO_HASH.media,
+  })
+}
+
 function loadActiveTab(tab) {
   if (tab === 'directories') {
     return loadDirectoryIntegrityTab()
@@ -241,6 +288,9 @@ function loadActiveTab(tab) {
 }
 
 onMounted(() => {
+  if (route.query.page != null && String(route.query.page) !== String(routePage(route.query.page))) {
+    updatePageQuery({ page: routePage(route.query.page), history: 'replace' })
+  }
   if (route.hash) return
   router.replace({
     path: route.path,
