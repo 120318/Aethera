@@ -7,7 +7,12 @@
       </div>
     </div>
 
-    <AppTabs v-model="activeTab" :tabs="managementTabs" content-body-class="media-management-tab-body">
+    <AppTabs
+      :model-value="activeTab"
+      :tabs="managementTabs"
+      content-body-class="media-management-tab-body"
+      @update:model-value="handleTabChange"
+    >
       <section v-if="activeTab === 'media'" class="flex flex-col gap-item">
         <div v-if="summaryLoading" class="summary-grid">
           <div v-for="index in summarySkeletonCount" :key="index" class="ui-panel summary-card p-container flex flex-col gap-item">
@@ -241,7 +246,7 @@ watch(
 watch(
   () => route.query.page,
   (nextPage) => {
-    if (activeTab.value !== 'media') return
+    if (hashToTab(route.hash) !== 'media') return
     const page = routePage(nextPage)
     if (first.value !== (page - 1) * rows.value) setPage(page)
   },
@@ -249,18 +254,12 @@ watch(
 
 watch(
   activeTab,
-  (nextTab, previousTab) => {
+  (nextTab) => {
     const desiredHash = TAB_TO_HASH[nextTab] || TAB_TO_HASH.media
-    const query = { ...route.query }
-    const changedTab = Boolean(previousTab && previousTab !== nextTab)
-    if (changedTab) {
-      delete query.page
-      if (nextTab === 'media') setPage(1)
-    }
-    if (route.hash !== desiredHash || changedTab) {
+    if (route.hash !== desiredHash) {
       router.replace({
         path: route.path,
-        query,
+        query: route.query,
         hash: desiredHash,
       })
     }
@@ -268,6 +267,18 @@ watch(
   },
   { immediate: true },
 )
+
+function handleTabChange(nextTab) {
+  if (nextTab === activeTab.value) return
+  const query = { ...route.query }
+  delete query.page
+  if (nextTab === 'media') setPage(1)
+  router.replace({
+    path: route.path,
+    query,
+    hash: TAB_TO_HASH[nextTab] || TAB_TO_HASH.media,
+  })
+}
 
 function loadActiveTab(tab) {
   if (tab === 'directories') {

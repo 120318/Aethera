@@ -8,6 +8,7 @@ export function useMediaDetailData() {
   const loading = ref(true)
   const detail = ref(null)
   const error = ref("")
+  let detailRequestId = 0
   
   const tabData = reactive({
     resources: [],
@@ -86,16 +87,20 @@ export function useMediaDetailData() {
 
   async function fetchDetail(mediaId, seasonNumber = null) {
     if (!mediaId) return
+    const requestId = ++detailRequestId
     loading.value = true
     try {
       error.value = ""
-      detail.value = await getMediaDetail(mediaId, seasonNumber)
+      const response = await getMediaDetail(mediaId, seasonNumber)
+      if (requestId !== detailRequestId) return null
+      detail.value = response
       return detail.value
     } catch (e) {
+      if (requestId !== detailRequestId) return null
       error.value = t('mediaDetail.loadDetailFailed')
       throw e
     } finally {
-      loading.value = false
+      if (requestId === detailRequestId) loading.value = false
     }
   }
 

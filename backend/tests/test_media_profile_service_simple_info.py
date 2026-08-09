@@ -716,6 +716,7 @@ async def test_mapping_snapshot_update_preserves_refreshed_scope_fields():
         episode_count=54,
         status_label="Returning Series",
         douban_id="old-douban-id",
+        douban_overview="Old Douban overview",
         updated_at=100.0,
     )
     await repo.upsert_scope(scope)
@@ -743,7 +744,43 @@ async def test_mapping_snapshot_update_preserves_refreshed_scope_fields():
     assert saved.episode_count == 54
     assert saved.status_label == "Returning Series"
     assert saved.douban_id == "new-douban-id"
+    assert saved.douban_overview is None
     assert saved.episode_count_override == 24
+
+
+@pytest.mark.asyncio
+async def test_mapping_snapshot_update_preserves_overview_for_same_douban_mapping():
+    repo = MediaProfileScopeRepository()
+    media_id = MediaID.parse("tmdb:tv:312825")
+    await repo.upsert_scope(
+        MediaProfileScope(
+            media_id=media_id,
+            season_number=2,
+            media_type=MediaType.tv,
+            douban_id="same-douban-id",
+            douban_overview="Current Douban overview",
+            updated_at=100.0,
+        )
+    )
+
+    try:
+        await repo.update_mapping_snapshot(
+            media_id,
+            2,
+            douban_id="same-douban-id",
+            updated_at=200.0,
+        )
+        saved = await repo.find_by_media_id_and_season(media_id, 2)
+    finally:
+        with SessionLocal.begin() as session:
+            session.execute(
+                delete(MediaProfileScopeORM).where(
+                    MediaProfileScopeORM.media_id == str(media_id)
+                )
+            )
+
+    assert saved is not None
+    assert saved.douban_overview == "Current Douban overview"
 
 
 @pytest.mark.asyncio
