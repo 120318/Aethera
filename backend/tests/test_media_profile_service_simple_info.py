@@ -92,6 +92,7 @@ def _scope(
     media_id: MediaID,
     season_number: int,
     *,
+    poster_path: str | None = None,
     episode_count: int | None = None,
     episode_count_override: int | None = None,
     douban_id: str | None = None,
@@ -108,6 +109,7 @@ def _scope(
         media_id=media_id,
         season_number=season_number,
         media_type=media_id.media_type,
+        poster_path=poster_path,
         episode_count=episode_count,
         episode_count_override=episode_count_override,
         douban_id=douban_id,
@@ -230,6 +232,27 @@ def test_profile_read_model_prefers_scoped_douban_overview_with_tmdb_fallback():
     assert douban_media.overview == "Douban overview"
     assert douban_media.douban_overview == "Douban overview"
     assert fallback_media.overview == "TMDB overview"
+
+
+def test_profile_read_model_prefers_scoped_poster_with_profile_fallback():
+    service = MediaProfileService(provider_service=None, schedule_service=MediaScheduleService())
+    media_id = MediaID.parse("tmdb:tv:312823")
+    profile = _ready_profile(media_id)
+    profile.poster_path = "/series-poster.jpg"
+
+    scoped_media = service.read_model.to_full(
+        media_id,
+        profile,
+        selected_scope=_scope(media_id, 4, poster_path="/season-poster.jpg"),
+    )
+    fallback_media = service.read_model.to_full(
+        media_id,
+        profile,
+        selected_scope=_scope(media_id, 3),
+    )
+
+    assert scoped_media.poster_path == "/season-poster.jpg"
+    assert fallback_media.poster_path == "/series-poster.jpg"
 
 
 def test_build_profile_from_media_stores_only_current_tv_season_airings():
