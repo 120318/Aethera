@@ -85,7 +85,7 @@ class MediaProfileReadModel:
             overview=(selected_scope.douban_overview if selected_scope else None) or profile.overview,
             douban_overview=selected_scope.douban_overview if selected_scope else None,
             genres=profile.genres,
-            poster_path=(selected_scope.poster_path if selected_scope else None) or profile.poster_path,
+            poster_path=profile.poster_path,
             backdrop_path=profile.backdrop_path,
             logo_path=profile.logo_path,
             actors=profile.actors,

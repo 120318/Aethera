@@ -234,7 +234,7 @@ def test_profile_read_model_prefers_scoped_douban_overview_with_tmdb_fallback():
     assert fallback_media.overview == "TMDB overview"
 
 
-def test_profile_read_model_prefers_scoped_poster_with_profile_fallback():
+def test_profile_read_model_keeps_profile_poster_for_scoped_consumers():
     service = MediaProfileService(provider_service=None, schedule_service=MediaScheduleService())
     media_id = MediaID.parse("tmdb:tv:312823")
     profile = _ready_profile(media_id)
@@ -245,14 +245,8 @@ def test_profile_read_model_prefers_scoped_poster_with_profile_fallback():
         profile,
         selected_scope=_scope(media_id, 4, poster_path="/season-poster.jpg"),
     )
-    fallback_media = service.read_model.to_full(
-        media_id,
-        profile,
-        selected_scope=_scope(media_id, 3),
-    )
 
-    assert scoped_media.poster_path == "/season-poster.jpg"
-    assert fallback_media.poster_path == "/series-poster.jpg"
+    assert scoped_media.poster_path == "/series-poster.jpg"
 
 
 def test_build_profile_from_media_stores_only_current_tv_season_airings():

@@ -18,10 +18,38 @@ from app.services.domain.media.provider.normalization import build_tmdb_media_in
 from app.services.domain.media.mapping import MediaExternalMappingService, TMDBMappingAttachResult
 from app.services.application.workflows.discover import DiscoverService
 from app.services.application.views.media_detail_page.service import MediaDetailPageApplicationService, _ResolvedDetailTarget
+from app.services.application.views.media_detail.poster import apply_media_detail_poster
 from app.utils import build_loose_tmdb_search_title, build_tmdb_search_title
 
 
 pytestmark = [pytest.mark.drift, pytest.mark.health]
+
+
+def test_media_detail_poster_prefers_selected_tv_season_only():
+    tv_media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:tv:312823"),
+        title="Example Show",
+        year=2026,
+        media_type=MediaType.tv,
+        poster_path="/series-poster.jpg",
+        seasons=[
+            MediaSeasonInfo(season_number=3),
+            MediaSeasonInfo(season_number=4, poster_path="/season-poster.jpg"),
+        ],
+        primary_metadata_source="tmdb",
+    )
+    movie_media = MediaFullInfo(
+        media_id=MediaID.parse("tmdb:movie:312823"),
+        title="Example Movie",
+        year=2026,
+        media_type=MediaType.movie,
+        poster_path="/movie-poster.jpg",
+        primary_metadata_source="tmdb",
+    )
+
+    assert apply_media_detail_poster(tv_media, 4).poster_path == "/season-poster.jpg"
+    assert apply_media_detail_poster(tv_media, 3).poster_path == "/series-poster.jpg"
+    assert apply_media_detail_poster(movie_media, 4).poster_path == "/movie-poster.jpg"
 
 
 class FakeDoubanClient:
