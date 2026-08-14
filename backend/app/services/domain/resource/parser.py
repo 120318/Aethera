@@ -318,6 +318,24 @@ class ResourceParser:
         """Internal helper."""
         episodes: list[int] = []
 
+        # Some release names repeat the season marker at both ends of an
+        # episode range (for example, S01E01-S01E10).  The generic episode
+        # patterns below see that form as two standalone episodes, so expand
+        # same-season ranges before applying them.  Cross-season ranges are
+        # intentionally left alone because this method only returns episode
+        # numbers, without enough context to represent their season boundary.
+        repeated_season_range = re.compile(
+            r"\bS(\d{1,2})E(\d{1,3})-S(\d{1,2})E(\d{1,3})\b",
+            re.IGNORECASE,
+        )
+        for match in repeated_season_range.finditer(title):
+            try:
+                start_season, start_episode, end_season, end_episode = map(int, match.groups())
+            except (ValueError, TypeError):
+                continue
+            if start_season == end_season and 1 <= start_episode < end_episode <= 999:
+                episodes.extend(range(start_episode, end_episode + 1))
+
         for pattern in EPISODE_PATTERNS:
             matches = list(re.finditer(pattern, title, re.IGNORECASE))
             # Internal note.

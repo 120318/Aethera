@@ -114,14 +114,33 @@ async def select_pilot_resources(
             ],
         )
         finalized_items: list[tuple[TorrentPayload, list[int], Resource, set[int]]] = []
+        finalized_coverage: set[int] = set()
         combo_valid = True
         for result, covered, _preference_score, _seeders, payload in sorted(combo, key=lambda item: min(item[1]) if item[1] else 0):
-            finalized = await finalize_pilot_resource(result, covered, payload)
+            remaining_episodes = target_episodes - finalized_coverage
+            provisional_covered = covered & remaining_episodes
+            if not provisional_covered:
+                continue
+
+            finalized = await finalize_pilot_resource(result, provisional_covered, payload)
             if not finalized:
                 combo_valid = False
                 break
-            finalized_items.append((finalized[0], finalized[1], finalized[2], covered))
-        if not combo_valid:
+
+            finalized_payload = finalized[0]
+            payload_episodes = set(finalized_payload.metadata.get_episodes())
+            effective_covered = (payload_episodes & remaining_episodes) or provisional_covered
+            if effective_covered != provisional_covered:
+                finalized = await finalize_pilot_resource(result, effective_covered, finalized_payload)
+                if not finalized:
+                    combo_valid = False
+                    break
+
+            finalized_coverage.update(effective_covered)
+            finalized_items.append((finalized[0], finalized[1], finalized[2], effective_covered))
+            if finalized_coverage == target_episodes:
+                break
+        if not combo_valid or finalized_coverage != target_episodes:
             continue
 
         logger.debug(

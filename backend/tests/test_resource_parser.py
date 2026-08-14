@@ -442,6 +442,7 @@ class TestSeasonEpisodeRanges:
             ("Series.S02E10.1080p.WEB-DL.H265-Grp", [2], [10]),
             # Internal note.
             ("Show.S01E01-E05.1080p.WEB-DL.H264-Grp", [1], [1, 2, 3, 4, 5]),
+            ("Show.S01E01-S01E10.2160p.WEB-DL.DoVi-Grp", [1], list(range(1, 11))),
             ("Series.S02E10-12.1080p.WEB-DL.H265-Grp", [2], [10, 11, 12]),
             # Internal note.
             ("Show.S01-S03.1080p.WEB-DL.H264-Grp", [1, 2, 3], []),

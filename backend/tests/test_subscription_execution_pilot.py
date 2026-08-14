@@ -171,6 +171,10 @@ def _build_resource(
     )
 
 
+def _build_pilot_payload(episodes: set[int]):
+    return SimpleNamespace(metadata=SimpleNamespace(get_episodes=lambda: episodes))
+
+
 @pytest.mark.asyncio
 async def test_pilot_can_combine_multiple_resources_to_cover_first_three_episodes(monkeypatch):
     service = SubscriptionRunApplicationService()
@@ -180,7 +184,7 @@ async def test_pilot_can_combine_multiple_resources_to_cover_first_three_episode
     ]
 
     async def fake_finalize(result, covered, payload=None):
-        return object(), [], result
+        return _build_pilot_payload(covered), [], result
 
     monkeypatch.setattr("app.services.domain.resource.pilot_selection.finalize_pilot_resource", fake_finalize)
     monkeypatch.setattr(
@@ -207,7 +211,7 @@ async def test_pilot_prefers_higher_quality_combo_over_lower_quality_full_pack(m
     ]
 
     async def fake_finalize(result, covered, payload=None):
-        return object(), [], result
+        return _build_pilot_payload(covered), [], result
 
     def fake_score(result, filters):
         mapping = {
@@ -240,7 +244,7 @@ async def test_pilot_does_not_fetch_payload_during_selection_for_attrless_candid
     ]
 
     async def fake_finalize(result, covered, payload=None):
-        return object(), [], result
+        return _build_pilot_payload(covered), [], result
 
     async def fail_fetch_payload(_url):
         raise AssertionError("selection should not fetch payload for attrless pilot candidates")
@@ -269,7 +273,7 @@ async def test_pilot_prefers_better_builtin_quality_before_seeders(monkeypatch):
     ]
 
     async def fake_finalize(result, covered, payload=None):
-        return object(), [], result
+        return _build_pilot_payload(covered), [], result
 
     monkeypatch.setattr("app.services.domain.resource.pilot_selection.finalize_pilot_resource", fake_finalize)
 
@@ -351,6 +355,44 @@ async def test_pilot_finalization_selects_only_missing_episode_files_from_pack()
 
     assert finalized is not None
     assert finalized[1] == [0]
+
+
+@pytest.mark.asyncio
+async def test_pilot_expands_provisional_coverage_from_torrent_payload(monkeypatch):
+    resources = [
+        _build_resource("dv-pack", [1], seeders=5, hdr_type="Dolby Vision"),
+        _build_resource("hdr-2", [2], seeders=20, hdr_type="HDR10"),
+        _build_resource("hdr-3", [3], seeders=20, hdr_type="HDR10"),
+    ]
+
+    async def fake_fetch_payload(search_result):
+        episodes = {1, 2, 3} if search_result.title == "dv-pack" else {
+            int(search_result.title.rsplit("-", 1)[1])
+        }
+        files = [SimpleNamespace(get_episodes=lambda episode=episode: {episode}) for episode in sorted(episodes)]
+        metadata = SimpleNamespace(
+            attrs=None,
+            files=files,
+            get_episodes=lambda: episodes,
+            name=search_result.title,
+            size=1,
+        )
+        return SimpleNamespace(metadata=metadata)
+
+    monkeypatch.setattr(
+        "app.services.domain.resource.pilot_selection.fetch_torrent_payload",
+        fake_fetch_payload,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.resource.pilot_selection.compute_preference_score",
+        lambda result, profile: (10 if result.resources.title == "dv-pack" else 5, None),
+    )
+
+    selected = await select_pilot_resources(resources, target_episodes={1, 2, 3})
+
+    assert selected is not None
+    assert [item[2].resources.title for item in selected] == ["dv-pack"]
+    assert selected[0][1] == [0, 1, 2]
 
 
 @pytest.mark.asyncio
@@ -480,7 +522,7 @@ async def test_pilot_selection_filters_zero_seeders_even_when_quality_is_better(
     ]
 
     async def fake_finalize(result, covered, payload=None):
-        return object(), [], result
+        return _build_pilot_payload(covered), [], result
 
     monkeypatch.setattr("app.services.domain.resource.pilot_selection.finalize_pilot_resource", fake_finalize)
 
