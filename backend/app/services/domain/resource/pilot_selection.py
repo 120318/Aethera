@@ -102,22 +102,32 @@ async def select_pilot_resources(
             ),
             reverse=True,
         )
+        finalized_items: list[tuple[TorrentPayload, list[int], Resource, set[int]]] = []
+        finalized_coverage: set[int] = set()
         for result, covered, _preference_score, _seeders, payload in fallback_candidates:
             finalized = await finalize_pilot_resource(result, covered, payload)
             if not finalized:
                 continue
-            payload_coverage = set(finalized[0].metadata.get_episodes()) & target_episodes
-            if payload_coverage != target_episodes:
+            remaining_episodes = target_episodes - finalized_coverage
+            effective_covered = set(finalized[0].metadata.get_episodes()) & remaining_episodes
+            if not effective_covered:
                 continue
-            finalized = await finalize_pilot_resource(result, target_episodes, finalized[0])
-            if finalized:
+            finalized = await finalize_pilot_resource(result, effective_covered, finalized[0])
+            if not finalized:
+                continue
+            finalized_coverage.update(effective_covered)
+            finalized_items.append((finalized[0], finalized[1], finalized[2], effective_covered))
+            if finalized_coverage == target_episodes:
+                finalized_items.sort(key=lambda item: min(item[3]) if item[3] else 0)
                 logger.debug(
-                    "Pilot resource selected after payload coverage expansion: title=%s covered=%s selected_files=%s",
-                    result.resources.title,
+                    "Pilot resources selected after payload coverage expansion: covered=%s resources=%s",
                     sorted(target_episodes),
-                    finalized[1],
+                    [item[2].resources.title for item in finalized_items],
                 )
-                return [finalized]
+                return [
+                    (finalized_payload, selected_files, resource)
+                    for finalized_payload, selected_files, resource, _covered in finalized_items
+                ]
         return None
 
     min_overlap_count = min(item[0] for item in combo_candidates)

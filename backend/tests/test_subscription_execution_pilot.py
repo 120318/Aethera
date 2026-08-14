@@ -421,6 +421,38 @@ async def test_pilot_inspects_single_underreported_pack_when_no_title_combo_exis
 
 
 @pytest.mark.asyncio
+async def test_pilot_combines_underreported_payload_coverage_when_no_title_combo_exists(monkeypatch):
+    resources = [
+        _build_resource("pack-1-2", [1], seeders=10, hdr_type="Dolby Vision"),
+        _build_resource("single-3", [3], seeders=5, hdr_type="Dolby Vision"),
+    ]
+
+    async def fake_fetch_payload(search_result):
+        episodes = {1, 2} if search_result.title == "pack-1-2" else {3}
+        files = [SimpleNamespace(get_episodes=lambda episode=episode: {episode}) for episode in sorted(episodes)]
+        metadata = SimpleNamespace(
+            attrs=None,
+            files=files,
+            get_episodes=lambda: episodes,
+            name=search_result.title,
+            size=1,
+        )
+        return SimpleNamespace(metadata=metadata)
+
+    monkeypatch.setattr(
+        "app.services.domain.resource.pilot_selection.fetch_torrent_payload",
+        fake_fetch_payload,
+    )
+
+    selected = await select_pilot_resources(resources, target_episodes={1, 2, 3})
+
+    assert selected is not None
+    assert [item[2].resources.title for item in selected] == ["pack-1-2", "single-3"]
+    assert selected[0][1] == [0, 1]
+    assert selected[1][1] == [0]
+
+
+@pytest.mark.asyncio
 async def test_pilot_keeps_higher_quality_singles_when_lower_quality_pack_expands(monkeypatch):
     resources = [
         _build_resource("low-pack", [1], seeders=20),
