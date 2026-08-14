@@ -93,6 +93,41 @@ async def select_pilot_resources(
             combo_candidates.append((overlap_count, rank, combo))
 
     if not combo_candidates:
+        fallback_candidates = sorted(
+            candidate_items,
+            key=lambda item: (
+                item[2],
+                automatic_resource_sort_rank(item[0], quality_profile),
+                len(item[1]),
+            ),
+            reverse=True,
+        )
+        finalized_items: list[tuple[TorrentPayload, list[int], Resource, set[int]]] = []
+        finalized_coverage: set[int] = set()
+        for result, covered, _preference_score, _seeders, payload in fallback_candidates:
+            finalized = await finalize_pilot_resource(result, covered, payload)
+            if not finalized:
+                continue
+            remaining_episodes = target_episodes - finalized_coverage
+            effective_covered = set(finalized[0].metadata.get_episodes()) & remaining_episodes
+            if not effective_covered:
+                continue
+            finalized = await finalize_pilot_resource(result, effective_covered, finalized[0])
+            if not finalized:
+                continue
+            finalized_coverage.update(effective_covered)
+            finalized_items.append((finalized[0], finalized[1], finalized[2], effective_covered))
+            if finalized_coverage == target_episodes:
+                finalized_items.sort(key=lambda item: min(item[3]) if item[3] else 0)
+                logger.debug(
+                    "Pilot resources selected after payload coverage expansion: covered=%s resources=%s",
+                    sorted(target_episodes),
+                    [item[2].resources.title for item in finalized_items],
+                )
+                return [
+                    (finalized_payload, selected_files, resource)
+                    for finalized_payload, selected_files, resource, _covered in finalized_items
+                ]
         return None
 
     min_overlap_count = min(item[0] for item in combo_candidates)
@@ -114,15 +149,45 @@ async def select_pilot_resources(
             ],
         )
         finalized_items: list[tuple[TorrentPayload, list[int], Resource, set[int]]] = []
+        finalized_coverage: set[int] = set()
         combo_valid = True
-        for result, covered, _preference_score, _seeders, payload in sorted(combo, key=lambda item: min(item[1]) if item[1] else 0):
-            finalized = await finalize_pilot_resource(result, covered, payload)
+        finalization_order = sorted(
+            combo,
+            key=lambda item: (
+                item[2],
+                automatic_resource_sort_rank(item[0], quality_profile),
+                len(item[1]),
+            ),
+            reverse=True,
+        )
+        for result, covered, _preference_score, _seeders, payload in finalization_order:
+            remaining_episodes = target_episodes - finalized_coverage
+            provisional_covered = covered & remaining_episodes
+            if not provisional_covered:
+                continue
+
+            finalized = await finalize_pilot_resource(result, provisional_covered, payload)
             if not finalized:
                 combo_valid = False
                 break
-            finalized_items.append((finalized[0], finalized[1], finalized[2], covered))
-        if not combo_valid:
+
+            finalized_payload = finalized[0]
+            payload_episodes = set(finalized_payload.metadata.get_episodes())
+            effective_covered = (payload_episodes & remaining_episodes) or provisional_covered
+            if effective_covered != provisional_covered:
+                finalized = await finalize_pilot_resource(result, effective_covered, finalized_payload)
+                if not finalized:
+                    combo_valid = False
+                    break
+
+            finalized_coverage.update(effective_covered)
+            finalized_items.append((finalized[0], finalized[1], finalized[2], effective_covered))
+            if finalized_coverage == target_episodes:
+                break
+        if not combo_valid or finalized_coverage != target_episodes:
             continue
+
+        finalized_items.sort(key=lambda item: min(item[3]) if item[3] else 0)
 
         logger.debug(
             "Pilot resource combination selected: covered=%s resources=%s",

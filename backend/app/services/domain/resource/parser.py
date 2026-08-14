@@ -318,10 +318,34 @@ class ResourceParser:
         """Internal helper."""
         episodes: list[int] = []
 
+        # Some release names repeat the season marker at both ends of an
+        # episode range (for example, S01E01-S01E10).  The generic episode
+        # patterns below see that form as two standalone episodes, so expand
+        # same-season ranges before applying them.  Cross-season ranges are
+        # intentionally left alone because this method only returns episode
+        # numbers, without enough context to represent their season boundary.
+        repeated_season_range = re.compile(
+            r"(?<![^\W_])S(\d{1,2})E(\d{1,3})-S(\d{1,2})E(\d{1,3})(?![^\W_])",
+            re.IGNORECASE,
+        )
+        ignored_episode_spans: list[tuple[int, int]] = []
+        for match in repeated_season_range.finditer(title):
+            try:
+                start_season, start_episode, end_season, end_episode = map(int, match.groups())
+            except (ValueError, TypeError):
+                continue
+            if start_season == end_season and not 1 <= start_season <= 50:
+                ignored_episode_spans.append(match.span())
+                continue
+            if start_season == end_season and 1 <= start_season <= 50 and 1 <= start_episode < end_episode <= 999:
+                episodes.extend(range(start_episode, end_episode + 1))
+
         for pattern in EPISODE_PATTERNS:
             matches = list(re.finditer(pattern, title, re.IGNORECASE))
             # Internal note.
             for match in matches:
+                if any(match.start() < end and match.end() > start for start, end in ignored_episode_spans):
+                    continue
                 groups = match.groups()
                 # Internal note.
                 if len(groups) >= 2 and groups[1]:
