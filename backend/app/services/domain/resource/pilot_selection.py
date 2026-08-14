@@ -93,6 +93,31 @@ async def select_pilot_resources(
             combo_candidates.append((overlap_count, rank, combo))
 
     if not combo_candidates:
+        fallback_candidates = sorted(
+            candidate_items,
+            key=lambda item: (
+                item[2],
+                automatic_resource_sort_rank(item[0], quality_profile),
+                len(item[1]),
+            ),
+            reverse=True,
+        )
+        for result, covered, _preference_score, _seeders, payload in fallback_candidates:
+            finalized = await finalize_pilot_resource(result, covered, payload)
+            if not finalized:
+                continue
+            payload_coverage = set(finalized[0].metadata.get_episodes()) & target_episodes
+            if payload_coverage != target_episodes:
+                continue
+            finalized = await finalize_pilot_resource(result, target_episodes, finalized[0])
+            if finalized:
+                logger.debug(
+                    "Pilot resource selected after payload coverage expansion: title=%s covered=%s selected_files=%s",
+                    result.resources.title,
+                    sorted(target_episodes),
+                    finalized[1],
+                )
+                return [finalized]
         return None
 
     min_overlap_count = min(item[0] for item in combo_candidates)
@@ -116,7 +141,16 @@ async def select_pilot_resources(
         finalized_items: list[tuple[TorrentPayload, list[int], Resource, set[int]]] = []
         finalized_coverage: set[int] = set()
         combo_valid = True
-        for result, covered, _preference_score, _seeders, payload in sorted(combo, key=lambda item: min(item[1]) if item[1] else 0):
+        finalization_order = sorted(
+            combo,
+            key=lambda item: (
+                item[2],
+                automatic_resource_sort_rank(item[0], quality_profile),
+                len(item[1]),
+            ),
+            reverse=True,
+        )
+        for result, covered, _preference_score, _seeders, payload in finalization_order:
             remaining_episodes = target_episodes - finalized_coverage
             provisional_covered = covered & remaining_episodes
             if not provisional_covered:
@@ -142,6 +176,8 @@ async def select_pilot_resources(
                 break
         if not combo_valid or finalized_coverage != target_episodes:
             continue
+
+        finalized_items.sort(key=lambda item: min(item[3]) if item[3] else 0)
 
         logger.debug(
             "Pilot resource combination selected: covered=%s resources=%s",

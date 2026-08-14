@@ -396,6 +396,69 @@ async def test_pilot_expands_provisional_coverage_from_torrent_payload(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_pilot_inspects_single_underreported_pack_when_no_title_combo_exists(monkeypatch):
+    resource = _build_resource("dv-pack", [1], seeders=5, hdr_type="Dolby Vision")
+    files = [SimpleNamespace(get_episodes=lambda episode=episode: {episode}) for episode in (1, 2, 3)]
+    payload = SimpleNamespace(
+        metadata=SimpleNamespace(
+            attrs=None,
+            files=files,
+            get_episodes=lambda: {1, 2, 3},
+            name="dv-pack",
+            size=1,
+        )
+    )
+    monkeypatch.setattr(
+        "app.services.domain.resource.pilot_selection.fetch_torrent_payload",
+        AsyncMock(return_value=payload),
+    )
+
+    selected = await select_pilot_resources([resource], target_episodes={1, 2, 3})
+
+    assert selected is not None
+    assert [item[2].resources.title for item in selected] == ["dv-pack"]
+    assert selected[0][1] == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_pilot_keeps_higher_quality_singles_when_lower_quality_pack_expands(monkeypatch):
+    resources = [
+        _build_resource("low-pack", [1], seeders=20),
+        _build_resource("high-2", [2], seeders=5, hdr_type="Dolby Vision"),
+        _build_resource("high-3", [3], seeders=5, hdr_type="Dolby Vision"),
+    ]
+
+    async def fake_fetch_payload(search_result):
+        episodes = {1, 2, 3} if search_result.title == "low-pack" else {
+            int(search_result.title.rsplit("-", 1)[1])
+        }
+        files = [SimpleNamespace(get_episodes=lambda episode=episode: {episode}) for episode in sorted(episodes)]
+        metadata = SimpleNamespace(
+            attrs=None,
+            files=files,
+            get_episodes=lambda: episodes,
+            name=search_result.title,
+            size=1,
+        )
+        return SimpleNamespace(metadata=metadata)
+
+    monkeypatch.setattr(
+        "app.services.domain.resource.pilot_selection.fetch_torrent_payload",
+        fake_fetch_payload,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.resource.pilot_selection.compute_preference_score",
+        lambda result, profile: (5 if result.resources.title == "low-pack" else 10, None),
+    )
+
+    selected = await select_pilot_resources(resources, target_episodes={1, 2, 3})
+
+    assert selected is not None
+    assert [item[2].resources.title for item in selected] == ["low-pack", "high-2", "high-3"]
+    assert selected[0][1] == [0]
+
+
+@pytest.mark.asyncio
 async def test_subscription_prefers_better_builtin_quality_before_seeders():
     service = SubscriptionRunApplicationService()
     resources = [
