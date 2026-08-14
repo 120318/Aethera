@@ -4,6 +4,7 @@ from app.schemas.domain.media import MediaFullInfo
 from app.schemas.domain.media_source import MediaSourceLookup, MediaSourceName
 from app.schemas.domain.media_types import MediaType
 from app.services.domain.media import media_service
+from app.services.application.views.media_detail.poster import apply_media_detail_poster
 
 
 class MediaDetailApplicationService:
@@ -58,7 +59,9 @@ class MediaDetailApplicationService:
             media = None
         if not media:
             raise MediaNotFoundException()
-        media = media_service.apply_season_context(media, requested_season or season_number or self._default_detail_season(media))
+        effective_season = requested_season or season_number or self._default_detail_season(media)
+        media = media_service.apply_season_context(media, effective_season)
+        media = apply_media_detail_poster(media, effective_season)
         media.viewed = media_service.is_viewed_media(media.media_id)
         return media
 

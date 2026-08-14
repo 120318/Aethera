@@ -19,6 +19,7 @@ from app.schemas.media_id import MediaID, Provider
 from app.schemas.runtime.media_detail_page import MediaDetailPageResponse, MediaDetailPageTabData
 from app.services.application.commands.service import command_service
 from app.services.application.views.media_detail_overview import media_detail_overview_service
+from app.services.application.views.media_detail.poster import apply_media_detail_poster
 from app.services.application.views.task import task_view_service
 from app.services.domain.library.service import MediaLibrarySnapshot, library_service
 from app.services.domain.media import media_service
@@ -216,6 +217,7 @@ class MediaDetailPageApplicationService:
                 raise MediaNotFoundException()
             resolved_season = self._default_detail_season(media, target.source_year)
             media = media_service.apply_season_context(media, resolved_season)
+            media = apply_media_detail_poster(media, resolved_season)
             media.viewed = media_service.is_viewed_media(media.media_id)
             return _LoadedMedia(media=media, cache_mode=cache_mode)
         media, cache_mode = await media_service.info_with_cache_status(
@@ -226,7 +228,9 @@ class MediaDetailPageApplicationService:
         )
         if not media:
             raise MediaNotFoundException()
-        media = media_service.apply_season_context(media, target.season_number or self._default_detail_season(media))
+        effective_season = target.season_number or self._default_detail_season(media)
+        media = media_service.apply_season_context(media, effective_season)
+        media = apply_media_detail_poster(media, effective_season)
         if target.source == MediaSourceName.douban and target.source_id:
             douban_vote_average = media.douban_vote_average
             douban_rating_count = media.douban_rating_count
