@@ -154,3 +154,33 @@ def test_telegram_media_server_sync_completed_includes_episode_range():
     assert "第 1 季" in message
     assert "第 3\\-4 集" in message
     assert "资源：Show\\.S01E03\\-E04\\.mkv" in message
+
+
+def test_telegram_danmu_failure_summary_includes_episode_range():
+    event = Event(
+        type=EventType.DANMU_GENERATE_FAILED,
+        level=EventLevel.error,
+        media=_media(),
+        ts=datetime(2026, 6, 2, 20, 30),
+        meta=json.dumps(
+            {
+                "media_id": "tmdb:tv:273240",
+                "video_path": "/library/Show/Season 01/Show.S01E01.mkv",
+                "video_paths": [
+                    "/library/Show/Season 01/Show.S01E01.mkv",
+                    "/library/Show/Season 01/Show.S01E02.mkv",
+                    "/library/Show/Season 01/Show.S01E03.mkv",
+                ],
+                "episode_numbers": [1, 2, 3],
+                "file_count": 3,
+                "error": "provider failed",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    message = format_telegram_event(event, locale="zh-CN", public_base_url="")
+
+    assert "弹幕生成失败" in message
+    assert "第 1\\-3 集" in message
+    assert "资源：Show\\.S01E01\\.mkv" in message

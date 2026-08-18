@@ -37,6 +37,10 @@ from app.services.domain.media.profile.season_metadata import (
     with_cached_season_metadata,
     with_season_external_ids,
 )
+from app.services.domain.media.profile.work_identity import (
+    resolve_tv_work_year,
+    with_stable_tv_work_identity,
+)
 from app.services.domain.media.schedule.service import MediaScheduleService
 from app.services.platform.domain_lock_service import domain_lock_service
 
@@ -203,6 +207,12 @@ class MediaProfileService:
         *,
         existing: ManagedMediaProfile | None = None,
     ) -> ManagedMediaProfile:
+        existing_scopes = await self.scope_repo.find_by_media_id(media.media_id)
+        media = with_stable_tv_work_identity(
+            media,
+            existing=existing,
+            scopes=existing_scopes,
+        )
         is_active = await self._resolve_upsert_active_state(
             media.media_id,
             existing=existing,
@@ -214,7 +224,6 @@ class MediaProfileService:
             episodes_count=profile_episode_count(media),
         )
         profile = media_profile_context_service.enrich_profile(profile)
-        existing_scopes = await self.scope_repo.find_by_media_id(media.media_id)
         scopes = build_scopes_from_media(media, existing_scopes)
         if scopes:
             await self.scope_repo.upsert_scopes(scopes)
@@ -275,14 +284,22 @@ class MediaProfileService:
     async def upsert_active_profile_from_identity(self, media: MediaIdentity) -> ManagedMediaProfile:
         existing = await self.profile_repo.find_by_media_id(media.media_id)
         if existing:
+            scopes = await self.scope_repo.find_by_media_id(media.media_id)
             now = time.time()
             updated = existing.model_copy(
                 update={"is_active": True, "inactive_since": None, "last_seen_at": now, "updated_at": now}
             )
             if media.title != updated.title:
                 updated.title = media.title
-            if media.year != updated.year:
-                updated.year = media.year
+            resolved_year = media.year
+            if media.media_id.media_type == MediaType.tv:
+                resolved_year = resolve_tv_work_year(
+                    media.year,
+                    existing_year=updated.year,
+                    scopes=scopes,
+                )
+            if resolved_year != updated.year:
+                updated.year = resolved_year
             await self.profile_repo.upsert_profile(updated)
             return updated
 

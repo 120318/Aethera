@@ -18,6 +18,7 @@ from app.schemas.domain.command import (
     CommandStatus,
     CommandTargetType,
     CommandType,
+    PilotEpisodeCommandRecordPayload,
     ProfileRefreshCommandRecordPayload,
     ResourceSearchCommandRecordPayload,
     SubscriptionRunCommandRequestPayload,
@@ -28,7 +29,7 @@ from app.schemas.domain.command import (
     TaskTransferCommandRecordPayload,
 )
 from app.schemas.constants.event_types import EventTypes
-from app.schemas.domain.media import MediaIdentity, MediaTarget
+from app.schemas.domain.media import MediaExecutionSnapshot, MediaIdentity, MediaTarget
 from app.schemas.exception import InvalidRequestException
 from app.schemas.media_id import MediaID
 from app.db.repositories.command_repository import CommandRepository
@@ -112,6 +113,44 @@ def _task_create_command(command_id: str, *, season_number: int) -> CommandRecor
         target_id=str(media_id),
         created_at=datetime.now(),
     )
+
+
+def _pilot_episode_command(command_id: str, *, season_number: int) -> CommandRecord:
+    media_id = MediaID.parse("tmdb:tv:1")
+    media = MediaExecutionSnapshot(
+        media_id=media_id,
+        title="Sample",
+        year=2026,
+        season_number=season_number,
+        episodes_count=12,
+    )
+    return CommandRecord(
+        id=command_id,
+        type=CommandType.PILOT_EPISODE,
+        message="Sample",
+        payload=PilotEpisodeCommandRecordPayload(media=media),
+        initiator=CommandInitiator.MANUAL,
+        media_id=media_id,
+        target=MediaTarget(media_id=media_id, season_number=season_number),
+        uniq_key=None,
+        target_type=CommandTargetType.MEDIA,
+        target_id=str(media_id),
+        target_label="Sample (2026)",
+        created_at=datetime.now(),
+    )
+
+
+def test_pilot_episode_action_preserves_media_snapshot_for_notification_navigation():
+    service = CommandService()
+    command = _pilot_episode_command("cmd-pilot-action", season_number=2)
+
+    action = service._build_command_action(command, source=ActionSource.api, persist=False)
+
+    assert action.media is not None
+    assert action.media.media_id == command.payload.media.media_id
+    assert action.media.title == "Sample"
+    assert action.media.year == 2026
+    assert action.media.season_number == 2
 
 
 def _task_operation_command(command_id: str, command_type: CommandType, *, season_number: int) -> CommandRecord:

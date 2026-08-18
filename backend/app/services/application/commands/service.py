@@ -360,6 +360,7 @@ class CommandService:
             source=source,
             target_type=command.target_type,
             target_id=command.target_id,
+            media=action_context_data.media,
             media_id=command.media_id or action_context_data.media_id,
             task_id=action_context_data.task_id or (command.result.task_id if command.result else None),
             correlation_id=command.id,

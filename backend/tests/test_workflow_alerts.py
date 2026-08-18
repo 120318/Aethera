@@ -62,6 +62,15 @@ def test_manual_media_delete_notification_is_suppressed_without_hiding_system_de
     )
 
 
+def test_manual_danmu_result_notifications_are_suppressed():
+    assert is_manual_notification_suppressed(
+        Event(id="event-1", type=EventType.DANMU_GENERATE_COMPLETED, actor=EventActor.user)
+    )
+    assert is_manual_notification_suppressed(
+        Event(id="event-2", type=EventType.DANMU_GENERATE_FAILED, actor=EventActor.user)
+    )
+
+
 @pytest.mark.asyncio
 async def test_notification_send_failure_marks_action_without_emitting_event(monkeypatch):
     captured = {}
