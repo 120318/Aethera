@@ -167,7 +167,7 @@ class TaskCreateCommandHandler:
 
     def resolve_action_context(self, command: CommandRecord) -> CommandActionContext:
         payload = command.payload
-        return CommandActionContext(media_id=payload.media.media_id)
+        return CommandActionContext(media=payload.media)
 
 
 class PilotEpisodeCommandHandler:
@@ -223,7 +223,7 @@ class PilotEpisodeCommandHandler:
 
     def resolve_action_context(self, command: CommandRecord) -> CommandActionContext:
         payload = command.payload
-        return CommandActionContext(media_id=payload.media.media_id)
+        return CommandActionContext(media=payload.media)
 
 
 class TaskTransferCommandHandler(TaskCommandSupport):

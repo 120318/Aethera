@@ -79,7 +79,7 @@ class ResourceSearchCommandHandler:
 
     def resolve_action_context(self, command: CommandRecord) -> CommandActionContext:
         payload = command.payload
-        return CommandActionContext(media_id=payload.media.media_id)
+        return CommandActionContext(media=payload.media)
 
 
 def register_search_command_handlers(registry) -> None:

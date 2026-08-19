@@ -33,25 +33,33 @@ def emit_danmu_generate_event(
     ass_path: Path | None = None,
     error: str = "",
     error_key: str | None = None,
+    video_paths: list[Path] | None = None,
+    episode_numbers: list[int] | None = None,
+    actor: EventActor = EventActor.system,
 ) -> None:
+    resolved_video_paths = video_paths or [video_path]
+    resolved_episode_numbers = sorted(set(episode_numbers or ([episode_number] if episode_number else [])))
     event_service.emit_media(
         MediaEventCreate(
             type=event_type,
             level=_danmu_event_level(event_type, error_key),
             media=media,
             task_id=task_id,
-            actor=EventActor.system,
+            actor=actor,
             source=EventSource.addon,
             action_id=action_id,
             entities=[
                 EventEntityRef(type="media", id=str(media.media_id)),
-                EventEntityRef(type="file", id=str(video_path)),
+                *[EventEntityRef(type="file", id=str(path)) for path in resolved_video_paths],
             ],
         ),
         meta=DanmuGenerateEventMeta(
             media_id=media.media_id,
             video_path=str(video_path),
+            video_paths=[str(path) for path in resolved_video_paths],
             episode_number=episode_number,
+            episode_numbers=resolved_episode_numbers,
+            file_count=len(resolved_video_paths),
             provider=provider,
             xml_path=str(xml_path) if xml_path else None,
             ass_path=str(ass_path) if ass_path else None,
@@ -73,35 +81,41 @@ def emit_media_server_sync_events(
     error: str = "",
 ) -> None:
     target_paths = _sync_event_paths(anchor_file, transfer_results)
+    if not target_paths:
+        return
     nfo_count, image_count = _sync_artifact_counts(media, anchor_file, transfer_results)
-    for path in target_paths:
-        episode_numbers = _sync_event_episode_numbers(path, transfer_results) if media.media_type.value == "tv" else []
-        event_service.emit_media(
-            MediaEventCreate(
-                type=event_type,
-                level=EventLevel.error if event_type == EventType.MEDIA_SERVER_SYNC_FAILED else EventLevel.info,
-                media=media,
-                task_id=task_id,
-                actor=EventActor.system,
-                source=EventSource.base,
-                entities=[
-                    EventEntityRef(type="media", id=str(media.media_id)),
-                    EventEntityRef(type="file", id=path),
-                ],
-            ),
-            meta=MediaServerSyncEventMeta(
-                media_id=media.media_id,
-                media_server_id=media_server_id,
-                file_path=path,
-                file_count=len(target_paths),
-                nfo_count=nfo_count,
-                image_count=image_count,
-                episode_number=episode_numbers[0] if len(episode_numbers) == 1 else None,
-                episode_numbers=episode_numbers,
-                trigger=trigger,
-                error=error,
-            ),
-        )
+    episode_numbers = (
+        sorted({episode for path in target_paths for episode in _sync_event_episode_numbers(path, transfer_results)})
+        if media.media_type.value == "tv"
+        else []
+    )
+    event_service.emit_media(
+        MediaEventCreate(
+            type=event_type,
+            level=EventLevel.error if event_type == EventType.MEDIA_SERVER_SYNC_FAILED else EventLevel.info,
+            media=media,
+            task_id=task_id,
+            actor=EventActor.system,
+            source=EventSource.base,
+            entities=[
+                EventEntityRef(type="media", id=str(media.media_id)),
+                *[EventEntityRef(type="file", id=path) for path in target_paths],
+            ],
+        ),
+        meta=MediaServerSyncEventMeta(
+            media_id=media.media_id,
+            media_server_id=media_server_id,
+            file_path=target_paths[0],
+            file_paths=target_paths,
+            file_count=len(target_paths),
+            nfo_count=nfo_count,
+            image_count=image_count,
+            episode_number=episode_numbers[0] if len(episode_numbers) == 1 else None,
+            episode_numbers=episode_numbers,
+            trigger=trigger,
+            error=error,
+        ),
+    )
 
 
 def _sync_event_paths(anchor_file: str, transfer_results: list[MediaServerSyncTargetFile]) -> list[str]:

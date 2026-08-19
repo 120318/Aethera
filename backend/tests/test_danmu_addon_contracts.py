@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, patch
 from app.addons.descriptors import _danmu_jobs
 from app.core.action_context import action_context
 from app.schemas.config import AddonsConfig
-from app.schemas.domain.addon_events import ImportedMediaFile, MediaImportCompletedEventMeta
-from app.schemas.domain.action import ActionTrigger
+from app.schemas.domain.addon_events import DanmuGenerationOutcome, ImportedMediaFile, MediaImportCompletedEventMeta
+from app.schemas.domain.action import ActionStatus, ActionTrigger
 from app.schemas.domain.event import Event, EventType
 from app.schemas.domain.library import LibraryFile, LibraryFileArtifact, LibraryFileArtifactStatus, LibraryFileArtifactType
 from app.schemas.domain.media import MediaFullInfo
@@ -773,6 +773,34 @@ class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(owns_action)
         create_mock.assert_called_once()
 
+    async def test_no_comments_returns_skipped_outcome_without_failure_event(self):
+        service = DanmuApplicationService()
+        config = AddonsConfig.model_validate({"danmu": {"enabled": True}}).danmu
+        media = self._media(
+            vendors=[Vendor(id="youku", name="Youku", url="http://v.youku.com/v_show/id_XNDQ1.html")],
+        )
+
+        with (
+            patch.object(service, "_resolve_generation_action", return_value=("action-1", False)),
+            patch.object(service, "_mark_danmu_artifacts", new=AsyncMock()),
+            patch(
+                "app.services.application.workflows.danmu.service.danmu_provider_service.fetch",
+                new=AsyncMock(return_value=None),
+            ),
+            patch("app.services.application.workflows.danmu.service.emit_danmu_generate_event") as emit_mock,
+        ):
+            outcome = await service._generate_for_video(
+                media,
+                Path("/library/Movie.mkv"),
+                None,
+                trigger=ActionTrigger.scheduler,
+                event=None,
+                config=config,
+            )
+
+        self.assertEqual(ActionStatus.skipped, outcome.status)
+        emit_mock.assert_not_called()
+
     async def test_import_event_generation_passes_library_file_for_artifacts(self):
         service = DanmuApplicationService()
         config = AddonsConfig.model_validate({"danmu": {"enabled": True, "directory_ids": ["dir-1"]}}).danmu
@@ -808,7 +836,18 @@ class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
 
             with (
                 patch.object(service, "config", return_value=config),
-                patch.object(service, "_generate_for_video", new=AsyncMock(return_value=False)) as generate_mock,
+                patch.object(
+                    service,
+                    "_generate_for_video",
+                    new=AsyncMock(
+                        return_value=DanmuGenerationOutcome(
+                            status=ActionStatus.skipped,
+                            video_path=str(video_path),
+                            action_id="action-1",
+                            task_id="task-1",
+                        )
+                    ),
+                ) as generate_mock,
                 patch(
                     "app.services.application.workflows.danmu.service.danmu_source_resolver.media_with_fetchable_source",
                     new=AsyncMock(return_value=media),
@@ -995,7 +1034,18 @@ class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
 
             with (
                 patch.object(service, "config", return_value=config),
-                patch.object(service, "_generate_for_video", new=AsyncMock(return_value=True)) as generate_mock,
+                patch.object(
+                    service,
+                    "_generate_for_video",
+                    new=AsyncMock(
+                        return_value=DanmuGenerationOutcome(
+                            status=ActionStatus.completed,
+                            video_path=str(first),
+                            action_id="action-1",
+                            task_id="task-1",
+                        )
+                    ),
+                ) as generate_mock,
                 patch("app.services.application.workflows.danmu.service.danmu_source_resolver.media_with_fetchable_source", info_mock),
                 patch("app.services.domain.library.service.library_service.list_files", new=AsyncMock(return_value=files)),
                 patch("app.services.domain.library.service.library_service.is_primary_file", return_value=True),

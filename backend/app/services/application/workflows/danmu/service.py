@@ -18,8 +18,8 @@ from app.schemas.domain.action import (
     ActionTrigger,
 )
 from app.schemas.domain.action_meta import DanmuGenerateQueuedActionMeta
-from app.schemas.domain.addon_events import ImportedMediaFile, MediaImportCompletedEventMeta
-from app.schemas.domain.event import Event, EventType
+from app.schemas.domain.addon_events import DanmuGenerationOutcome, ImportedMediaFile, MediaImportCompletedEventMeta
+from app.schemas.domain.event import Event, EventActor, EventType
 from app.schemas.domain.library import LibraryFile, LibraryFileArtifact, LibraryFileArtifactStatus, LibraryFileArtifactType
 from app.schemas.domain.media import MediaFullInfo
 from app.services.audit.action_catalog import ACTION_NAME_DANMU_GENERATE
@@ -28,6 +28,7 @@ from app.services.audit.workflow_event_emitters import emit_danmu_generate_event
 from app.services.config.settings_service import settings_service
 from app.services.application.workflows.danmu.backfill_policy import is_recently_watchable
 from app.services.application.workflows.danmu.duration_guard import danmu_duration_guard
+from app.services.application.workflows.danmu.event_summary import emit_generation_summary
 from app.services.application.workflows.danmu.source_resolver import danmu_source_resolver
 from app.services.application.workflows.danmu.sidecar_outputs import expected_sidecar_paths, remove_outputs, write_outputs
 from app.services.application.workflows.scoped_seasons import (
@@ -103,19 +104,23 @@ class DanmuApplicationService:
         imported_files = meta.imported_files or [
             ImportedMediaFile(destination_path=meta.file_path, episode_number=None)
         ]
+        outcomes: list[DanmuGenerationOutcome] = []
         for imported_file in imported_files:
             video_path = Path(imported_file.destination_path)
             if not imported_file.destination_path:
                 continue
-            await self._generate_for_video(
-                media,
-                video_path,
-                imported_file.episode_number,
-                trigger=ActionTrigger.event,
-                event=event,
-                config=config,
-                library_file=library_files_by_path.get(str(video_path)),
+            outcomes.append(
+                await self._generate_for_video(
+                    media,
+                    video_path,
+                    imported_file.episode_number,
+                    trigger=ActionTrigger.event,
+                    event=event,
+                    config=config,
+                    library_file=library_files_by_path.get(str(video_path)),
+                )
             )
+        emit_generation_summary(media, outcomes)
 
     async def run_backfill(self) -> None:
         config = self.config()
@@ -130,6 +135,7 @@ class DanmuApplicationService:
         for artifact in artifacts:
             artifacts_by_file_id.setdefault(artifact.library_file_id, []).append(artifact)
         media_cache: dict[str, MediaFullInfo | None] = {}
+        outcomes_by_media: dict[str, list[DanmuGenerationOutcome]] = {}
         for library_file in files:
             if not library_service.is_primary_file(library_file):
                 continue
@@ -157,15 +163,21 @@ class DanmuApplicationService:
                 artifacts=artifacts_by_file_id.get(library_file.id, []),
             ):
                 continue
-            await self._generate_for_video(
-                media,
-                video_path,
-                self._episode_number_for_file(library_file),
-                trigger=ActionTrigger.scheduler,
-                event=None,
-                config=config,
-                library_file=library_file,
+            outcomes_by_media.setdefault(media_key, []).append(
+                await self._generate_for_video(
+                    media,
+                    video_path,
+                    self._episode_number_for_file(library_file),
+                    trigger=ActionTrigger.scheduler,
+                    event=None,
+                    config=config,
+                    library_file=library_file,
+                )
             )
+        for media_key, outcomes in outcomes_by_media.items():
+            media = media_cache[media_key]
+            if media:
+                emit_generation_summary(media, outcomes)
 
     async def run_for_task(self, task_id: str) -> int:
         config = self.config()
@@ -204,11 +216,12 @@ class DanmuApplicationService:
             raise ValueError("Media has no available danmu source")
 
         generated = 0
+        outcomes: list[DanmuGenerationOutcome] = []
         for library_file in primary_files:
             video_path = build_library_file_path(library_file.path, library_file.file_name)
             if library_file.directory_id not in config.directory_ids:
                 continue
-            if await self._generate_for_video(
+            outcome = await self._generate_for_video(
                 media,
                 video_path,
                 self._episode_number_for_file(library_file),
@@ -217,8 +230,11 @@ class DanmuApplicationService:
                 config=config,
                 task_id=task_id or library_file.task_id,
                 library_file=library_file,
-            ):
+            )
+            outcomes.append(outcome)
+            if outcome.status == ActionStatus.completed:
                 generated += 1
+        emit_generation_summary(media, outcomes, actor=EventActor.user)
         if generated == 0:
             raise ValueError("No danmu files were generated")
         return generated
@@ -260,9 +276,7 @@ class DanmuApplicationService:
         config: DanmuAddonConfig,
         task_id: str | None = None,
         library_file: LibraryFile | None = None,
-    ) -> bool:
-        if not danmu_source_resolver.has_fetchable_vendor(media, config):
-            return False
+    ) -> DanmuGenerationOutcome:
         action_id, owns_action = self._resolve_generation_action(
             event=event,
             trigger=trigger,
@@ -271,6 +285,16 @@ class DanmuApplicationService:
             episode_number=episode_number,
             task_id=task_id,
         )
+        if not danmu_source_resolver.has_fetchable_vendor(media, config):
+            if owns_action:
+                action_service.mark_skipped(action_id, message_params={"reason": "no_source"})
+            return DanmuGenerationOutcome(
+                status=ActionStatus.skipped,
+                video_path=str(video_path),
+                episode_number=episode_number,
+                action_id=action_id,
+                task_id=task_id or (event.task_id if event else None),
+            )
         if owns_action:
             action_service.mark_running(action_id, started_at=datetime.now())
         event_task_id = task_id or (event.task_id if event else None)
@@ -304,17 +328,14 @@ class DanmuApplicationService:
                         if owns_action:
                             action_service.mark_skipped(action_id, message_params={"reason": "no_danmu"})
                         logger.info("Danmu skipped: no comments returned path=%s", video_path)
-                        emit_danmu_generate_event(
-                            EventType.DANMU_GENERATE_FAILED,
-                            media,
-                            video_path,
-                            episode_number,
-                            action_id,
-                            event_task_id,
+                        return DanmuGenerationOutcome(
+                            status=ActionStatus.skipped,
+                            video_path=str(video_path),
+                            episode_number=episode_number,
+                            action_id=action_id,
+                            task_id=event_task_id,
                             provider=result.provider if result else None,
-                            error_key="runtimeReasons.danmuNotFound",
                         )
-                        return False
                     if await danmu_duration_guard.has_duration_mismatch(video_path, result, config):
                         remove_outputs(video_path, config)
                         await self._mark_danmu_artifacts(
@@ -326,17 +347,14 @@ class DanmuApplicationService:
                         )
                         if owns_action:
                             action_service.mark_skipped(action_id, message_params={"reason": "duration_mismatch"})
-                        emit_danmu_generate_event(
-                            EventType.DANMU_GENERATE_FAILED,
-                            media,
-                            video_path,
-                            episode_number,
-                            action_id,
-                            event_task_id,
+                        return DanmuGenerationOutcome(
+                            status=ActionStatus.skipped,
+                            video_path=str(video_path),
+                            episode_number=episode_number,
+                            action_id=action_id,
+                            task_id=event_task_id,
                             provider=result.provider,
-                            error_key="runtimeReasons.danmuDurationMismatch",
                         )
-                        return False
                     xml_path, ass_path = write_outputs(video_path, result, config)
                     await self._mark_written_danmu_artifacts(library_file, xml_path, ass_path)
                     logger.info(
@@ -347,36 +365,33 @@ class DanmuApplicationService:
                         ass_path,
                     )
                     await self._refresh_media_server(media, video_path)
-                    emit_danmu_generate_event(
-                        EventType.DANMU_GENERATE_COMPLETED,
-                        media,
-                        video_path,
-                        episode_number,
-                        action_id,
-                        event_task_id,
+                    outcome = DanmuGenerationOutcome(
+                        status=ActionStatus.completed,
+                        video_path=str(video_path),
+                        episode_number=episode_number,
+                        action_id=action_id,
+                        task_id=event_task_id,
                         provider=result.provider,
-                        xml_path=xml_path,
-                        ass_path=ass_path,
+                        xml_path=str(xml_path) if xml_path else None,
+                        ass_path=str(ass_path) if ass_path else None,
                     )
             if owns_action:
                 action_service.mark_completed(action_id)
-            return True
+            return outcome
         except TimeoutError:
             error = f"danmu generation timed out after {DANMU_GENERATION_TIMEOUT_SECONDS} seconds"
             logger.warning("Danmu generation timed out: path=%s", video_path)
             await self._mark_danmu_artifacts(library_file, video_path, config, LibraryFileArtifactStatus.failed, last_error=error)
             if owns_action:
                 action_service.mark_failed(action_id, error=error)
-            emit_danmu_generate_event(
-                EventType.DANMU_GENERATE_FAILED,
-                media,
-                video_path,
-                episode_number,
-                action_id,
-                event_task_id,
+            return DanmuGenerationOutcome(
+                status=ActionStatus.failed,
+                video_path=str(video_path),
+                episode_number=episode_number,
+                action_id=action_id,
+                task_id=event_task_id,
                 error=error,
             )
-            return False
         except asyncio.CancelledError:
             logger.warning("Danmu generation cancelled: path=%s", video_path)
             await self._mark_danmu_artifacts(library_file, video_path, config, LibraryFileArtifactStatus.failed, last_error="cancelled")
@@ -390,6 +405,7 @@ class DanmuApplicationService:
                 action_id,
                 event_task_id,
                 error="cancelled",
+                actor=EventActor.user if trigger == ActionTrigger.manual else EventActor.system,
             )
             raise
         except Exception as exc:
@@ -397,16 +413,14 @@ class DanmuApplicationService:
             await self._mark_danmu_artifacts(library_file, video_path, config, LibraryFileArtifactStatus.failed, last_error=str(exc))
             if owns_action:
                 action_service.mark_failed(action_id, error=str(exc))
-            emit_danmu_generate_event(
-                EventType.DANMU_GENERATE_FAILED,
-                media,
-                video_path,
-                episode_number,
-                action_id,
-                event_task_id,
+            return DanmuGenerationOutcome(
+                status=ActionStatus.failed,
+                video_path=str(video_path),
+                episode_number=episode_number,
+                action_id=action_id,
+                task_id=event_task_id,
                 error=str(exc),
             )
-            return False
 
     def _should_backfill_video(
         self,

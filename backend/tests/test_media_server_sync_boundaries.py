@@ -1016,6 +1016,46 @@ def test_media_server_sync_event_meta_includes_target_episodes(monkeypatch, tmp_
     assert meta.trigger == "import"
 
 
+def test_media_server_sync_event_summarizes_multiple_episode_files(monkeypatch, tmp_path: Path):
+    media = _tv()
+    season_dir = tmp_path / "Show" / "Season 01"
+    season_dir.mkdir(parents=True)
+    episode_three = season_dir / "Show.S01E03.mkv"
+    episode_four = season_dir / "Show.S01E04.mkv"
+    episode_three.write_text("video")
+    episode_four.write_text("video")
+    emitted = []
+
+    monkeypatch.setattr(
+        "app.services.audit.workflow_event_emitters.event_service.emit_media",
+        lambda event, meta=None: emitted.append((event, meta)),
+    )
+
+    emit_media_server_sync_events(
+        EventType.MEDIA_SERVER_SYNC_COMPLETED,
+        media,
+        str(episode_three),
+        [
+            MediaServerSyncTargetFile(destination_path=str(episode_three), episode_number=3),
+            MediaServerSyncTargetFile(destination_path=str(episode_four), episode_number=4),
+        ],
+        "jellyfin-1",
+        trigger="import",
+    )
+
+    assert len(emitted) == 1
+    event, meta = emitted[0]
+    assert [entity.id for entity in event.entities if entity.type == "file"] == [
+        str(episode_three),
+        str(episode_four),
+    ]
+    assert meta.file_path == str(episode_three)
+    assert meta.file_paths == [str(episode_three), str(episode_four)]
+    assert meta.file_count == 2
+    assert meta.episode_number is None
+    assert meta.episode_numbers == [3, 4]
+
+
 def test_media_server_sync_event_meta_ignores_movie_episode_attributes(monkeypatch, tmp_path: Path):
     media = _movie()
     video = tmp_path / "Movie" / "Movie.2026.mkv"

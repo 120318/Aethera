@@ -130,7 +130,7 @@ def _event_episodes(event: Event, meta: TelegramEventMeta) -> list[int]:
     if event.type in {EventType.MEDIA_SERVER_SYNC_COMPLETED, EventType.MEDIA_SERVER_SYNC_FAILED}:
         return _episode_range([meta.episode_number, *meta.episode_numbers])
     if event.type in {EventType.DANMU_GENERATE_COMPLETED, EventType.DANMU_GENERATE_FAILED}:
-        return _episode_range([meta.episode_number])
+        return _episode_range([meta.episode_number, *meta.episode_numbers])
     return []
 
 

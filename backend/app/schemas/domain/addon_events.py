@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from app.schemas.media_id import MediaID
+from app.schemas.domain.action import ActionStatus
 from app.schemas.domain.download import TaskStatus
 
 
@@ -82,6 +83,7 @@ class MediaServerSyncEventMeta(BaseModel):
     media_id: MediaID
     media_server_id: str | None = None
     file_path: str = ""
+    file_paths: list[str] = Field(default_factory=list)
     file_count: int = 0
     nfo_count: int = 0
     image_count: int = 0
@@ -94,12 +96,27 @@ class MediaServerSyncEventMeta(BaseModel):
 class DanmuGenerateEventMeta(BaseModel):
     media_id: MediaID
     video_path: str
+    video_paths: list[str] = Field(default_factory=list)
     episode_number: int | None = None
+    episode_numbers: list[int] = Field(default_factory=list)
+    file_count: int = 1
     provider: str | None = None
     xml_path: str | None = None
     ass_path: str | None = None
     error: str = ""
     error_key: str | None = None
+
+
+class DanmuGenerationOutcome(BaseModel):
+    status: ActionStatus
+    video_path: str
+    episode_number: int | None = None
+    action_id: str
+    task_id: str | None = None
+    provider: str | None = None
+    xml_path: str | None = None
+    ass_path: str | None = None
+    error: str = ""
 
 
 class LibraryFileMissingEventMeta(BaseModel):

@@ -8,7 +8,7 @@ from sqlalchemy import delete
 from app.db.repositories.media_profile_scope_repository import MediaProfileScopeRepository
 from app.db.sql.models import MediaProfileScopeORM
 from app.db.sql.session import SessionLocal
-from app.schemas.domain.media import EpisodeInfo, MediaFullInfo, MediaSeasonInfo, PersonInfo
+from app.schemas.domain.media import EpisodeInfo, MediaFullInfo, MediaIdentity, MediaSeasonInfo, PersonInfo
 from app.schemas.domain.media_context import MediaCapabilities
 from app.schemas.domain.media_profile_scope import MediaProfileScope, MediaProfileScopeAiring
 from app.schemas.domain.media_source import MediaSourceLookup, MediaSourceName
@@ -20,6 +20,7 @@ from app.schemas.persistence.media_external_mapping import MediaExternalMappingR
 from app.services.domain.media.profile.builders import build_profile_from_media
 from app.services.domain.media.profile.scope_projection import build_scopes_from_media
 from app.services.domain.media.profile.service import MediaProfileService
+from app.services.domain.media.profile.work_identity import with_stable_tv_work_identity
 from app.services.domain.media.schedule.service import MediaScheduleService
 
 
@@ -100,6 +101,8 @@ def _scope(
     douban_vote_average: float | None = None,
     douban_rating_count: int | None = None,
     status_label: str | None = None,
+    air_date: str | None = None,
+    first_air_date: str | None = None,
     aired_episode_count: int = 0,
     latest_aired_episode: ScheduleEpisode | None = None,
     next_episode_to_air: ScheduleEpisode | None = None,
@@ -117,12 +120,100 @@ def _scope(
         douban_vote_average=douban_vote_average,
         douban_rating_count=douban_rating_count,
         status_label=status_label,
+        air_date=air_date,
+        first_air_date=first_air_date,
         aired_episode_count=aired_episode_count,
         latest_aired_episode=latest_aired_episode,
         next_episode_to_air=next_episode_to_air,
         airings=airings or [],
         updated_at=time.time(),
     )
+
+
+def test_tv_work_identity_recovers_original_year_from_sibling_scopes():
+    media_id = MediaID.parse("tmdb:tv:312823")
+    existing = _ready_profile(media_id)
+    media = MediaFullInfo(
+        media_id=media_id,
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=312823,
+        season_number=4,
+        first_air_date=None,
+        seasons=[MediaSeasonInfo(season_number=4, air_date="2026-07-22")],
+    )
+    scopes = [
+        _scope(media_id, 1, air_date="2020-08-12", first_air_date="2020-08-12"),
+        _scope(media_id, 4, air_date="2026-07-22", first_air_date="2026-07-22"),
+    ]
+
+    resolved = with_stable_tv_work_identity(media, existing=existing, scopes=scopes)
+
+    assert resolved.year == 2020
+    assert resolved.first_air_date == "2020-08-12"
+
+
+def test_tv_work_identity_preserves_existing_work_year_without_scope_date():
+    media_id = MediaID.parse("tmdb:tv:312823")
+    existing = _ready_profile(media_id)
+    existing.year = 2020
+    existing.first_air_date = "2020-08-12"
+    media = MediaFullInfo(
+        media_id=media_id,
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=312823,
+        season_number=4,
+        first_air_date="2026-07-22",
+    )
+
+    resolved = with_stable_tv_work_identity(media, existing=existing, scopes=[])
+
+    assert resolved.year == 2020
+    assert resolved.first_air_date == "2020-08-12"
+
+
+def test_tv_work_identity_keeps_only_known_year_for_new_later_season():
+    media_id = MediaID.parse("tmdb:tv:312823")
+    media = MediaFullInfo(
+        media_id=media_id,
+        title="Sample",
+        year=2026,
+        media_type=MediaType.tv,
+        tmdb_id=312823,
+        season_number=4,
+        first_air_date="2026-07-22",
+    )
+
+    resolved = with_stable_tv_work_identity(media, existing=None, scopes=[])
+
+    assert resolved.year == 2026
+    assert resolved.first_air_date == "2026-07-22"
+
+
+@pytest.mark.asyncio
+async def test_identity_upsert_does_not_replace_tv_work_year_with_season_year(monkeypatch):
+    service = MediaProfileService(provider_service=None, schedule_service=MediaScheduleService())
+    media_id = MediaID.parse("tmdb:tv:312823")
+    existing = _ready_profile(media_id)
+    existing.year = 2020
+    media = MediaIdentity(
+        media_id=media_id,
+        title="Sample",
+        year=2026,
+        season_number=4,
+    )
+    upsert = AsyncMock(return_value=True)
+    monkeypatch.setattr(service.profile_repo, "find_by_media_id", AsyncMock(return_value=existing))
+    monkeypatch.setattr(service.scope_repo, "find_by_media_id", AsyncMock(return_value=[]))
+    monkeypatch.setattr(service.profile_repo, "upsert_profile", upsert)
+
+    updated = await service.upsert_active_profile_from_identity(media)
+
+    assert updated.year == 2020
+    upsert.assert_awaited_once()
 
 
 def test_build_profile_from_media_persists_first_detail_schedule_snapshot():
