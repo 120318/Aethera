@@ -158,6 +158,7 @@ def test_tv_work_identity_preserves_existing_work_year_without_scope_date():
     media_id = MediaID.parse("tmdb:tv:312823")
     existing = _ready_profile(media_id)
     existing.year = 2020
+    existing.first_air_date = "2020-08-12"
     media = MediaFullInfo(
         media_id=media_id,
         title="Sample",
@@ -171,6 +172,7 @@ def test_tv_work_identity_preserves_existing_work_year_without_scope_date():
     resolved = with_stable_tv_work_identity(media, existing=existing, scopes=[])
 
     assert resolved.year == 2020
+    assert resolved.first_air_date == "2020-08-12"
 
 
 def test_tv_work_identity_keeps_only_known_year_for_new_later_season():

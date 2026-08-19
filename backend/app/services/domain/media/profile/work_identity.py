@@ -20,10 +20,12 @@ def _date_value(value: str | None) -> date | None:
 
 def _known_tv_start_dates(
     media: MediaFullInfo,
+    existing: ManagedMediaProfile | None,
     scopes: list[MediaProfileScope],
 ) -> list[date]:
     values = [
         _date_value(media.first_air_date),
+        _date_value(existing.first_air_date if existing else None),
         *(_date_value(scope.first_air_date) for scope in scopes),
         *(
             _date_value(scope.air_date)
@@ -73,7 +75,7 @@ def with_stable_tv_work_identity(
     if media.media_type != MediaType.tv:
         return media
 
-    start_dates = _known_tv_start_dates(media, scopes)
+    start_dates = _known_tv_start_dates(media, existing, scopes)
     work_start_date = min(start_dates) if start_dates else None
     first_air_date = work_start_date.isoformat() if work_start_date else media.first_air_date
     year = resolve_tv_work_year(
