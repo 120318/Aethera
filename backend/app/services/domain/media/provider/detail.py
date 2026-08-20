@@ -144,6 +144,7 @@ class MediaProviderDetail:
         external = details.external_ids or await self.clients.get_tmdb_client().get_external_ids(tmdb_id, subject_type_value)
         resolved_imdb_id = cached_imdb_id or (external.imdb_id if external else None)
         douban_context = await douban_context_task
+        phase_started_at = time.perf_counter()
         await self.mapping.set_cached_tmdb_mapping(
             mid,
             tmdb_id,
