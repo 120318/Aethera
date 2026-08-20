@@ -15,7 +15,7 @@ from app.services.domain.media.provider.clients import MediaProviderClients
 from app.services.domain.media.provider.detail import MediaProviderDetail
 from app.services.domain.media.provider.discover import MediaProviderDiscover
 from app.services.domain.media.provider.mapping import MediaProviderMapping
-from app.services.domain.media.provider.normalization import resolve_tmdb_selected_season, subject_type
+from app.services.domain.media.provider.normalization import resolve_largest_episode_count, resolve_tmdb_selected_season, subject_type
 from app.services.domain.media.provider.search import search_douban, search_tmdb
 from app.utils import parse_tv_title
 
@@ -120,7 +120,9 @@ class MediaProviderService:
             external.imdb_id if external else None,
             lookup.source_id,
             resolved_season if lookup.media_type == MediaType.tv else None,
-            episode_count_override if lookup.media_type == MediaType.tv else None,
+            resolve_largest_episode_count(episode_count_override, detail.episodes_count)
+            if lookup.media_type == MediaType.tv
+            else None,
         )
         return canonical_media_id
 

@@ -381,7 +381,7 @@ def build_tmdb_media_info(
         and episode_count_override is not None
         and episode_count_override > 0
     ):
-        selected_episode_count = int(episode_count_override)
+        selected_episode_count = resolve_largest_episode_count(selected_episode_count, episode_count_override)
         seasons = [
             season.model_copy(update={
                 "episode_count_override": selected_episode_count,
@@ -478,7 +478,11 @@ def build_tmdb_media_info(
         release_dates=model_field_list(details, "release_dates"),
         first_air_date=details.first_air_date,
         episodes_count=selected_episode_count if mid.media_type == MediaType.tv else None,
-        episode_count_override=episode_count_override if mid.media_type == MediaType.tv else None,
+        episode_count_override=(
+            selected_episode_count
+            if mid.media_type == MediaType.tv and episode_count_override is not None and episode_count_override > 0
+            else None
+        ),
         seasons_count=details.seasons_count or len(seasons),
         season_number=selected_season if mid.media_type == MediaType.tv else None,
         seasons=seasons,
@@ -493,6 +497,11 @@ def build_tmdb_media_info(
     )
     media._source_networks = list(networks)
     return media
+
+
+def resolve_largest_episode_count(*values: int | None) -> int | None:
+    counts = [int(value) for value in values if value is not None and int(value) > 0]
+    return max(counts) if counts else None
 
 
 def pick_best_tmdb_search_id(title: str, results: list[ProviderSearchItem]) -> int | None:
