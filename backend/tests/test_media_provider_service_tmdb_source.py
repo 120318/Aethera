@@ -190,14 +190,14 @@ async def test_tmdb_tv_info_uses_larger_douban_episode_count_for_selected_season
 
     assert media is not None
     assert media.episodes_count == 23
-    assert media.episode_count_override == 23
+    assert media.episode_count_override is None
     set_cached.assert_awaited_once_with(
         MediaID.parse("tmdb:tv:280133"),
         280133,
         "tt0499549",
         "35653123",
         1,
-        23,
+        None,
     )
 
 

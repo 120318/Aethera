@@ -998,8 +998,8 @@ async def test_info_from_source_provider_miss_returns_scoped_profile(monkeypatch
         tmdb_id=278894,
         douban_id="36809858",
         season_number=2,
-        episodes_count=10,
-        seasons=[MediaSeasonInfo(season_number=2, episode_count=10)],
+        episodes_count=23,
+        seasons=[MediaSeasonInfo(season_number=2, episode_count=23)],
         schedule=MediaScheduleSummary(
             media_type=MediaType.tv,
             aired_episode_count=4,
@@ -1058,7 +1058,10 @@ async def test_info_from_source_provider_miss_returns_scoped_profile(monkeypatch
 
     assert media is not None
     assert media.seasons[0].douban_id == "36809858"
-    assert media.seasons[0].episode_count == 10
+    assert media.episodes_count == 23
+    assert media.episode_count_override is None
+    assert media.seasons[0].episode_count == 23
+    assert saved_mapping["episode_count_override"] is None
     assert media.aired_episode_count == 4
     assert media.latest_aired_episode == EpisodeInfo(season_number=2, episode_number=4, air_date="2026-05-01")
     assert [(item.season_number, item.episode_number) for item in media.airings] == [(2, 4)]

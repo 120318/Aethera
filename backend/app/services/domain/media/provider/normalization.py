@@ -341,6 +341,7 @@ def build_tmdb_media_info(
     vendors: list[Vendor],
     douban_id: str | None = None,
     douban_overview: str | None = None,
+    douban_episode_count: int | None = None,
     episode_count_override: int | None = None,
 ) -> MediaFullInfo:
     has_display_rating = vote_average is not None and vote_average > 0
@@ -378,10 +379,24 @@ def build_tmdb_media_info(
     if (
         mid.media_type == MediaType.tv
         and selected_season is not None
+        and douban_episode_count is not None
+        and douban_episode_count > 0
+        and episode_count_override is None
+    ):
+        selected_episode_count = resolve_largest_episode_count(selected_episode_count, douban_episode_count)
+        seasons = [
+            season.model_copy(update={"episode_count": selected_episode_count})
+            if season.season_number == selected_season
+            else season
+            for season in seasons
+        ]
+    if (
+        mid.media_type == MediaType.tv
+        and selected_season is not None
         and episode_count_override is not None
         and episode_count_override > 0
     ):
-        selected_episode_count = resolve_largest_episode_count(selected_episode_count, episode_count_override)
+        selected_episode_count = int(episode_count_override)
         seasons = [
             season.model_copy(update={
                 "episode_count_override": selected_episode_count,
@@ -478,11 +493,7 @@ def build_tmdb_media_info(
         release_dates=model_field_list(details, "release_dates"),
         first_air_date=details.first_air_date,
         episodes_count=selected_episode_count if mid.media_type == MediaType.tv else None,
-        episode_count_override=(
-            selected_episode_count
-            if mid.media_type == MediaType.tv and episode_count_override is not None and episode_count_override > 0
-            else None
-        ),
+        episode_count_override=episode_count_override if mid.media_type == MediaType.tv else None,
         seasons_count=details.seasons_count or len(seasons),
         season_number=selected_season if mid.media_type == MediaType.tv else None,
         seasons=seasons,

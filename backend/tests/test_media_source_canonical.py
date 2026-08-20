@@ -196,7 +196,7 @@ def test_build_tmdb_media_info_uses_manual_episode_count_without_guessing_next_a
     assert media.status_label == "Airing"
 
 
-def test_build_tmdb_media_info_uses_larger_tmdb_episode_count():
+def test_build_tmdb_media_info_preserves_manual_episode_count_override():
     details = _tmdb_details(100088)
     details.seasons = [MediaSeasonInfo(season_number=2, episode_count=120, air_date="2025-01-01")]
     details.episodes_count = 120
@@ -218,14 +218,39 @@ def test_build_tmdb_media_info_uses_larger_tmdb_episode_count():
         rating_source="douban",
         season_number=2,
         vendors=[],
+        douban_episode_count=37,
         episode_count_override=24,
     )
 
-    assert media.episodes_count == 120
-    assert media.episode_count_override == 120
+    assert media.episodes_count == 24
+    assert media.episode_count_override == 24
     selected_season = next(season for season in media.seasons if season.season_number == 2)
     assert selected_season.episode_count == 120
-    assert selected_season.episode_count_override == 120
+    assert selected_season.episode_count_override == 24
+
+
+def test_build_tmdb_media_info_uses_larger_tmdb_count_without_manual_override():
+    details = _tmdb_details(100088)
+    details.seasons = [MediaSeasonInfo(season_number=2, episode_count=120, air_date="2025-01-01")]
+    details.episodes_count = 120
+
+    media = build_tmdb_media_info(
+        mid=MediaID.parse("tmdb:tv:100088"),
+        details=details,
+        imdb_id=None,
+        vote_average=None,
+        rating_count=None,
+        rating_source="douban",
+        season_number=2,
+        vendors=[],
+        douban_episode_count=24,
+    )
+
+    assert media.episodes_count == 120
+    assert media.episode_count_override is None
+    selected_season = next(season for season in media.seasons if season.season_number == 2)
+    assert selected_season.episode_count == 120
+    assert selected_season.episode_count_override is None
 
 
 @pytest.mark.asyncio
@@ -261,11 +286,11 @@ async def test_douban_source_uses_larger_douban_episode_count(monkeypatch):
     media = await service.info_from_source(MediaSourceLookup(source="douban", source_id="douban-tv-count", media_type=MediaType.tv))
 
     assert media.episodes_count == 37
-    assert next(season for season in media.seasons if season.season_number == media.season_number).episode_count == 10
-    assert next(season for season in media.seasons if season.season_number == media.season_number).episode_count_override == 37
+    assert next(season for season in media.seasons if season.season_number == media.season_number).episode_count == 37
+    assert next(season for season in media.seasons if season.season_number == media.season_number).episode_count_override is None
     mapping = MediaExternalMappingRepository().find_by_douban_id("douban-tv-count", "tv")
     assert mapping is not None
-    assert mapping.episode_count_override == 37
+    assert mapping.episode_count_override is None
 
 
 @pytest.mark.asyncio

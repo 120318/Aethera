@@ -24,7 +24,6 @@ from app.services.domain.media.provider.normalization import (
     build_tmdb_media_info,
     dedupe_vendors,
     normalize_tmdb_vendors,
-    resolve_largest_episode_count,
     resolve_tmdb_selected_season,
     subject_type,
 )
@@ -145,17 +144,13 @@ class MediaProviderDetail:
         external = details.external_ids or await self.clients.get_tmdb_client().get_external_ids(tmdb_id, subject_type_value)
         resolved_imdb_id = cached_imdb_id or (external.imdb_id if external else None)
         douban_context = await douban_context_task
-        effective_episode_count_override = resolve_largest_episode_count(
-            effective_episode_count_override,
-            douban_context.episodes_count if effective_douban_id else None,
-        )
         await self.mapping.set_cached_tmdb_mapping(
             mid,
             tmdb_id,
             resolved_imdb_id,
             cached_douban_id,
             cached_season_number,
-            effective_episode_count_override if effective_douban_id else cached_episode_count_override,
+            cached_episode_count_override,
         )
         timings["mapping_write"] = (time.perf_counter() - phase_started_at) * 1000
         rating = douban_context.rating
@@ -172,6 +167,7 @@ class MediaProviderDetail:
             vendors=dedupe_vendors(list(douban_context.vendors) + list(tmdb_vendors)),
             douban_id=effective_douban_id,
             douban_overview=douban_context.overview,
+            douban_episode_count=douban_context.episodes_count if effective_douban_id else None,
             episode_count_override=effective_episode_count_override,
         ))
         timings["build_enrich_media"] = (time.perf_counter() - phase_started_at) * 1000
@@ -198,18 +194,13 @@ class MediaProviderDetail:
                 douban_id=existing_mapping.douban_id or lookup.source_id,
                 media_type=lookup.media_type,
             )
-            episode_count_override = (
-                resolve_largest_episode_count(existing_mapping.episode_count_override, douban_context.episodes_count)
-                if lookup.media_type == MediaType.tv
-                else None
-            )
             await self.mapping.set_cached_tmdb_mapping(
                 canonical_media_id,
                 existing_mapping.tmdb_id,
                 existing_mapping.imdb_id,
                 existing_mapping.douban_id,
                 existing_mapping.season_number,
-                episode_count_override,
+                existing_mapping.episode_count_override,
             )
             has_douban_rating = self.has_rating(douban_context.rating)
             return await self.build_tmdb_detail_from_mapping(
@@ -223,7 +214,8 @@ class MediaProviderDetail:
                 rating_source="douban",
                 vendors=douban_context.vendors,
                 douban_overview=douban_context.overview,
-                episode_count_override=episode_count_override,
+                douban_episode_count=douban_context.episodes_count,
+                episode_count_override=existing_mapping.episode_count_override if lookup.media_type == MediaType.tv else None,
             )
         try:
             detail = await client.get_subject_detail(lookup.source_id, subject_type_value)
@@ -263,14 +255,13 @@ class MediaProviderDetail:
                 season_number = resolve_tmdb_selected_season(tmdb_details.seasons, season_number, year)
             resolved_imdb_id = imdb_id or (tmdb_details.external_ids.imdb_id if tmdb_details.external_ids else None)
             canonical_media_id = self.mapping.canonical_tmdb_media_id(lookup.media_type, tmdb_id)
-            episode_count_override = detail.episodes_count if lookup.media_type == MediaType.tv else None
             await self.mapping.set_cached_tmdb_mapping(
                 canonical_media_id,
                 tmdb_id,
                 resolved_imdb_id,
                 detail.provider_id,
                 season_number,
-                episode_count_override,
+                None,
             )
         else:
             self.mapping.raise_tmdb_mapping_required(
@@ -300,7 +291,8 @@ class MediaProviderDetail:
                 vendors=dedupe_vendors(merged_vendors),
                 douban_id=detail.provider_id,
                 douban_overview=detail.overview,
-                episode_count_override=episode_count_override,
+                douban_episode_count=detail.episodes_count,
+                episode_count_override=None,
             ))
 
         raise MediaNotFoundException()
@@ -354,6 +346,7 @@ class MediaProviderDetail:
         rating_source: str,
         vendors,
         douban_overview: str | None = None,
+        douban_episode_count: int | None = None,
         episode_count_override: int | None = None,
     ) -> MediaFullInfo:
         started_at = time.perf_counter()
@@ -385,6 +378,7 @@ class MediaProviderDetail:
             vendors=dedupe_vendors(list(vendors or []) + list(tmdb_vendors or [])),
             douban_id=douban_id,
             douban_overview=douban_overview,
+            douban_episode_count=douban_episode_count,
             episode_count_override=episode_count_override if media_id.media_type == MediaType.tv else None,
         ))
         timings["build_enrich_media"] = (time.perf_counter() - phase_started_at) * 1000
