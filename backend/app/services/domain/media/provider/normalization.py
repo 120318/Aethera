@@ -341,6 +341,7 @@ def build_tmdb_media_info(
     vendors: list[Vendor],
     douban_id: str | None = None,
     douban_overview: str | None = None,
+    douban_episode_count: int | None = None,
     episode_count_override: int | None = None,
 ) -> MediaFullInfo:
     has_display_rating = vote_average is not None and vote_average > 0
@@ -369,6 +370,20 @@ def build_tmdb_media_info(
     )
     if season_detail_count is not None and (selected_episode_count is None or season_detail_count > selected_episode_count):
         selected_episode_count = season_detail_count
+        seasons = [
+            season.model_copy(update={"episode_count": selected_episode_count})
+            if season.season_number == selected_season
+            else season
+            for season in seasons
+        ]
+    if (
+        mid.media_type == MediaType.tv
+        and selected_season is not None
+        and douban_episode_count is not None
+        and douban_episode_count > 0
+        and episode_count_override is None
+    ):
+        selected_episode_count = resolve_largest_episode_count(selected_episode_count, douban_episode_count)
         seasons = [
             season.model_copy(update={"episode_count": selected_episode_count})
             if season.season_number == selected_season
@@ -493,6 +508,11 @@ def build_tmdb_media_info(
     )
     media._source_networks = list(networks)
     return media
+
+
+def resolve_largest_episode_count(*values: int | None) -> int | None:
+    counts = [int(value) for value in values if value is not None and int(value) > 0]
+    return max(counts) if counts else None
 
 
 def pick_best_tmdb_search_id(title: str, results: list[ProviderSearchItem]) -> int | None:

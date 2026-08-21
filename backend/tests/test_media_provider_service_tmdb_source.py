@@ -81,6 +81,7 @@ async def test_tmdb_movie_info_uses_douban_rating_when_douban_id_is_cached(monke
             overview="Douban plot",
             rating=ProviderRating(value=9.2, count=4567),
             vendors=[],
+            episodes_count=None,
         )),
     )
     monkeypatch.setattr(service.clients, "get_douban_client", lambda: douban_client)
@@ -158,6 +159,49 @@ async def test_tmdb_tv_info_is_marked_as_tmdb_primary_source(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tmdb_tv_info_uses_larger_douban_episode_count_for_selected_season(monkeypatch):
+    service = MediaProviderService()
+    details = _tmdb_details(provider_id=280133, media_type="tv")
+    details.seasons = [MediaSeasonInfo(season_number=1, episode_count=10, air_date="2026-01-01")]
+    details.episodes_count = 10
+    monkeypatch.setattr(
+        service.detail,
+        "get_tmdb_detail_bundle",
+        AsyncMock(return_value=(details, [])),
+    )
+    monkeypatch.setattr(
+        service.mapping,
+        "get_cached_tmdb_mapping",
+        AsyncMock(return_value=(280133, None, "35653123", 1, None)),
+    )
+    set_cached = AsyncMock()
+    monkeypatch.setattr(service.mapping, "set_cached_tmdb_mapping", set_cached)
+    douban_client = SimpleNamespace(
+        get_subject_detail=AsyncMock(return_value=SimpleNamespace(
+            overview="Douban plot",
+            rating=ProviderRating(value=7.1, count=100),
+            vendors=[],
+            episodes_count=23,
+        )),
+    )
+    monkeypatch.setattr(service.clients, "get_douban_client", lambda: douban_client)
+
+    media = await service.info(MediaID.parse("tmdb:tv:280133"), season_number=1)
+
+    assert media is not None
+    assert media.episodes_count == 23
+    assert media.episode_count_override is None
+    set_cached.assert_awaited_once_with(
+        MediaID.parse("tmdb:tv:280133"),
+        280133,
+        "tt0499549",
+        "35653123",
+        1,
+        None,
+    )
+
+
+@pytest.mark.asyncio
 async def test_attach_source_tmdb_mapping_keeps_episode_count_override_season_scoped(monkeypatch):
     service = MediaProviderService()
     details = _tmdb_details(provider_id=1396, media_type="tv")
@@ -166,7 +210,11 @@ async def test_attach_source_tmdb_mapping_keeps_episode_count_override_season_sc
         MediaSeasonInfo(season_number=2, episode_count=12, air_date="2025-01-01"),
     ]
     douban_client = SimpleNamespace(
-        get_subject_detail=AsyncMock(return_value=SimpleNamespace(title="Breaking Bad Season 2", year=2025)),
+        get_subject_detail=AsyncMock(return_value=SimpleNamespace(
+            title="Breaking Bad Season 2",
+            year=2025,
+            episodes_count=None,
+        )),
     )
     set_cached = AsyncMock()
     monkeypatch.setattr(service.clients, "get_douban_client", lambda: douban_client)
@@ -191,7 +239,11 @@ async def test_attach_source_tmdb_mapping_uses_default_tmdb_season(monkeypatch):
     details = _tmdb_details(provider_id=1396, media_type="tv")
     details.seasons = [MediaSeasonInfo(season_number=1, episode_count=10)]
     douban_client = SimpleNamespace(
-        get_subject_detail=AsyncMock(return_value=SimpleNamespace(title="Breaking Bad", year=None)),
+        get_subject_detail=AsyncMock(return_value=SimpleNamespace(
+            title="Breaking Bad",
+            year=None,
+            episodes_count=None,
+        )),
     )
     set_cached = AsyncMock()
     monkeypatch.setattr(service.clients, "get_douban_client", lambda: douban_client)
