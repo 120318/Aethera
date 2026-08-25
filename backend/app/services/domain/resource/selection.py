@@ -24,6 +24,11 @@ from app.services.domain.resource.filtering import (
 from app.services.domain.resource.parser import resource_parser
 from app.services.domain.resource.quality import quality_sort_key
 from app.services.domain.resource.torrent_metadata import fetch_torrent_payload
+from app.services.domain.resource.torrent_season import (
+    select_torrent_episode_files,
+    selected_files_have_season_conflict,
+    torrent_episodes_for_season,
+)
 
 logger = logging.getLogger("app.services.resource.selection")
 
@@ -225,6 +230,7 @@ async def select_resources(
     quality_profile: QualityProfile | None = None,
     required_scores: Mapping[int, int] | None = None,
     episode_mode: bool = True,
+    season_number: int | None = None,
     existing_disc_numbers: set[int] | None = None,
 ) -> list[tuple[TorrentPayload, list[int], Resource]]:
     if episode_mode and allows_disc_package_subscription(filters):
@@ -237,12 +243,14 @@ async def select_resources(
                 quality_profile=quality_profile,
                 required_scores=required_scores,
                 episode_mode=episode_mode,
+                season_number=season_number,
             ))
         selected.extend(await _select_disc_package_resources(
             results,
             filters=filters,
             quality_profile=quality_profile,
             existing_disc_numbers=existing_disc_numbers or set(),
+            season_number=season_number,
         ))
         return selected
     return await _select_video_file_resources(
@@ -252,6 +260,7 @@ async def select_resources(
         quality_profile=quality_profile,
         required_scores=required_scores,
         episode_mode=episode_mode,
+        season_number=season_number,
     )
 
 
@@ -263,6 +272,7 @@ async def _select_video_file_resources(
     quality_profile: QualityProfile | None = None,
     required_scores: Mapping[int, int] | None = None,
     episode_mode: bool = True,
+    season_number: int | None = None,
 ) -> list[tuple[TorrentPayload, list[int], Resource]]:
     needed_episodes = set(episodes) if episodes else set()
     candidates = [result for result in results if has_valid_seeders(result) and match_filters(result, filters, quality_profile)]
@@ -301,7 +311,7 @@ async def _select_video_file_resources(
             if not match_filters(best_resource, filters, quality_profile):
                 candidates.remove(original_best_resource)
                 continue
-            real_episodes = payload.metadata.get_episodes()
+            real_episodes = torrent_episodes_for_season(payload.metadata, season_number)
             best_upgrade_score = compute_quality_upgrade_score(best_resource, quality_profile)
             real_covered = {
                 ep
@@ -338,7 +348,7 @@ async def _select_video_file_resources(
         if not match_filters(best_resource, filters, quality_profile):
             candidates.remove(original_best_resource)
             continue
-        real_episodes = payload.metadata.get_episodes() or (set(needed_episodes) if not episode_mode else set())
+        real_episodes = torrent_episodes_for_season(payload.metadata, season_number) or (set(needed_episodes) if not episode_mode else set())
         best_upgrade_score = compute_quality_upgrade_score(best_resource, quality_profile)
         real_covered = {
             ep
@@ -367,11 +377,11 @@ async def _select_video_file_resources(
             elif not episode_mode:
                 selected_files = []
             else:
-                selected_files = []
-                for index, file in enumerate(payload.metadata.files):
-                    file_episodes = file.get_episodes()
-                    if file_episodes and file_episodes & covered:
-                        selected_files.append(index)
+                selected_files = select_torrent_episode_files(
+                    payload.metadata,
+                    season_number=season_number,
+                    episodes=covered,
+                )
             if selected_files or not episode_mode:
                 final_results.append((payload, selected_files, result))
             else:
@@ -388,6 +398,7 @@ async def _select_disc_package_resources(
     filters: ResourceFilters | None,
     quality_profile: QualityProfile | None = None,
     existing_disc_numbers: set[int] | None = None,
+    season_number: int | None = None,
 ) -> list[tuple[TorrentPayload, list[int], Resource]]:
     candidates = sorted(
         [result for result in results if has_valid_seeders(result)],
@@ -404,6 +415,17 @@ async def _select_disc_package_resources(
             logger.warning("Failed to fetch resource torrent payload: title=%s error=%s", result.resources.title, exc)
             continue
         enriched = _resource_with_metadata_attrs(result, payload)
+        if selected_files_have_season_conflict(
+            payload.metadata,
+            season_number=season_number,
+            selected_files=None,
+        ):
+            logger.debug(
+                "Discarded disc resource after payload season verification: title=%s target_season=%s",
+                result.resources.title,
+                season_number,
+            )
+            continue
         attrs = enriched.attrs
         if not attrs.resource_form or not match_filters(enriched, filters, quality_profile):
             continue

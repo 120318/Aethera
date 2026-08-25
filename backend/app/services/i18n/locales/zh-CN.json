@@ -34,6 +34,7 @@
   "backendErrors.taskStorageChangeBlocked": "更换存储被阻止：{reason}",
   "backendErrors.libraryFileDirectoryChangeBlocked": "更换本地资源目录被阻止：{reason}",
   "backendErrors.directoryNotFound": "目录不存在",
+  "backendErrors.downloadTorrentSeasonMismatch": "种子内部文件的季号与目标第 {season} 季不一致，已阻止下载",
   "backendErrors.taskNotFound": "任务不存在",
   "backendErrors.transferFailed": "转移失败：{reason}",
   "runtimeReasons.danmuDurationMismatch": "视频时长不匹配",

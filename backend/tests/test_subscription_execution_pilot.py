@@ -183,7 +183,7 @@ async def test_pilot_can_combine_multiple_resources_to_cover_first_three_episode
         _build_resource("single-3", [3], seeders=8),
     ]
 
-    async def fake_finalize(result, covered, payload=None):
+    async def fake_finalize(result, covered, payload=None, *, season_number=None):
         return _build_pilot_payload(covered), [], result
 
     monkeypatch.setattr("app.services.domain.resource.pilot_selection.finalize_pilot_resource", fake_finalize)
@@ -210,7 +210,7 @@ async def test_pilot_prefers_higher_quality_combo_over_lower_quality_full_pack(m
         _build_resource("single-high-3", [3], seeders=8),
     ]
 
-    async def fake_finalize(result, covered, payload=None):
+    async def fake_finalize(result, covered, payload=None, *, season_number=None):
         return _build_pilot_payload(covered), [], result
 
     def fake_score(result, filters):
@@ -243,7 +243,7 @@ async def test_pilot_does_not_fetch_payload_during_selection_for_attrless_candid
         _build_resource("full-unknown", None, seeders=20),
     ]
 
-    async def fake_finalize(result, covered, payload=None):
+    async def fake_finalize(result, covered, payload=None, *, season_number=None):
         return _build_pilot_payload(covered), [], result
 
     async def fail_fetch_payload(_url):
@@ -272,7 +272,7 @@ async def test_pilot_prefers_better_builtin_quality_before_seeders(monkeypatch):
         _build_resource("dv-pack", [1, 2, 3], seeders=5, hdr_type="Dolby Vision"),
     ]
 
-    async def fake_finalize(result, covered, payload=None):
+    async def fake_finalize(result, covered, payload=None, *, season_number=None):
         return _build_pilot_payload(covered), [], result
 
     monkeypatch.setattr("app.services.domain.resource.pilot_selection.finalize_pilot_resource", fake_finalize)
@@ -355,6 +355,47 @@ async def test_pilot_finalization_selects_only_missing_episode_files_from_pack()
 
     assert finalized is not None
     assert finalized[1] == [0]
+
+
+@pytest.mark.asyncio
+async def test_pilot_finalization_rejects_payload_files_from_another_season():
+    resource = _build_resource("Show.S01.Complete.2160p.WEB-DL", [30])
+    metadata = TorrentMetadata(
+        hash="wrong-season",
+        name="Show.S02.2160p.WEB-DL",
+        size=1,
+        files=[
+            TorrentFileItem(
+                index=0,
+                filename="Show.S02E30.mkv",
+                size=1,
+                attrs=ResourceAttributes(
+                    title="Show.S02E30",
+                    seasons=[2],
+                    episodes=[30],
+                    sources=["WEB-DL"],
+                    resource_form="Video File",
+                ),
+            )
+        ],
+        attrs=ResourceAttributes(
+            title="Show.S02.2160p.WEB-DL",
+            seasons=[2],
+            episodes=[30],
+            sources=["WEB-DL"],
+            resource_form="Video File",
+        ),
+        coverage_kind="exact_episodes",
+    )
+
+    finalized = await finalize_pilot_resource(
+        resource,
+        {30},
+        TorrentPayload(metadata=metadata, blob=b"wrong-season"),
+        season_number=1,
+    )
+
+    assert finalized is None
 
 
 @pytest.mark.asyncio
@@ -500,7 +541,7 @@ async def test_subscription_prefers_better_builtin_quality_before_seeders():
 
     async def fake_fetch_payload(_url):
         file_item = SimpleNamespace(get_episodes=lambda: {1})
-        metadata = SimpleNamespace(files=[file_item], get_episodes=lambda: {1}, name="payload", size=1)
+        metadata = SimpleNamespace(attrs=None, files=[file_item], get_episodes=lambda: {1}, name="payload", size=1)
         return SimpleNamespace(metadata=metadata)
 
     from app.services.domain.resource import selection as resource_selection_module
@@ -532,7 +573,7 @@ async def test_subscription_selection_filters_zero_seeders_even_when_quality_is_
 
     async def fake_fetch_payload(result):
         file_item = SimpleNamespace(get_episodes=lambda: {1})
-        metadata = SimpleNamespace(files=[file_item], get_episodes=lambda: {1}, name=result.title, size=1)
+        metadata = SimpleNamespace(attrs=None, files=[file_item], get_episodes=lambda: {1}, name=result.title, size=1)
         return SimpleNamespace(metadata=metadata)
 
     monkeypatch.setattr("app.services.domain.resource.selection.fetch_torrent_payload", fake_fetch_payload)
@@ -563,7 +604,7 @@ async def test_subscription_selection_prefers_seeders_over_stereo_channel_only_a
 
     async def fake_fetch_payload(result):
         file_item = SimpleNamespace(get_episodes=lambda: {1})
-        metadata = SimpleNamespace(files=[file_item], get_episodes=lambda: {1}, name=result.title, size=1)
+        metadata = SimpleNamespace(attrs=None, files=[file_item], get_episodes=lambda: {1}, name=result.title, size=1)
         return SimpleNamespace(metadata=metadata)
 
     monkeypatch.setattr("app.services.domain.resource.selection.fetch_torrent_payload", fake_fetch_payload)
@@ -592,7 +633,7 @@ async def test_subscription_selection_does_not_let_tiny_hdr_beat_healthy_2160p(m
 
     async def fake_fetch_payload(result):
         file_item = SimpleNamespace(get_episodes=lambda: {1})
-        metadata = SimpleNamespace(files=[file_item], get_episodes=lambda: {1}, name=result.title, size=1)
+        metadata = SimpleNamespace(attrs=None, files=[file_item], get_episodes=lambda: {1}, name=result.title, size=1)
         return SimpleNamespace(metadata=metadata)
 
     monkeypatch.setattr("app.services.domain.resource.selection.fetch_torrent_payload", fake_fetch_payload)
@@ -616,7 +657,7 @@ async def test_pilot_selection_filters_zero_seeders_even_when_quality_is_better(
         _build_resource("hdr-seeded", [1, 2, 3], seeders=3, hdr_type="HDR10"),
     ]
 
-    async def fake_finalize(result, covered, payload=None):
+    async def fake_finalize(result, covered, payload=None, *, season_number=None):
         return _build_pilot_payload(covered), [], result
 
     monkeypatch.setattr("app.services.domain.resource.pilot_selection.finalize_pilot_resource", fake_finalize)

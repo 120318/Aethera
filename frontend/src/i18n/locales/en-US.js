@@ -244,6 +244,7 @@ export default {
     http: 'Request failed',
     directoryValidationFailed: 'Directory configuration is invalid: {errors}',
     downloadTorrentPathConflict: 'Torrent already exists and its save path does not match this directory: {expected} -> {actual}',
+    downloadTorrentSeasonMismatch: 'The torrent file season does not match target season {season}; download was blocked',
     mediaServerLinkNotFound: 'Could not find this resource in the bound media library',
     mediaServerLinkUnavailable: 'This resource is not bound to an openable media library',
     mediaServerAuthenticationFailed: 'Media server authentication failed. Check the media server API key',

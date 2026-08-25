@@ -10,6 +10,7 @@ from app.services.domain.resource.filtering import compute_preference_score
 from app.services.domain.resource.quality import RESOURCE_FORM_BLURAY_DISC, RESOURCE_FORM_DVD_DISC
 from app.services.domain.resource.selection import automatic_resource_sort_rank, has_valid_seeders
 from app.services.domain.resource.torrent_metadata import fetch_torrent_payload
+from app.services.domain.resource.torrent_season import select_torrent_episode_files, torrent_episodes_for_season
 
 logger = logging.getLogger("app.services.resource.pilot_selection")
 
@@ -19,6 +20,7 @@ async def select_pilot_resources(
     *,
     quality_profile: QualityProfile | None = None,
     target_episodes: set[int],
+    season_number: int | None = None,
 ) -> list[tuple[TorrentPayload, list[int], Resource]] | None:
     candidate_items: list[tuple[Resource, set[int], int, int, TorrentPayload | None]] = []
     for result in results:
@@ -105,14 +107,14 @@ async def select_pilot_resources(
         finalized_items: list[tuple[TorrentPayload, list[int], Resource, set[int]]] = []
         finalized_coverage: set[int] = set()
         for result, covered, _preference_score, _seeders, payload in fallback_candidates:
-            finalized = await finalize_pilot_resource(result, covered, payload)
+            finalized = await finalize_pilot_resource(result, covered, payload, season_number=season_number)
             if not finalized:
                 continue
             remaining_episodes = target_episodes - finalized_coverage
-            effective_covered = set(finalized[0].metadata.get_episodes()) & remaining_episodes
+            effective_covered = torrent_episodes_for_season(finalized[0].metadata, season_number) & remaining_episodes
             if not effective_covered:
                 continue
-            finalized = await finalize_pilot_resource(result, effective_covered, finalized[0])
+            finalized = await finalize_pilot_resource(result, effective_covered, finalized[0], season_number=season_number)
             if not finalized:
                 continue
             finalized_coverage.update(effective_covered)
@@ -166,16 +168,16 @@ async def select_pilot_resources(
             if not provisional_covered:
                 continue
 
-            finalized = await finalize_pilot_resource(result, provisional_covered, payload)
+            finalized = await finalize_pilot_resource(result, provisional_covered, payload, season_number=season_number)
             if not finalized:
                 combo_valid = False
                 break
 
             finalized_payload = finalized[0]
-            payload_episodes = set(finalized_payload.metadata.get_episodes())
+            payload_episodes = torrent_episodes_for_season(finalized_payload.metadata, season_number)
             effective_covered = (payload_episodes & remaining_episodes) or provisional_covered
             if effective_covered != provisional_covered:
-                finalized = await finalize_pilot_resource(result, effective_covered, finalized_payload)
+                finalized = await finalize_pilot_resource(result, effective_covered, finalized_payload, season_number=season_number)
                 if not finalized:
                     combo_valid = False
                     break
@@ -209,6 +211,8 @@ async def finalize_pilot_resource(
     result: Resource | None,
     covered: set[int],
     payload: TorrentPayload | None = None,
+    *,
+    season_number: int | None = None,
 ) -> tuple[TorrentPayload, list[int], Resource] | None:
     if not result or not covered:
         return None
@@ -218,7 +222,7 @@ async def finalize_pilot_resource(
         logger.warning("Failed to finalize pilot torrent payload: title=%s error=%s", result.resources.title, exc)
         return None
 
-    payload_episodes = set(payload.metadata.get_episodes())
+    payload_episodes = torrent_episodes_for_season(payload.metadata, season_number)
     if payload.metadata.attrs and payload.metadata.attrs.resource_form in {RESOURCE_FORM_BLURAY_DISC, RESOURCE_FORM_DVD_DISC}:
         logger.debug("Pilot payload skipped: title=%s reason=disc_package", result.resources.title)
         return None
@@ -240,11 +244,11 @@ async def finalize_pilot_resource(
             sorted(covered),
         )
 
-    selected_files = [
-        index
-        for index, file in enumerate(payload.metadata.files)
-        if file.get_episodes() and file.get_episodes() & covered
-    ]
+    selected_files = select_torrent_episode_files(
+        payload.metadata,
+        season_number=season_number,
+        episodes=covered,
+    )
     if selected_files:
         selected_covered = set().union(*(payload.metadata.files[index].get_episodes() or set() for index in selected_files))
         if not covered.issubset(selected_covered):

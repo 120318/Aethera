@@ -34,6 +34,7 @@
   "backendErrors.taskStorageChangeBlocked": "Storage change blocked: {reason}",
   "backendErrors.libraryFileDirectoryChangeBlocked": "Local resource directory change blocked: {reason}",
   "backendErrors.directoryNotFound": "Directory not found",
+  "backendErrors.downloadTorrentSeasonMismatch": "The torrent file season does not match target season {season}; download was blocked",
   "backendErrors.taskNotFound": "Task not found",
   "backendErrors.transferFailed": "Transfer failed: {reason}",
   "runtimeReasons.danmuDurationMismatch": "Video duration mismatch",
