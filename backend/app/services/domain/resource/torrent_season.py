@@ -13,7 +13,7 @@ def torrent_file_matches_season(
     if season_number is None:
         return True
     seasons = _explicit_file_seasons(metadata, file_item)
-    return not seasons or season_number in seasons
+    return not seasons or seasons == {season_number}
 
 
 def torrent_episodes_for_season(
@@ -55,7 +55,7 @@ def selected_files_have_season_conflict(
     indices = list(selected_files or range(len(metadata.files)))
     if not indices:
         seasons = _explicit_metadata_seasons(metadata)
-        return bool(seasons and season_number not in seasons)
+        return bool(seasons and seasons != {season_number})
     for index in indices:
         if 0 <= index < len(metadata.files) and not torrent_file_matches_season(
             metadata,

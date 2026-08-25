@@ -130,12 +130,15 @@ def _detect_disc_structure(name: str, files: list[TorrentFileItem]) -> tuple[str
 
 def _merge_file_attrs(file_item: TorrentFileItem, form: str | None, source: str | None, layout: str | None) -> ResourceAttributes:
     attrs = file_item.attrs or resource_parser.parse(file_item.filename)
-    if not form and not layout:
-        return attrs
+    filename_attrs = resource_parser.parse(PurePosixPath(file_item.filename).name)
     sources = list(attrs.sources or [])
     if source and source not in sources:
         sources.append(source)
-    updates = {"sources": sources, "package_layout": layout or attrs.package_layout}
+    updates = {
+        "sources": sources,
+        "seasons": list(filename_attrs.seasons or []),
+        "package_layout": layout or attrs.package_layout,
+    }
     if form:
         updates.update({"resource_form": form, "resource_form_evidence": ResourceFormEvidence.TORRENT_STRUCTURE})
     return attrs.model_copy(update=updates)
