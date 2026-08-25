@@ -182,6 +182,41 @@ class IndexerSiteHealthRepository:
             session.commit()
             return True
 
+    def refresh_active_unhealthy_event_if_current(
+        self,
+        status: IndexerSiteHealthStatus,
+        event: Event,
+    ) -> bool:
+        with SessionLocal() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
+            row = session.get(
+                IndexerSiteHealthORM,
+                {"indexer_id": status.indexer_id, "site_id": status.site_id},
+            )
+            if not self._matches_outcome(row, status) or row.status != "unhealthy" or not row.notify_pending:
+                session.rollback()
+                return False
+            acknowledgement_exists = (
+                select(EventAcknowledgementORM.event_id)
+                .where(EventAcknowledgementORM.event_id == EventORM.id)
+                .exists()
+            )
+            active_event = session.execute(
+                select(EventORM)
+                .where(EventORM.correlation_id == (event.correlation_id or ""))
+                .where(EventORM.type == EventTypes.INDEXER_SITE_UNHEALTHY.value)
+                .where(EventORM.level == EventLevel.warning.value)
+                .where(not_(acknowledgement_exists))
+                .order_by(EventORM.ts.desc(), EventORM.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if active_event is None:
+                session.rollback()
+                return False
+            EventRepository.refresh_snapshot(active_event, event)
+            session.commit()
+            return True
+
     def acknowledge_recovered_unhealthy_events(
         self,
         status: IndexerSiteHealthStatus,

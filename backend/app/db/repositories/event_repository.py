@@ -45,6 +45,15 @@ class EventRepository:
         )
 
     @staticmethod
+    def refresh_snapshot(row: EventORM, event: Event) -> None:
+        row.ts = event.ts.isoformat()
+        row.message_key = event.message_key
+        row.message_params_json = event.message_params
+        row.search_text = build_event_search_text(event)
+        row.entities_json = [item.model_dump(mode="json") for item in event.entities]
+        row.meta_json = EventRepository._meta_db_value(event.meta)
+
+    @staticmethod
     def _normalize_meta_text(raw) -> str:
         if raw is None or raw == "":
             return ""

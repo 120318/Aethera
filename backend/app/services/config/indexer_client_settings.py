@@ -87,6 +87,21 @@ class IndexerSiteHealthState:
             )
             return False
 
+    def _refresh_active_unhealthy_event(self, status: IndexerSiteHealthStatus) -> bool:
+        try:
+            return self._repo.refresh_active_unhealthy_event_if_current(
+                status,
+                self._build_unhealthy_event(status),
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to refresh active indexer site unhealthy event for %s/%s: %s",
+                status.indexer_id,
+                status.site_id,
+                exc,
+            )
+            return False
+
     def _acknowledge_unhealthy_event(self, status: IndexerSiteHealthStatus) -> bool:
         try:
             applied, acknowledged_count = self._repo.acknowledge_recovered_unhealthy_events(
@@ -109,28 +124,6 @@ class IndexerSiteHealthState:
                 exc,
             )
             return False
-
-    def _reopen_unhealthy_event(self, status: IndexerSiteHealthStatus) -> None:
-        try:
-            applied, reopened_count = self._repo.reopen_unhealthy_events(
-                status,
-                self._unhealthy_event_correlation_id(status.indexer_id, status.site_id),
-                self._build_unhealthy_event(status),
-            )
-            if applied and reopened_count:
-                logger.info(
-                    "Reopened recurring indexer site unhealthy events: indexer=%s site=%s count=%s",
-                    status.indexer_id,
-                    status.site_id,
-                    reopened_count,
-                )
-        except Exception as exc:
-            logger.error(
-                "Failed to reopen recurring indexer site unhealthy events for %s/%s: %s",
-                status.indexer_id,
-                status.site_id,
-                exc,
-            )
 
     def record_outcomes(self, outcomes: list[IndexerSiteSearchOutcome]) -> None:
         for outcome in outcomes:
@@ -217,20 +210,21 @@ class IndexerSiteHealthState:
                 now = current.checked_at + timedelta(microseconds=1)
             previous_failures = current.consecutive_failures if current else 0
             consecutive_failures = previous_failures + 1
-            should_emit = (
+            alert_threshold_reached = consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
+            recovered_since_notification = bool(
                 consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
-                and self._notify_cooldown_elapsed(current.last_notified_at if current else None, now)
-            )
-            should_reopen = bool(
-                consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
-                and not should_emit
                 and current
                 and current.last_success_at
-                and current.last_notified_at
-                and current.last_success_at > current.last_notified_at
                 and (
-                    current.last_reopened_at is None
-                    or current.last_success_at > current.last_reopened_at
+                    current.last_notified_at is None
+                    or current.last_success_at > current.last_notified_at
+                )
+            )
+            should_emit = bool(
+                alert_threshold_reached
+                and (
+                    recovered_since_notification
+                    or self._notify_cooldown_elapsed(current.last_notified_at if current else None, now)
                 )
             )
             status = IndexerSiteHealthStatus(
@@ -253,10 +247,10 @@ class IndexerSiteHealthState:
             if applied:
                 break
             current = saved
+        if alert_threshold_reached and self._refresh_active_unhealthy_event(saved):
+            return self._get_record(indexer_id, site_id) or saved
         if should_emit:
             self._emit_unhealthy_event(saved, now)
-        elif should_reopen:
-            self._reopen_unhealthy_event(saved)
         return self._get_record(indexer_id, site_id) or saved
 
     @staticmethod
