@@ -222,6 +222,7 @@ class PilotDownloadApplicationService:
                 standard_results,
                 quality_profile=selection_plan.quality_profile,
                 target_episodes=selection_plan.target_episodes,
+                season_number=selection_plan.season_number,
             )
         return await select_download_resources(
             standard_results,

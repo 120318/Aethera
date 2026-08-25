@@ -244,6 +244,7 @@ export default {
     http: '请求失败',
     directoryValidationFailed: '目录配置无效：{errors}',
     downloadTorrentPathConflict: '种子已存在，且保存路径与当前目录配置不一致：{expected} -> {actual}',
+    downloadTorrentSeasonMismatch: '种子内部文件的季号与目标第 {season} 季不一致，已阻止下载',
     mediaServerLinkNotFound: '未能在绑定的媒体库中找到该资源',
     mediaServerLinkUnavailable: '该资源未绑定可打开的媒体库',
     mediaServerAuthenticationFailed: '媒体服务器认证失败，请检查媒体服务器 API Key',

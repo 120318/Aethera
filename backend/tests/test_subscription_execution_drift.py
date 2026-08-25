@@ -949,6 +949,41 @@ async def test_select_resources_continues_after_known_candidate_payload_misses_t
 
 
 @pytest.mark.asyncio
+async def test_select_resources_rejects_payload_files_from_another_season(monkeypatch):
+    misleading = _video_resource("Show.S01.Complete.2160p.WEB-DL", [30], seeders=50)
+    correct = _video_resource("Show.S01E30.1080p.WEB-DL", [30], seeders=20)
+    wrong_metadata = _video_metadata(misleading.resources.title, [30])
+    wrong_metadata.name = "Show.S02.2160p.WEB-DL"
+    wrong_metadata.attrs = wrong_metadata.attrs.model_copy(update={"seasons": [2]})
+    wrong_metadata.files[0].filename = "Show.S02E30.mkv"
+    wrong_metadata.files[0].attrs = wrong_metadata.files[0].attrs.model_copy(update={"seasons": [2]})
+    payloads = {
+        misleading.resources.title: TorrentPayload(metadata=wrong_metadata, blob=b"wrong-season"),
+        correct.resources.title: TorrentPayload(metadata=_video_metadata(correct.resources.title, [30]), blob=b"correct-season"),
+    }
+
+    async def fake_fetch_payload(result):
+        return payloads[result.title]
+
+    monkeypatch.setattr(
+        "app.services.domain.resource.selection.fetch_torrent_payload",
+        fake_fetch_payload,
+    )
+
+    selected = await select_resources(
+        [misleading, correct],
+        episodes={30},
+        filters=SubscriptionFilters(resource_kind=["video_file"]),
+        episode_mode=True,
+        season_number=1,
+    )
+
+    assert len(selected) == 1
+    assert selected[0][2].resources.title == correct.resources.title
+    assert selected[0][1] == [0]
+
+
+@pytest.mark.asyncio
 async def test_original_disc_category_only_selects_disc_package(monkeypatch):
     resources = [_disc_resource("Show.S01.Disc.1.of.1", seeders=20), _video_resource("Show.S01E01.1080p.WEB-DL", [1], seeders=50)]
     payloads = {

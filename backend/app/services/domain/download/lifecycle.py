@@ -16,6 +16,7 @@ from app.services.domain.directory import directory_service
 from app.services.config.settings_service import settings_service
 from app.services.domain.resource.parser import resource_parser
 from app.services.domain.resource.torrent_metadata import build_torrent_payload
+from app.services.domain.resource.torrent_season import selected_files_have_season_conflict
 from app.services.integration.torrent import torrent_service
 from app.services.platform.domain_lock_service import domain_lock_service
 from app.utils.library_paths import to_download_relative_path
@@ -314,6 +315,22 @@ class DownloadCreationService:
         logger.debug("Preparing download request: media=%s result_id=%s title=%s", req.media.media_id, req.result_id, search_result.title)
 
         payload = build_torrent_payload(await torrent_service.fetch_blob(search_result), desc=search_result.description)
+        if selected_files_have_season_conflict(
+            payload.metadata,
+            season_number=req.media.season_number,
+            selected_files=req.selected_files,
+        ):
+            logger.warning(
+                "Download request rejected after torrent season verification: media=%s target_season=%s title=%s selected_files=%s",
+                req.media.media_id,
+                req.media.season_number,
+                search_result.title,
+                req.selected_files or [],
+            )
+            raise DownloadException(
+                "backendErrors.downloadTorrentSeasonMismatch",
+                params={"season": str(req.media.season_number)},
+            )
         torrent_service.store_blob(payload.metadata.hash if payload.metadata else None, payload.blob)
         download_target = self.resolve_download_target(req.directory_id)
         async with domain_lock_service.acquire_download_create(

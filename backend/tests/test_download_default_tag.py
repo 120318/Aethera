@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -90,6 +90,89 @@ def test_resolve_download_target_wraps_configuration_error_as_i18n_reason(monkey
         "reason_key": "backendErrors.config.directoryNotFound",
         "reason_params": {"id": "dir-1"},
     }
+
+
+@pytest.mark.asyncio
+async def test_create_download_rejects_selected_file_from_another_season(monkeypatch):
+    media = MediaExecutionSnapshot(
+        media_id=MediaID.parse("tmdb:tv:1"),
+        title="Show",
+        year=2026,
+        media_type=MediaType.tv,
+        season_number=1,
+        episodes_count=30,
+    )
+    search_result = ResourceSearchResult(
+        id="result-1",
+        title="Show.S01.Complete.2160p.WEB-DL",
+        site="site-a",
+        category="tv",
+        size="1 GiB",
+        seeders=1,
+        leechers=0,
+        publish_date=datetime.now(),
+        download_url="https://example.com/file.torrent",
+        result_id="result-1",
+    )
+    payload = TorrentPayload(
+        metadata=TorrentMetadata(
+            hash="wrong-season",
+            name="Show.S02.2160p.WEB-DL",
+            size=1,
+            files=[
+                TorrentFileItem(
+                    index=0,
+                    filename="Show.S02E30.mkv",
+                    size=1,
+                    attrs=ResourceAttributes(
+                        title="Show.S02E30",
+                        seasons=[2],
+                        episodes=[30],
+                        sources=["WEB-DL"],
+                        resource_form="Video File",
+                    ),
+                )
+            ],
+            attrs=ResourceAttributes(
+                title="Show.S02.2160p.WEB-DL",
+                seasons=[2],
+                episodes=[30],
+                sources=["WEB-DL"],
+                resource_form="Video File",
+            ),
+            coverage_kind="exact_episodes",
+        ),
+        blob=b"torrent-data",
+    )
+    store_blob = Mock()
+    service = DownloadCreationService(None, None, None, None)
+    monkeypatch.setattr(
+        "app.services.domain.download.lifecycle.torrent_service.fetch_blob",
+        AsyncMock(return_value=b"torrent-data"),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.download.lifecycle.build_torrent_payload",
+        lambda _blob, desc=None: payload,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.download.lifecycle.torrent_service.store_blob",
+        store_blob,
+    )
+
+    with pytest.raises(DownloadException) as exc_info:
+        await service.create_download(
+            DownloadTaskCreateInput(
+                media=media,
+                directory_id="dir-1",
+                result_id="result-1",
+                selected_files=[0],
+            ),
+            search_result,
+        )
+
+    assert exc_info.value.message_key == "backendErrors.downloadTorrentSeasonMismatch"
+    assert exc_info.value.params == {"season": "1"}
+    store_blob.assert_not_called()
 
 
 @pytest.mark.asyncio

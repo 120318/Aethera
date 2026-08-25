@@ -82,7 +82,7 @@ def enrich_torrent_metadata(metadata: TorrentMetadata, desc: str = "") -> Torren
     root_attrs = resource_parser.parse(metadata.name, desc=desc)
     form, source, layout = _detect_disc_structure(metadata.name, metadata.files)
     enriched_files = [
-        file_item.model_copy(update={"attrs": _merge_file_attrs(file_item, form, source, layout)})
+        file_item.model_copy(update={"attrs": _merge_file_attrs(file_item, metadata.name, form, source, layout)})
         for file_item in metadata.files
     ]
     package_attrs = _merge_package_attrs(root_attrs, enriched_files, form, source, layout)
@@ -128,17 +128,40 @@ def _detect_disc_structure(name: str, files: list[TorrentFileItem]) -> tuple[str
     return None, None, PackageLayoutValue.ISO if iso else None
 
 
-def _merge_file_attrs(file_item: TorrentFileItem, form: str | None, source: str | None, layout: str | None) -> ResourceAttributes:
+def _merge_file_attrs(
+    file_item: TorrentFileItem,
+    root_name: str,
+    form: str | None,
+    source: str | None,
+    layout: str | None,
+) -> ResourceAttributes:
     attrs = file_item.attrs or resource_parser.parse(file_item.filename)
-    if not form and not layout:
-        return attrs
     sources = list(attrs.sources or [])
     if source and source not in sources:
         sources.append(source)
-    updates = {"sources": sources, "package_layout": layout or attrs.package_layout}
+    updates = {
+        "sources": sources,
+        "seasons": _file_season_evidence(file_item.filename, root_name),
+        "package_layout": layout or attrs.package_layout,
+    }
     if form:
         updates.update({"resource_form": form, "resource_form_evidence": ResourceFormEvidence.TORRENT_STRUCTURE})
     return attrs.model_copy(update=updates)
+
+
+def _file_season_evidence(filename: str, root_name: str) -> list[int]:
+    path = PurePosixPath(filename)
+    filename_attrs = resource_parser.parse(path.name)
+    if filename_attrs.seasons:
+        return list(filename_attrs.seasons)
+
+    directory_parts = list(path.parts[:-1])
+    if directory_parts and directory_parts[0].strip() == root_name.strip():
+        directory_parts = directory_parts[1:]
+    if not directory_parts:
+        return []
+    directory_attrs = resource_parser.parse("/".join(directory_parts))
+    return list(directory_attrs.seasons or [])
 
 
 def _merge_package_attrs(

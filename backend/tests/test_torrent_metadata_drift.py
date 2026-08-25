@@ -6,6 +6,10 @@ import bencodepy
 import pytest
 
 from app.services.domain.resource.torrent_metadata import parse_torrent_metadata
+from app.services.domain.resource.torrent_season import (
+    select_torrent_episode_files,
+    selected_files_have_season_conflict,
+)
 
 
 pytestmark = [pytest.mark.drift]
@@ -183,3 +187,113 @@ def test_parse_metadata_keeps_episode_from_description_when_files_have_no_episod
     assert metadata.attrs.desc == "爱情没有神话 第11集 | 类型：剧情 爱情"
     assert metadata.attrs.episodes == [11]
     assert metadata.get_episodes() == {11}
+
+
+def test_multi_season_metadata_cannot_assign_seasonless_episode_file_to_one_season():
+    payload = bencodepy.encode(
+        OrderedDict(
+            [
+                (
+                    b"info",
+                    OrderedDict(
+                        [
+                            (b"name", b"Show.Name.S01-S03"),
+                            (
+                                b"files",
+                                [
+                                    OrderedDict(
+                                        [
+                                            (b"length", 123),
+                                            (b"path", [b"Show.Name.S01-S03", b"Show.Name.E01.mkv"]),
+                                        ]
+                                    )
+                                ],
+                            ),
+                        ]
+                    ),
+                )
+            ]
+        )
+    )
+
+    metadata = parse_torrent_metadata(payload)
+
+    assert metadata.attrs.seasons == [1, 2, 3]
+    assert metadata.files[0].attrs.seasons == []
+    assert select_torrent_episode_files(metadata, season_number=1, episodes={1}) == []
+    assert selected_files_have_season_conflict(metadata, season_number=1, selected_files=[0]) is True
+
+
+def test_multi_season_torrent_can_select_file_with_one_explicit_target_season():
+    payload = bencodepy.encode(
+        OrderedDict(
+            [
+                (
+                    b"info",
+                    OrderedDict(
+                        [
+                            (b"name", b"Show.Name.S01-S02"),
+                            (
+                                b"files",
+                                [
+                                    OrderedDict(
+                                        [
+                                            (b"length", 123),
+                                            (b"path", [b"Show.Name.S01-S02", b"Show.Name.S01E01.mkv"]),
+                                        ]
+                                    ),
+                                    OrderedDict(
+                                        [
+                                            (b"length", 456),
+                                            (b"path", [b"Show.Name.S01-S02", b"Show.Name.S02E01.mkv"]),
+                                        ]
+                                    ),
+                                ],
+                            ),
+                        ]
+                    ),
+                )
+            ]
+        )
+    )
+
+    metadata = parse_torrent_metadata(payload)
+
+    assert select_torrent_episode_files(metadata, season_number=1, episodes={1}) == [0]
+    assert selected_files_have_season_conflict(metadata, season_number=1, selected_files=[0]) is False
+    assert selected_files_have_season_conflict(metadata, season_number=1, selected_files=None) is True
+
+
+def test_nested_single_season_directory_remains_file_season_evidence():
+    payload = bencodepy.encode(
+        OrderedDict(
+            [
+                (
+                    b"info",
+                    OrderedDict(
+                        [
+                            (b"name", b"Show.Name.Complete"),
+                            (
+                                b"files",
+                                [
+                                    OrderedDict(
+                                        [
+                                            (b"length", 123),
+                                            (b"path", [b"Season 2", b"Show.Name.E01.mkv"]),
+                                        ]
+                                    )
+                                ],
+                            ),
+                        ]
+                    ),
+                )
+            ]
+        )
+    )
+
+    metadata = parse_torrent_metadata(payload)
+
+    assert metadata.attrs.seasons == [2]
+    assert metadata.files[0].attrs.seasons == [2]
+    assert select_torrent_episode_files(metadata, season_number=1, episodes={1}) == []
+    assert selected_files_have_season_conflict(metadata, season_number=1, selected_files=[0]) is True

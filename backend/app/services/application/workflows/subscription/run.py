@@ -253,6 +253,7 @@ class SubscriptionRunApplicationService:
             quality_profile=plan.quality_profile,
             required_scores=plan.required_scores,
             episode_mode=plan.episode_mode,
+            season_number=plan.season_number,
             existing_disc_numbers=plan.existing_disc_numbers,
         )
         return ResourceRunSelection(
@@ -595,6 +596,5 @@ class SubscriptionRunApplicationService:
     async def _acquire_subscription_sweep(self) -> AsyncIterator[bool]:
         async with domain_lock_service.acquire_scheduler_job("subscription_sweep") as acquired:
             yield acquired
-
 
 subscription_run_application_service = SubscriptionRunApplicationService()
