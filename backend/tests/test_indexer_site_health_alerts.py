@@ -323,6 +323,32 @@ def test_indexer_site_active_warning_refreshes_without_daily_telegram(monkeypatc
     assert repo.refreshed_events[0].message_params["error"] == "still disabled"
 
 
+def test_indexer_site_refresh_failure_falls_back_to_first_notification(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
+        lambda _event: None,
+    )
+    repo = _FakeIndexerSiteHealthRepository()
+
+    def fail_refresh(*_args):
+        raise RuntimeError("event store unavailable")
+
+    monkeypatch.setattr(repo, "refresh_active_unhealthy_event_if_current", fail_refresh)
+    state = IndexerSiteHealthState(repo=repo)
+
+    for _ in range(3):
+        status = state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+
+    assert len(repo.emitted_events) == 1
+    assert status.last_notified_at is not None
+
+
 def test_indexer_site_success_acknowledges_unhealthy_warning_event(monkeypatch):
     emitted_events = []
     monkeypatch.setattr(

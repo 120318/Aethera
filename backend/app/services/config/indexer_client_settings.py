@@ -100,7 +100,7 @@ class IndexerSiteHealthState:
                 status.site_id,
                 exc,
             )
-            return True
+            return False
 
     def _acknowledge_unhealthy_event(self, status: IndexerSiteHealthStatus) -> bool:
         try:
