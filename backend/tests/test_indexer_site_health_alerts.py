@@ -26,6 +26,8 @@ class _FakeIndexerSiteHealthRepository:
         self.acknowledge_failures_remaining = 0
         self.acknowledged_calls: list[str] = []
         self.reopened_calls: list[str] = []
+        self.active_event_correlation_ids: set[str] = set()
+        self.refreshed_events = []
         self.before_acknowledge = None
         self.before_emit = None
         self.before_conditional_upsert = None
@@ -70,6 +72,7 @@ class _FakeIndexerSiteHealthRepository:
         if not current or current.status != "healthy" or current.checked_at != status.checked_at:
             return False, 0
         self.acknowledged_calls.append(correlation_id)
+        self.active_event_correlation_ids.discard(correlation_id)
         saved = current.model_copy(update={"notify_pending": False})
         self.records[(status.indexer_id, status.site_id)] = saved
         return True, 1
@@ -94,6 +97,21 @@ class _FakeIndexerSiteHealthRepository:
         saved = current.model_copy(update={"last_notified_at": notified_at})
         self.records[(status.indexer_id, status.site_id)] = saved
         self.emitted_events.append(event)
+        if event.correlation_id:
+            self.active_event_correlation_ids.add(event.correlation_id)
+        return True
+
+    def refresh_active_unhealthy_event_if_current(
+        self,
+        status: IndexerSiteHealthStatus,
+        event,
+    ) -> bool:
+        current = self.find_one(status.indexer_id, status.site_id)
+        if not current or current.status != "unhealthy" or current.checked_at != status.checked_at:
+            return False
+        if not event.correlation_id or event.correlation_id not in self.active_event_correlation_ids:
+            return False
+        self.refreshed_events.append(event)
         return True
 
     def reopen_unhealthy_events(
@@ -233,11 +251,11 @@ def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch
             error_message="disabled again",
         )
 
-    assert len(repo.emitted_events) == 1
-    assert repo.reopened_calls == ["indexer:prowlarr:site:audiences:unhealthy"]
+    assert len(repo.emitted_events) == 2
+    assert repo.reopened_calls == []
 
 
-def test_indexer_site_recurring_failure_reopens_event_only_once(monkeypatch):
+def test_indexer_site_recurring_failure_emits_one_new_incident_after_recovery(monkeypatch):
     monkeypatch.setattr(
         "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
         lambda _event: None,
@@ -268,7 +286,41 @@ def test_indexer_site_recurring_failure_reopens_event_only_once(monkeypatch):
             error_message="disabled again",
         )
 
-    assert repo.reopened_calls == ["indexer:prowlarr:site:audiences:unhealthy"]
+    assert len(repo.emitted_events) == 2
+    assert repo.reopened_calls == []
+
+
+def test_indexer_site_active_warning_refreshes_without_daily_telegram(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
+        lambda _event: None,
+    )
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
+    for _ in range(3):
+        state.record_failure(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            error_message="disabled",
+        )
+    current = repo.find_one("prowlarr", "audiences")
+    assert current is not None
+    repo.upsert(current.model_copy(update={"last_notified_at": datetime.now() - timedelta(hours=25)}))
+
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="still disabled",
+    )
+
+    assert len(repo.emitted_events) == 1
+    assert len(repo.refreshed_events) == 1
+    assert repo.refreshed_events[0].message_params["consecutive_failures"] == "4"
+    assert repo.refreshed_events[0].message_params["error"] == "still disabled"
 
 
 def test_indexer_site_success_acknowledges_unhealthy_warning_event(monkeypatch):
@@ -855,6 +907,72 @@ def test_emit_unhealthy_event_acknowledges_previous_matching_alert():
     assert applied is True
     assert persisted_current is not None
     assert acknowledged_ids == {previous_event.id}
+
+
+def test_refresh_active_unhealthy_event_updates_snapshot_without_new_dispatch():
+    repo = IndexerSiteHealthRepository()
+    checked_at = datetime.now()
+    correlation_id = "indexer:refresh-indexer:site:refresh-site:unhealthy"
+    status = IndexerSiteHealthStatus(
+        indexer_id="refresh-indexer",
+        indexer_name="Prowlarr",
+        site_id="refresh-site",
+        site_name="Refresh Site",
+        status="unhealthy",
+        checked_at=checked_at,
+        consecutive_failures=27,
+        notify_pending=True,
+    )
+    repo.upsert(status)
+    existing_event = Event(
+        id="active-refresh-warning",
+        ts=checked_at - timedelta(days=1),
+        type=EventTypes.INDEXER_SITE_UNHEALTHY,
+        level=EventLevel.warning,
+        message_params={"consecutive_failures": "3", "error": "disabled"},
+        correlation_id=correlation_id,
+    )
+    refreshed_event = Event(
+        id="unused-refresh-warning",
+        ts=checked_at,
+        type=EventTypes.INDEXER_SITE_UNHEALTHY,
+        level=EventLevel.warning,
+        message_params={"consecutive_failures": "27", "error": "still disabled"},
+        correlation_id=correlation_id,
+    )
+    with SessionLocal.begin() as session:
+        EventRepository.add_to_session(session, existing_event)
+
+    applied = repo.refresh_active_unhealthy_event_if_current(status, refreshed_event)
+
+    with SessionLocal.begin() as session:
+        rows = list(
+            session.execute(
+                select(EventORM).where(EventORM.correlation_id == correlation_id)
+            ).scalars().all()
+        )
+        dispatch_count = len(
+            list(
+                session.execute(
+                    select(EventDispatchORM).where(EventDispatchORM.event_id.in_([event.id for event in rows]))
+                ).scalars().all()
+            )
+        )
+        session.execute(delete(EventORM).where(EventORM.id == existing_event.id))
+        session.execute(
+            delete(IndexerSiteHealthORM).where(
+                IndexerSiteHealthORM.indexer_id == status.indexer_id,
+                IndexerSiteHealthORM.site_id == status.site_id,
+            )
+        )
+
+    assert applied is True
+    assert len(rows) == 1
+    assert rows[0].id == existing_event.id
+    assert rows[0].ts == checked_at.isoformat()
+    assert rows[0].message_params_json["consecutive_failures"] == "27"
+    assert rows[0].message_params_json["error"] == "still disabled"
+    assert dispatch_count == 0
 
 
 def test_emit_unhealthy_event_rolls_back_when_dispatch_queue_insert_fails():
