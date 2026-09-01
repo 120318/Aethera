@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+from urllib.parse import parse_qs
+from uuid import uuid4
 
 import httpx
 
@@ -20,6 +22,7 @@ class _QQSegment:
 
 class QQDanmuProvider(BaseDanmuProvider):
     provider_id = "qq"
+    _vector_page_url = "https://pbaccess.video.qq.com/trpc.vector_layout.page_view.PageService/getPage"
 
     def supports(self, vendor: Vendor) -> bool:
         text = " ".join([vendor_text(vendor.id), vendor_text(vendor.name), vendor_text(vendor.url)])
@@ -129,6 +132,16 @@ class QQDanmuProvider(BaseDanmuProvider):
                 item_title = str(item_mapping.get("title") or item_mapping.get("play_title") or "")
                 if item_vid and self._text_matches_episode_number(item_title, candidate_episode_number):
                     return item_vid
+        vector_vid = await self._resolve_episode_vid_from_vector_page(
+            client,
+            cid,
+            episode_number,
+            fallback_vid,
+            absolute_episode_number=absolute_episode_number,
+            season_number=season_number,
+        )
+        if vector_vid:
+            return vector_vid
         cover_vid = await self._resolve_episode_vid_from_cover_page(
             client,
             cid,
@@ -139,9 +152,138 @@ class QQDanmuProvider(BaseDanmuProvider):
         )
         if cover_vid:
             return cover_vid
-        if episode_number == 1:
+        if episode_number == 1 and (
+            not season_number
+            or season_number <= 1
+            or not absolute_episode_number
+            or absolute_episode_number == episode_number
+        ):
             return fallback_vid
         return None
+
+    async def _resolve_episode_vid_from_vector_page(
+        self,
+        client: httpx.AsyncClient,
+        cid: str,
+        episode_number: int,
+        fallback_vid: str | None,
+        *,
+        absolute_episode_number: int | None = None,
+        season_number: int | None = None,
+    ) -> str | None:
+        try:
+            page_data = await self._fetch_vector_page(client, cid, fallback_vid)
+            requested_cid = self._season_cid(page_data, season_number)
+            if requested_cid and requested_cid != cid:
+                page_data = await self._fetch_vector_page(client, requested_cid, None)
+            else:
+                requested_cid = cid
+        except (httpx.HTTPError, ValueError, TypeError):
+            return None
+
+        candidates = self._collect_card_params(page_data)
+        episode_numbers = (
+            [episode_number]
+            if requested_cid != cid
+            else self._episode_number_candidates(
+                episode_number,
+                absolute_episode_number=absolute_episode_number,
+                season_number=season_number,
+            )
+        )
+        for candidate_episode_number in episode_numbers:
+            for item_mapping in candidates:
+                item_vid = str(item_mapping.get("vid") or "")
+                item_cid = str(item_mapping.get("cid") or "")
+                item_title = " ".join(
+                    str(item_mapping.get(key) or "")
+                    for key in ("title", "play_title", "union_title", "c_title_output")
+                )
+                if (
+                    item_vid
+                    and str(item_mapping.get("is_trailer") or "") != "1"
+                    and (not item_cid or item_cid == requested_cid)
+                    and self._text_matches_episode_number(item_title, candidate_episode_number)
+                ):
+                    return item_vid
+        return None
+
+    async def _fetch_vector_page(
+        self,
+        client: httpx.AsyncClient,
+        cid: str,
+        vid: str | None,
+    ):
+        guid = str(uuid4())
+        response = await client.post(
+            self._vector_page_url,
+            params={
+                "video_appid": "3000010",
+                "vversion_platform": "2",
+                "vversion_name": "8.5.96",
+                "vdevice_guid": guid,
+            },
+            json={
+                "page_params": {
+                    "ad_wechat_authorization_status": "0",
+                    "req_from": "web_vsite",
+                    "ad_exp_ids": "",
+                    "pc_sdk_version": "",
+                    "pc_oaid": "",
+                    "new_mark_label_enabled": "1",
+                    "pc_device_info": "",
+                    "support_pc_yyb_mobile_app_engine": "0",
+                    "pc_wegame_version": "",
+                    "cid": cid,
+                    "history_vid": "",
+                    "vid": vid or "",
+                    "is_pc_new_detail_page": "1",
+                    "is_from_web_flyflow": "0",
+                    "lid": "",
+                },
+                "page_bypass_params": {
+                    "params": {"caller_id": "3000010", "platform_id": "2"},
+                    "scene": "desk_detail",
+                    "app_version": "",
+                    "abtest_bypass_id": guid,
+                },
+                "page_context": {},
+            },
+        )
+        response.raise_for_status()
+        payload_mapping: dict = response.json()
+        if type(payload_mapping) is not dict or payload_mapping.get("ret") != 0:
+            return {}
+        data_mapping = payload_mapping.get("data")
+        return data_mapping if type(data_mapping) is dict else {}
+
+    def _season_cid(self, payload, season_number: int | None) -> str | None:
+        if not season_number:
+            return None
+        expected_title = f"第{season_number}季"
+        for params_mapping in self._collect_card_params(payload):
+            card_mapping: dict = params_mapping
+            if str(card_mapping.get("title") or "").strip() != expected_title:
+                continue
+            query_mapping: dict = parse_qs(str(card_mapping.get("page_context") or ""))
+            values = query_mapping.get("cid") or []
+            if values:
+                return values[0]
+        return None
+
+    def _collect_card_params(self, payload) -> list:
+        result = []
+        if type(payload) is dict:
+            payload_mapping: dict = payload
+            params_mapping = payload_mapping.get("params")
+            if type(params_mapping) is dict:
+                result.append(params_mapping)
+            for value in payload_mapping.values():
+                result.extend(self._collect_card_params(value))
+        elif type(payload) is list:
+            for value in payload:
+                result.extend(self._collect_card_params(value))
+        return result
 
     def _episode_number_candidates(
         self,
