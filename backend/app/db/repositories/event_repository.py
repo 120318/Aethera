@@ -45,8 +45,9 @@ class EventRepository:
         )
 
     @staticmethod
-    def refresh_snapshot(row: EventORM, event: Event) -> None:
-        row.ts = event.ts.isoformat()
+    def refresh_snapshot(row: EventORM, event: Event, *, preserve_ts: bool = False) -> None:
+        if not preserve_ts:
+            row.ts = event.ts.isoformat()
         row.message_key = event.message_key
         row.message_params_json = event.message_params
         row.search_text = build_event_search_text(event)

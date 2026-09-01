@@ -12,6 +12,7 @@ class IndexerSiteHealthStatus(BaseModel):
     status: Literal["healthy", "unhealthy", "unknown"] = "unknown"
     checked_at: Optional[datetime] = None
     last_success_at: Optional[datetime] = None
+    first_failure_at: Optional[datetime] = None
     last_failure_at: Optional[datetime] = None
     consecutive_failures: int = 0
     last_error_message: Optional[str] = None

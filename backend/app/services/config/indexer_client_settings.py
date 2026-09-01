@@ -15,8 +15,7 @@ from app.schemas.runtime.indexer_site_health import IndexerSiteHealthStatus
 from app.services.audit.event_service import event_service
 
 
-INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD = 3
-INDEXER_SITE_FAILURE_NOTIFY_COOLDOWN = timedelta(hours=24)
+INDEXER_SITE_FAILURE_NOTIFY_AFTER = timedelta(days=1)
 logger = logging.getLogger("app.services.config.indexer_client_settings")
 
 
@@ -159,9 +158,7 @@ class IndexerSiteHealthState:
             now = datetime.now()
             if current and current.checked_at and now <= current.checked_at:
                 now = current.checked_at + timedelta(microseconds=1)
-            should_acknowledge_unhealthy_event = bool(
-                current and (current.status == "unhealthy" or current.notify_pending)
-            )
+            should_acknowledge_unhealthy_event = bool(current and current.notify_pending)
             status = IndexerSiteHealthStatus(
                 indexer_id=indexer_id,
                 indexer_name=indexer_name,
@@ -170,11 +167,12 @@ class IndexerSiteHealthState:
                 status="healthy",
                 checked_at=now,
                 last_success_at=now,
+                first_failure_at=None,
                 last_failure_at=current.last_failure_at if current else None,
                 consecutive_failures=0,
                 last_error_message=None,
                 notify_pending=should_acknowledge_unhealthy_event,
-                last_notified_at=current.last_notified_at if current else None,
+                last_notified_at=None,
                 last_reopened_at=current.last_reopened_at if current else None,
                 client_type=client_type,
             )
@@ -210,22 +208,20 @@ class IndexerSiteHealthState:
                 now = current.checked_at + timedelta(microseconds=1)
             previous_failures = current.consecutive_failures if current else 0
             consecutive_failures = previous_failures + 1
-            alert_threshold_reached = consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
-            recovered_since_notification = bool(
-                consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD
-                and current
-                and current.last_success_at
-                and (
-                    current.last_notified_at is None
-                    or current.last_success_at > current.last_notified_at
-                )
+            first_failure_at = (
+                current.first_failure_at
+                if current and current.status == "unhealthy" and current.first_failure_at
+                else now
             )
+            incident_last_notified_at = (
+                current.last_notified_at
+                if current and current.status == "unhealthy" and current.notify_pending
+                else None
+            )
+            notification_due = (now - first_failure_at) >= INDEXER_SITE_FAILURE_NOTIFY_AFTER
             should_emit = bool(
-                alert_threshold_reached
-                and (
-                    recovered_since_notification
-                    or self._notify_cooldown_elapsed(current.last_notified_at if current else None, now)
-                )
+                notification_due
+                and incident_last_notified_at is None
             )
             status = IndexerSiteHealthStatus(
                 indexer_id=indexer_id,
@@ -235,11 +231,12 @@ class IndexerSiteHealthState:
                 status="unhealthy",
                 checked_at=now,
                 last_success_at=current.last_success_at if current else None,
+                first_failure_at=first_failure_at,
                 last_failure_at=now,
                 consecutive_failures=consecutive_failures,
                 last_error_message=error_message,
-                notify_pending=consecutive_failures >= INDEXER_SITE_FAILURE_NOTIFY_THRESHOLD,
-                last_notified_at=current.last_notified_at if current else None,
+                notify_pending=bool(notification_due or (current and current.notify_pending)),
+                last_notified_at=incident_last_notified_at,
                 last_reopened_at=current.last_reopened_at if current else None,
                 client_type=client_type,
             )
@@ -247,15 +244,11 @@ class IndexerSiteHealthState:
             if applied:
                 break
             current = saved
-        if alert_threshold_reached and self._refresh_active_unhealthy_event(saved):
+        if saved.notify_pending and self._refresh_active_unhealthy_event(saved):
             return self._get_record(indexer_id, site_id) or saved
         if should_emit:
             self._emit_unhealthy_event(saved, now)
         return self._get_record(indexer_id, site_id) or saved
-
-    @staticmethod
-    def _notify_cooldown_elapsed(last_notified_at: datetime | None, now: datetime) -> bool:
-        return last_notified_at is None or (now - last_notified_at) >= INDEXER_SITE_FAILURE_NOTIFY_COOLDOWN
 
     def list_by_indexer(self, indexer_id: str) -> list[IndexerSiteHealthStatus]:
         return self._repo.list_by_indexer(indexer_id)
