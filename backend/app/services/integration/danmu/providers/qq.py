@@ -154,16 +154,17 @@ class QQDanmuProvider(BaseDanmuProvider):
         )
         if vector_vid:
             return vector_vid
-        cover_vid = await self._resolve_episode_vid_from_cover_page(
-            client,
-            cid,
-            episode_number,
-            fallback_vid,
-            absolute_episode_number=absolute_episode_number,
-            season_number=season_number,
-        )
-        if cover_vid:
-            return cover_vid
+        if not season_number or season_number <= 1:
+            cover_vid = await self._resolve_episode_vid_from_cover_page(
+                client,
+                cid,
+                episode_number,
+                fallback_vid,
+                absolute_episode_number=absolute_episode_number,
+                season_number=season_number,
+            )
+            if cover_vid:
+                return cover_vid
         if episode_number == 1 and (not season_number or season_number <= 1):
             return fallback_vid
         return None

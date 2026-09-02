@@ -689,6 +689,41 @@ class TestDanmuAddonContracts(unittest.TestCase):
 
         self.assertIsNone(result)
 
+    def test_qq_later_season_does_not_use_unverified_cover_fallback(self):
+        class FakeResponse:
+            text = ""
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {}
+
+        class FakeClient:
+            async def post(self, *args, **kwargs):
+                return FakeResponse()
+
+        provider = QQDanmuProvider()
+
+        with patch.object(
+            provider,
+            "_resolve_episode_vid_from_cover_page",
+            new=AsyncMock(return_value="season-1-episode-1"),
+        ) as cover_mock:
+            result = asyncio.run(
+                provider._resolve_episode_vid(
+                    FakeClient(),
+                    "series-cid",
+                    1,
+                    "season-1-episode-1",
+                    absolute_episode_number=79,
+                    season_number=4,
+                )
+            )
+
+        self.assertIsNone(result)
+        cover_mock.assert_not_awaited()
+
     def test_bilibili_movie_can_select_direct_episode_without_episode_number(self):
         provider = BilibiliDanmuProvider()
         request = DanmuFetchInput(media_type=MediaType.movie)
