@@ -113,26 +113,37 @@ class QQDanmuProvider(BaseDanmuProvider):
             "video_bucketid": "4",
             "video_omgid": "0a1ff6bc9407c0b1cff86ee5d359614d",
         }
-        response = await client.post(
-            "https://pbaccess.video.qq.com/trpc.universal_backend_service.page_server_rpc.PageServer/GetPageData",
-            params={"video_appid": "3000010", "vplatform": "2"},
-            json=payload,
-            cookies=cookies,
+        items = []
+        try:
+            response = await client.post(
+                "https://pbaccess.video.qq.com/trpc.universal_backend_service.page_server_rpc.PageServer/GetPageData",
+                params={"video_appid": "3000010", "vplatform": "2"},
+                json=payload,
+                cookies=cookies,
+            )
+            response.raise_for_status()
+            items = self._collect_item_params(response.json())
+        except (httpx.HTTPError, ValueError, TypeError):
+            pass
+
+        legacy_episode_numbers = self._episode_number_candidates(
+            episode_number,
+            absolute_episode_number=absolute_episode_number,
+            season_number=season_number,
         )
-        response.raise_for_status()
-        items = self._collect_item_params(response.json())
-        if not season_number or season_number <= 1:
-            for candidate_episode_number in self._episode_number_candidates(
-                episode_number,
-                absolute_episode_number=absolute_episode_number,
-                season_number=season_number,
-            ):
-                for item in items:
-                    item_mapping: dict = item
-                    item_vid = str(item_mapping.get("vid") or "")
-                    item_title = str(item_mapping.get("title") or item_mapping.get("play_title") or "")
-                    if item_vid and self._text_matches_episode_number(item_title, candidate_episode_number):
-                        return item_vid
+        if season_number and season_number > 1:
+            legacy_episode_numbers = (
+                [int(absolute_episode_number)]
+                if absolute_episode_number and absolute_episode_number != episode_number
+                else []
+            )
+        for candidate_episode_number in legacy_episode_numbers:
+            for item in items:
+                item_mapping: dict = item
+                item_vid = str(item_mapping.get("vid") or "")
+                item_title = str(item_mapping.get("title") or item_mapping.get("play_title") or "")
+                if item_vid and self._text_matches_episode_number(item_title, candidate_episode_number):
+                    return item_vid
         vector_vid = await self._resolve_episode_vid_from_vector_page(
             client,
             cid,
@@ -170,6 +181,8 @@ class QQDanmuProvider(BaseDanmuProvider):
         try:
             page_data = await self._fetch_vector_page(client, cid, fallback_vid)
             requested_cid = self._season_cid(page_data, season_number)
+            if season_number and season_number > 1 and not requested_cid:
+                return None
             if requested_cid and requested_cid != cid:
                 page_data = await self._fetch_vector_page(client, requested_cid, None)
             else:
@@ -411,16 +424,14 @@ class QQDanmuProvider(BaseDanmuProvider):
         if text.strip().isdigit() and int(text.strip()) == episode_number:
             return True
         return any(
-            pattern in text
+            re.search(pattern, text) is not None
             for pattern in (
-                f"第{episode_number:02d}集",
-                f"第{episode_number}集",
-                f"第{episode_number:02d}话",
-                f"第{episode_number}话",
-                f"{episode_number:02d}集",
-                f"{episode_number}集",
-                f"_{episode_number:02d}",
-                f"_{episode_number}",
+                rf"第0?{episode_number}集(?!\d)",
+                rf"第0?{episode_number}话(?!\d)",
+                rf"(?<!\d)0?{episode_number}集(?!\d)",
+                rf"(?<!\d)0?{episode_number}话(?!\d)",
+                rf"_{episode_number:02d}(?!\d)",
+                rf"(?<!\d)_{episode_number}(?!\d)",
             )
         )
 
