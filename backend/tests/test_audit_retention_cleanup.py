@@ -3,7 +3,8 @@ from datetime import datetime, timedelta
 from app.db.repositories.action_repository import ActionRepository
 from app.db.repositories.event_dispatch_repository import EventDispatchRepository
 from app.db.repositories.event_repository import EventRepository
-from app.db.sql.models import ActionORM, EventDispatchORM, EventORM
+from app.db.sql.models import ActionORM, EventAcknowledgementORM, EventDispatchORM, EventORM
+from app.schemas.constants.event_types import EventTypes
 from app.db.sql.session import SessionLocal
 from app.schemas.persistence.event_dispatch import EventDispatchStatus
 
@@ -44,13 +45,13 @@ def _insert_action(session, item_id: str, minutes: int) -> None:
     )
 
 
-def _insert_event(session, item_id: str, minutes: int) -> None:
+def _insert_event(session, item_id: str, minutes: int, *, event_type: str = "test.event", level: str = "info") -> None:
     session.add(
         EventORM(
             id=item_id,
             ts=_iso(minutes),
-            type="test.event",
-            level="info",
+            type=event_type,
+            level=level,
             message_key=None,
             message_params_json={},
             search_text="",
@@ -149,6 +150,48 @@ def test_event_repository_skips_prune_when_under_limit():
 
     assert removed == 0
     assert remaining == ["event-skip-0", "event-skip-1"]
+
+
+def test_event_repository_preserves_unacknowledged_events_when_pruning():
+    with SessionLocal() as session:
+        session.query(EventAcknowledgementORM).delete()
+        session.query(EventORM).delete()
+        for index in range(4):
+            _insert_event(
+                session,
+                f"event-active-{index}",
+                index,
+                event_type=EventTypes.INDEXER_SITE_UNHEALTHY.value,
+                level="warning",
+            )
+        session.add_all(
+            EventAcknowledgementORM(
+                event_id=f"event-active-{index}",
+                acknowledged_at=_iso(4),
+            )
+            for index in (1, 2, 3)
+        )
+        session.commit()
+
+    removed = EventRepository().prune_to_limit(2)
+
+    with SessionLocal() as session:
+        remaining = [
+            row.id
+            for row in session.query(EventORM)
+            .filter(EventORM.id.like("event-active-%"))
+            .order_by(EventORM.ts.asc())
+            .all()
+        ]
+
+    assert removed == 2
+    assert remaining == ["event-active-0", "event-active-3"]
+
+    with SessionLocal.begin() as session:
+        session.query(EventAcknowledgementORM).filter(
+            EventAcknowledgementORM.event_id.like("event-active-%")
+        ).delete(synchronize_session=False)
+        session.query(EventORM).filter(EventORM.id.like("event-active-%")).delete(synchronize_session=False)
 
 
 def test_event_dispatch_repository_prunes_only_terminal_records():
