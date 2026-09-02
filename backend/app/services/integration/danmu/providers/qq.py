@@ -203,11 +203,18 @@ class QQDanmuProvider(BaseDanmuProvider):
                     str(item_mapping.get(key) or "")
                     for key in ("title", "play_title", "union_title", "c_title_output")
                 )
+                title = str(item_mapping.get("title") or "").strip()
+                has_short_duration = "duration" in item_mapping and self._candidate_duration_seconds(item_mapping) < 600
                 if (
                     item_vid
                     and str(item_mapping.get("is_trailer") or "") != "1"
                     and item_cid == requested_cid
-                    and self._text_matches_episode_number(item_title, candidate_episode_number)
+                    and not any(keyword in item_title for keyword in ("预告", "花絮", "片花", "彩蛋"))
+                    and not has_short_duration
+                    and (
+                        (title.isdigit() and int(title) == candidate_episode_number)
+                        or self._text_matches_episode_number(item_title, candidate_episode_number)
+                    )
                 ):
                     return item_vid
         return None

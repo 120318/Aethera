@@ -705,6 +705,55 @@ class TestDanmuAddonContracts(unittest.TestCase):
 
         self.assertEqual("local-episode-1", result)
 
+    def test_qq_vector_matches_numeric_title_and_skips_same_cid_features(self):
+        class FakeResponse:
+            def __init__(self, payload):
+                self._payload = payload
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self._payload
+
+        class FakeClient:
+            async def post(self, url, *args, **kwargs):
+                if "universal_backend_service" in url:
+                    return FakeResponse({})
+                return FakeResponse({
+                    "ret": 0,
+                    "data": {"cards": [{"params": {
+                        "title": "第4季",
+                        "page_context": "cid=season-4-cid&detail_page_type=1",
+                    }}, {"params": {
+                        "vid": "feature-episode-1",
+                        "cid": "season-4-cid",
+                        "title": "第1集 花絮",
+                        "is_trailer": "0",
+                    }}, {"params": {
+                        "vid": "episode-1",
+                        "cid": "season-4-cid",
+                        "title": "1",
+                        "union_title": "剧名",
+                        "is_trailer": "0",
+                    }}]},
+                })
+
+            async def get(self, *args, **kwargs):
+                return FakeResponse({})
+
+        result = asyncio.run(
+            QQDanmuProvider()._resolve_episode_vid(
+                FakeClient(),
+                "season-4-cid",
+                1,
+                "fallback",
+                season_number=4,
+            )
+        )
+
+        self.assertEqual("episode-1", result)
+
     def test_qq_episode_vid_does_not_reuse_first_season_fallback(self):
         class FakeResponse:
             text = ""
