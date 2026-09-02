@@ -192,11 +192,9 @@ class QQDanmuProvider(BaseDanmuProvider):
             return None
 
         candidates = self._collect_card_params(page_data)
-        episode_numbers = self._episode_number_candidates(
-            episode_number,
-            absolute_episode_number=absolute_episode_number,
-            season_number=season_number,
-        )
+        episode_numbers = [episode_number]
+        if absolute_episode_number and absolute_episode_number != episode_number:
+            episode_numbers.append(int(absolute_episode_number))
         for candidate_episode_number in episode_numbers:
             for item_mapping in candidates:
                 item_vid = str(item_mapping.get("vid") or "")
