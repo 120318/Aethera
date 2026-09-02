@@ -443,6 +443,8 @@ class QQDanmuProvider(BaseDanmuProvider):
 
     def _candidate_duration_seconds(self, candidate: dict[str, str]) -> int:
         value = str(candidate.get("duration") or "")
+        if value.isdigit():
+            return int(value)
         parts = value.split(":")
         try:
             if len(parts) == 2:
