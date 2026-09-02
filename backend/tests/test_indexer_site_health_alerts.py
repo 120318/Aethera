@@ -139,8 +139,21 @@ class _FakeIndexerSiteHealthRepository:
         return list(self.records.values())
 
 
-def test_indexer_site_failure_marks_notify_pending_after_threshold():
-    state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
+def _age_failure_window(
+    repo: _FakeIndexerSiteHealthRepository,
+    *,
+    indexer_id: str = "prowlarr",
+    site_id: str = "audiences",
+    hours: int = 25,
+) -> None:
+    current = repo.find_one(indexer_id, site_id)
+    assert current is not None
+    repo.upsert(current.model_copy(update={"first_failure_at": datetime.now() - timedelta(hours=hours)}))
+
+
+def test_indexer_site_failure_does_not_notify_before_one_day():
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
 
     for failure_count in range(1, 5):
         status = state.record_failure(
@@ -152,10 +165,35 @@ def test_indexer_site_failure_marks_notify_pending_after_threshold():
         )
 
     assert status.consecutive_failures == 4
-    assert status.notify_pending is True
+    assert status.notify_pending is False
+    assert repo.emitted_events == []
 
 
-def test_indexer_site_failure_emits_unhealthy_event_once_at_threshold(monkeypatch):
+def test_indexer_site_failure_at_twenty_three_hours_does_not_notify():
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
+    _age_failure_window(repo, hours=23)
+
+    status = state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="still disabled",
+    )
+
+    assert status.notify_pending is False
+    assert repo.emitted_events == []
+
+
+def test_indexer_site_failure_emits_unhealthy_event_once_after_one_day(monkeypatch):
     emitted_events = []
     monkeypatch.setattr(
         "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
@@ -164,7 +202,15 @@ def test_indexer_site_failure_emits_unhealthy_event_once_at_threshold(monkeypatc
     repo = _FakeIndexerSiteHealthRepository()
     state = IndexerSiteHealthState(repo=repo)
 
-    for failure_count in range(1, 5):
+    state.record_failure(
+        indexer_id="jackett",
+        indexer_name="Jackett",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="failure 1",
+    )
+    _age_failure_window(repo, indexer_id="jackett")
+    for failure_count in range(2, 5):
         state.record_failure(
             indexer_id="jackett",
             indexer_name="Jackett",
@@ -179,11 +225,43 @@ def test_indexer_site_failure_emits_unhealthy_event_once_at_threshold(monkeypatc
     assert event.level == EventLevel.warning
     assert event.message_params["indexer_name"] == "Jackett"
     assert event.message_params["site_name"] == "Audiences"
-    assert event.message_params["consecutive_failures"] == "3"
+    assert event.message_params["consecutive_failures"] == "2"
 
 
-def test_indexer_site_success_clears_notify_pending_and_allows_future_threshold():
-    state = IndexerSiteHealthState(repo=_FakeIndexerSiteHealthRepository())
+def test_unnotified_incident_ignores_historical_notification_timestamp():
+    repo = _FakeIndexerSiteHealthRepository()
+    repo.upsert(
+        IndexerSiteHealthStatus(
+            indexer_id="prowlarr",
+            indexer_name="Prowlarr",
+            site_id="audiences",
+            site_name="Audiences",
+            status="unhealthy",
+            checked_at=datetime.now() - timedelta(hours=1),
+            last_success_at=datetime.now() - timedelta(hours=1),
+            first_failure_at=datetime.now() - timedelta(hours=25),
+            last_failure_at=datetime.now() - timedelta(hours=1),
+            consecutive_failures=4,
+            notify_pending=False,
+            last_notified_at=datetime.now() - timedelta(days=7),
+        )
+    )
+    state = IndexerSiteHealthState(repo=repo)
+    notified = state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="still disabled",
+    )
+
+    assert notified.last_notified_at is not None
+    assert len(repo.emitted_events) == 1
+
+
+def test_indexer_site_success_resets_failure_window():
+    repo = _FakeIndexerSiteHealthRepository()
+    state = IndexerSiteHealthState(repo=repo)
 
     for _ in range(3):
         state.record_failure(
@@ -216,10 +294,11 @@ def test_indexer_site_success_clears_notify_pending_and_allows_future_threshold(
     status = state._get_record("jackett", "audiences")
     assert status is not None
     assert status.consecutive_failures == 3
-    assert status.notify_pending is True
+    assert status.notify_pending is False
+    assert status.first_failure_at is not None
 
 
-def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch):
+def test_indexer_site_short_failure_after_recovery_waits_another_day(monkeypatch):
     emitted_events = []
     monkeypatch.setattr(
         "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
@@ -228,14 +307,21 @@ def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch
     repo = _FakeIndexerSiteHealthRepository()
     state = IndexerSiteHealthState(repo=repo)
 
-    for _ in range(3):
-        state.record_failure(
-            indexer_id="prowlarr",
-            indexer_name="Prowlarr",
-            site_id="audiences",
-            site_name="Audiences",
-            error_message="disabled",
-        )
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
+    _age_failure_window(repo)
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
     state.record_success(
         indexer_id="prowlarr",
         indexer_name="Prowlarr",
@@ -251,7 +337,7 @@ def test_indexer_site_unhealthy_event_respects_notification_cooldown(monkeypatch
             error_message="disabled again",
         )
 
-    assert len(repo.emitted_events) == 2
+    assert len(repo.emitted_events) == 1
     assert repo.reopened_calls == []
 
 
@@ -263,28 +349,42 @@ def test_indexer_site_recurring_failure_emits_one_new_incident_after_recovery(mo
     repo = _FakeIndexerSiteHealthRepository()
     state = IndexerSiteHealthState(repo=repo)
 
-    for _ in range(3):
-        state.record_failure(
-            indexer_id="prowlarr",
-            indexer_name="Prowlarr",
-            site_id="audiences",
-            site_name="Audiences",
-            error_message="disabled",
-        )
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
+    _age_failure_window(repo)
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
     state.record_success(
         indexer_id="prowlarr",
         indexer_name="Prowlarr",
         site_id="audiences",
         site_name="Audiences",
     )
-    for _ in range(4):
-        state.record_failure(
-            indexer_id="prowlarr",
-            indexer_name="Prowlarr",
-            site_id="audiences",
-            site_name="Audiences",
-            error_message="disabled again",
-        )
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled again",
+    )
+    _age_failure_window(repo)
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled again",
+    )
 
     assert len(repo.emitted_events) == 2
     assert repo.reopened_calls == []
@@ -297,14 +397,21 @@ def test_indexer_site_active_warning_refreshes_without_daily_telegram(monkeypatc
     )
     repo = _FakeIndexerSiteHealthRepository()
     state = IndexerSiteHealthState(repo=repo)
-    for _ in range(3):
-        state.record_failure(
-            indexer_id="prowlarr",
-            indexer_name="Prowlarr",
-            site_id="audiences",
-            site_name="Audiences",
-            error_message="disabled",
-        )
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
+    _age_failure_window(repo)
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
     current = repo.find_one("prowlarr", "audiences")
     assert current is not None
     repo.upsert(current.model_copy(update={"last_notified_at": datetime.now() - timedelta(hours=25)}))
@@ -319,7 +426,7 @@ def test_indexer_site_active_warning_refreshes_without_daily_telegram(monkeypatc
 
     assert len(repo.emitted_events) == 1
     assert len(repo.refreshed_events) == 1
-    assert repo.refreshed_events[0].message_params["consecutive_failures"] == "4"
+    assert repo.refreshed_events[0].message_params["consecutive_failures"] == "3"
     assert repo.refreshed_events[0].message_params["error"] == "still disabled"
 
 
@@ -336,14 +443,21 @@ def test_indexer_site_refresh_failure_falls_back_to_first_notification(monkeypat
     monkeypatch.setattr(repo, "refresh_active_unhealthy_event_if_current", fail_refresh)
     state = IndexerSiteHealthState(repo=repo)
 
-    for _ in range(3):
-        status = state.record_failure(
-            indexer_id="prowlarr",
-            indexer_name="Prowlarr",
-            site_id="audiences",
-            site_name="Audiences",
-            error_message="disabled",
-        )
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
+    _age_failure_window(repo)
+    status = state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
 
     assert len(repo.emitted_events) == 1
     assert status.last_notified_at is not None
@@ -358,14 +472,21 @@ def test_indexer_site_success_acknowledges_unhealthy_warning_event(monkeypatch):
     repo = _FakeIndexerSiteHealthRepository()
     state = IndexerSiteHealthState(repo=repo)
 
-    for _ in range(3):
-        state.record_failure(
-            indexer_id="prowlarr",
-            indexer_name="Prowlarr",
-            site_id="audiences",
-            site_name="Audiences",
-            error_message="disabled",
-        )
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
+    _age_failure_window(repo)
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
 
     state.record_success(
         indexer_id="prowlarr",
@@ -387,14 +508,21 @@ def test_indexer_site_success_retries_failed_recovery_acknowledgement(monkeypatc
     repo.acknowledge_failures_remaining = 1
     state = IndexerSiteHealthState(repo=repo)
 
-    for _ in range(3):
-        state.record_failure(
-            indexer_id="prowlarr",
-            indexer_name="Prowlarr",
-            site_id="audiences",
-            site_name="Audiences",
-            error_message="disabled",
-        )
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
+    _age_failure_window(repo)
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
 
     first_recovery = state.record_success(
         indexer_id="prowlarr",
@@ -422,14 +550,21 @@ def test_indexer_site_success_does_not_acknowledge_after_concurrent_failure(monk
     repo = _FakeIndexerSiteHealthRepository()
     state = IndexerSiteHealthState(repo=repo)
 
-    for _ in range(3):
-        state.record_failure(
-            indexer_id="prowlarr",
-            indexer_name="Prowlarr",
-            site_id="audiences",
-            site_name="Audiences",
-            error_message="disabled",
-        )
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
+    _age_failure_window(repo)
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
 
     def write_concurrent_failure():
         current = repo.find_one("prowlarr", "audiences")
@@ -505,14 +640,21 @@ def test_indexer_site_success_does_not_overwrite_failure_committed_after_read(mo
 def test_indexer_site_success_retries_after_notification_metadata_changes(monkeypatch):
     repo = _FakeIndexerSiteHealthRepository()
     state = IndexerSiteHealthState(repo=repo)
-    for _ in range(3):
-        state.record_failure(
-            indexer_id="prowlarr",
-            indexer_name="Prowlarr",
-            site_id="audiences",
-            site_name="Audiences",
-            error_message="disabled",
-        )
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
+    _age_failure_window(repo)
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
     current = repo.find_one("prowlarr", "audiences")
     assert current is not None
     notified_at = (current.last_notified_at or datetime.now()) + timedelta(seconds=1)
@@ -532,7 +674,7 @@ def test_indexer_site_success_retries_after_notification_metadata_changes(monkey
 
     assert recovered.status == "healthy"
     assert recovered.notify_pending is False
-    assert recovered.last_notified_at == notified_at
+    assert recovered.last_notified_at is None
     assert repo.acknowledged_calls == ["indexer:prowlarr:site:audiences:unhealthy"]
 
 
@@ -577,8 +719,8 @@ def test_indexer_site_failure_recalculates_after_concurrent_failure(monkeypatch)
     )
 
     assert saved.consecutive_failures == 3
-    assert saved.notify_pending is True
-    assert len(repo.emitted_events) == 1
+    assert saved.notify_pending is False
+    assert repo.emitted_events == []
 
 
 def test_indexer_site_failure_recalculates_after_notification_marker_changes(monkeypatch):
@@ -589,6 +731,15 @@ def test_indexer_site_failure_recalculates_after_notification_marker_changes(mon
     )
     repo = _FakeIndexerSiteHealthRepository()
     state = IndexerSiteHealthState(repo=repo)
+
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
+    _age_failure_window(repo)
     for _ in range(2):
         state.record_failure(
             indexer_id="prowlarr",
@@ -597,6 +748,7 @@ def test_indexer_site_failure_recalculates_after_notification_marker_changes(mon
             site_name="Audiences",
             error_message="disabled",
         )
+    initial_emitted_count = len(repo.emitted_events)
 
     notified_at = datetime.now()
 
@@ -614,9 +766,9 @@ def test_indexer_site_failure_recalculates_after_notification_marker_changes(mon
         error_message="third failure",
     )
 
-    assert saved.consecutive_failures == 3
+    assert saved.consecutive_failures == 4
     assert saved.last_notified_at == notified_at
-    assert repo.emitted_events == []
+    assert len(repo.emitted_events) == initial_emitted_count
 
 
 def test_indexer_site_failure_does_not_emit_after_concurrent_recovery(monkeypatch):
@@ -627,6 +779,15 @@ def test_indexer_site_failure_does_not_emit_after_concurrent_recovery(monkeypatc
     )
     repo = _FakeIndexerSiteHealthRepository()
     state = IndexerSiteHealthState(repo=repo)
+
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
+    _age_failure_window(repo)
 
     def write_concurrent_recovery():
         current = repo.find_one("prowlarr", "audiences")
@@ -643,14 +804,13 @@ def test_indexer_site_failure_does_not_emit_after_concurrent_recovery(monkeypatc
         )
 
     repo.before_emit = write_concurrent_recovery
-    for _ in range(3):
-        status = state.record_failure(
-            indexer_id="prowlarr",
-            indexer_name="Prowlarr",
-            site_id="audiences",
-            site_name="Audiences",
-            error_message="disabled",
-        )
+    status = state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
 
     assert status.status == "healthy"
     assert status.notify_pending is False
@@ -995,7 +1155,7 @@ def test_refresh_active_unhealthy_event_updates_snapshot_without_new_dispatch():
     assert applied is True
     assert len(rows) == 1
     assert rows[0].id == existing_event.id
-    assert rows[0].ts == checked_at.isoformat()
+    assert rows[0].ts == existing_event.ts.isoformat()
     assert rows[0].message_params_json["consecutive_failures"] == "27"
     assert rows[0].message_params_json["error"] == "still disabled"
     assert dispatch_count == 0
@@ -1061,7 +1221,7 @@ def test_emit_unhealthy_event_rolls_back_when_dispatch_queue_insert_fails():
     assert saved.last_notified_at is None
 
 
-def test_indexer_site_unhealthy_event_repeats_after_notification_cooldown(monkeypatch):
+def test_indexer_site_unhealthy_event_does_not_repeat_during_same_incident(monkeypatch):
     emitted_events = []
     monkeypatch.setattr(
         "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
@@ -1091,10 +1251,10 @@ def test_indexer_site_unhealthy_event_repeats_after_notification_cooldown(monkey
         error_message="still disabled",
     )
 
-    assert len(repo.emitted_events) == 1
+    assert repo.emitted_events == []
 
 
-def test_indexer_site_unhealthy_event_failure_does_not_start_cooldown(monkeypatch):
+def test_indexer_site_unhealthy_event_failure_retries_without_resetting_window(monkeypatch):
     attempts = []
     monkeypatch.setattr(
         "app.services.config.indexer_client_settings.event_service.dispatch_persisted_event",
@@ -1104,14 +1264,21 @@ def test_indexer_site_unhealthy_event_failure_does_not_start_cooldown(monkeypatc
     repo.emit_failures_remaining = 1
     state = IndexerSiteHealthState(repo=repo)
 
-    for _ in range(3):
-        status = state.record_failure(
-            indexer_id="prowlarr",
-            indexer_name="Prowlarr",
-            site_id="audiences",
-            site_name="Audiences",
-            error_message="disabled",
-        )
+    state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
+    _age_failure_window(repo)
+    status = state.record_failure(
+        indexer_id="prowlarr",
+        indexer_name="Prowlarr",
+        site_id="audiences",
+        site_name="Audiences",
+        error_message="disabled",
+    )
 
     assert status.last_notified_at is None
 

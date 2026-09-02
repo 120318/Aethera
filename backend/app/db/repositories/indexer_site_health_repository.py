@@ -27,6 +27,7 @@ class IndexerSiteHealthRepository:
                 "status": row.status,
                 "checked_at": row.checked_at,
                 "last_success_at": row.last_success_at,
+                "first_failure_at": row.first_failure_at,
                 "last_failure_at": row.last_failure_at,
                 "consecutive_failures": row.consecutive_failures,
                 "last_error_message": row.last_error_message,
@@ -57,6 +58,7 @@ class IndexerSiteHealthRepository:
             row.status = status.status
             row.checked_at = status.checked_at.isoformat() if status.checked_at else None
             row.last_success_at = status.last_success_at.isoformat() if status.last_success_at else None
+            row.first_failure_at = status.first_failure_at.isoformat() if status.first_failure_at else None
             row.last_failure_at = status.last_failure_at.isoformat() if status.last_failure_at else None
             row.consecutive_failures = status.consecutive_failures
             row.last_error_message = status.last_error_message
@@ -74,6 +76,7 @@ class IndexerSiteHealthRepository:
         row.status = status.status
         row.checked_at = status.checked_at.isoformat() if status.checked_at else None
         row.last_success_at = status.last_success_at.isoformat() if status.last_success_at else None
+        row.first_failure_at = status.first_failure_at.isoformat() if status.first_failure_at else None
         row.last_failure_at = status.last_failure_at.isoformat() if status.last_failure_at else None
         row.consecutive_failures = status.consecutive_failures
         row.last_error_message = status.last_error_message
@@ -116,6 +119,7 @@ class IndexerSiteHealthRepository:
             and row.status == status.status
             and row.checked_at == iso(status.checked_at)
             and row.last_success_at == iso(status.last_success_at)
+            and row.first_failure_at == iso(status.first_failure_at)
             and row.last_failure_at == iso(status.last_failure_at)
             and row.consecutive_failures == status.consecutive_failures
             and row.last_error_message == status.last_error_message
@@ -213,7 +217,7 @@ class IndexerSiteHealthRepository:
             if active_event is None:
                 session.rollback()
                 return False
-            EventRepository.refresh_snapshot(active_event, event)
+            EventRepository.refresh_snapshot(active_event, event, preserve_ts=True)
             session.commit()
             return True
 

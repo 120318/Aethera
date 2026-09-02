@@ -437,6 +437,7 @@ class IndexerSiteHealthORM(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     checked_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_success_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    first_failure_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_failure_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

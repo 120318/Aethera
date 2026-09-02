@@ -8,6 +8,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db.sql.models import EventAcknowledgementORM, EventORM
 from app.db.sql.session import SessionLocal
+from app.schemas.constants.event_types import EventTypes
 from app.schemas.media_id import MediaID
 from app.schemas.domain.event import Event, EventLevel, EventSource, EventType
 from app.schemas.domain.media import MediaIdentity
@@ -45,8 +46,9 @@ class EventRepository:
         )
 
     @staticmethod
-    def refresh_snapshot(row: EventORM, event: Event) -> None:
-        row.ts = event.ts.isoformat()
+    def refresh_snapshot(row: EventORM, event: Event, *, preserve_ts: bool = False) -> None:
+        if not preserve_ts:
+            row.ts = event.ts.isoformat()
         row.message_key = event.message_key
         row.message_params_json = event.message_params
         row.search_text = build_event_search_text(event)
@@ -383,14 +385,31 @@ class EventRepository:
             total = int(session.execute(select(func.count()).select_from(EventORM)).scalar_one() or 0)
             if total <= limit:
                 return 0
-            keep_ids = (
-                select(EventORM.id)
-                .order_by(desc(EventORM.ts))
-                .limit(limit)
-                .subquery()
+            acknowledgement_exists = (
+                select(EventAcknowledgementORM.event_id)
+                .where(EventAcknowledgementORM.event_id == EventORM.id)
+                .exists()
             )
+            active_ids = list(
+                session.execute(
+                    select(EventORM.id)
+                    .where(EventORM.type == EventTypes.INDEXER_SITE_UNHEALTHY.value)
+                    .where(EventORM.level == EventLevel.warning.value)
+                    .where(not_(acknowledgement_exists))
+                ).scalars().all()
+            )
+            acknowledged_limit = max(limit - len(active_ids), 0)
+            acknowledged_ids = list(
+                session.execute(
+                    select(EventORM.id)
+                    .where(EventORM.id.not_in(active_ids))
+                    .order_by(desc(EventORM.ts), desc(EventORM.id))
+                    .limit(acknowledged_limit)
+                ).scalars().all()
+            )
+            keep_ids = active_ids + acknowledged_ids
             result = session.execute(
-                delete(EventORM).where(EventORM.id.not_in(select(keep_ids.c.id)))
+                delete(EventORM).where(EventORM.id.not_in(keep_ids))
             )
             session.commit()
             return int(result.rowcount or 0)
