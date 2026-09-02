@@ -121,17 +121,18 @@ class QQDanmuProvider(BaseDanmuProvider):
         )
         response.raise_for_status()
         items = self._collect_item_params(response.json())
-        for candidate_episode_number in self._episode_number_candidates(
-            episode_number,
-            absolute_episode_number=absolute_episode_number,
-            season_number=season_number,
-        ):
-            for item in items:
-                item_mapping: dict = item
-                item_vid = str(item_mapping.get("vid") or "")
-                item_title = str(item_mapping.get("title") or item_mapping.get("play_title") or "")
-                if item_vid and self._text_matches_episode_number(item_title, candidate_episode_number):
-                    return item_vid
+        if not season_number or season_number <= 1:
+            for candidate_episode_number in self._episode_number_candidates(
+                episode_number,
+                absolute_episode_number=absolute_episode_number,
+                season_number=season_number,
+            ):
+                for item in items:
+                    item_mapping: dict = item
+                    item_vid = str(item_mapping.get("vid") or "")
+                    item_title = str(item_mapping.get("title") or item_mapping.get("play_title") or "")
+                    if item_vid and self._text_matches_episode_number(item_title, candidate_episode_number):
+                        return item_vid
         vector_vid = await self._resolve_episode_vid_from_vector_page(
             client,
             cid,
@@ -152,12 +153,7 @@ class QQDanmuProvider(BaseDanmuProvider):
         )
         if cover_vid:
             return cover_vid
-        if episode_number == 1 and (
-            not season_number
-            or season_number <= 1
-            or not absolute_episode_number
-            or absolute_episode_number == episode_number
-        ):
+        if episode_number == 1 and (not season_number or season_number <= 1):
             return fallback_vid
         return None
 
@@ -182,14 +178,10 @@ class QQDanmuProvider(BaseDanmuProvider):
             return None
 
         candidates = self._collect_card_params(page_data)
-        episode_numbers = (
-            [episode_number]
-            if requested_cid != cid
-            else self._episode_number_candidates(
-                episode_number,
-                absolute_episode_number=absolute_episode_number,
-                season_number=season_number,
-            )
+        episode_numbers = self._episode_number_candidates(
+            episode_number,
+            absolute_episode_number=absolute_episode_number,
+            season_number=season_number,
         )
         for candidate_episode_number in episode_numbers:
             for item_mapping in candidates:
@@ -202,7 +194,7 @@ class QQDanmuProvider(BaseDanmuProvider):
                 if (
                     item_vid
                     and str(item_mapping.get("is_trailer") or "") != "1"
-                    and (not item_cid or item_cid == requested_cid)
+                    and item_cid == requested_cid
                     and self._text_matches_episode_number(item_title, candidate_episode_number)
                 ):
                     return item_vid
@@ -416,6 +408,8 @@ class QQDanmuProvider(BaseDanmuProvider):
         return self._text_matches_episode_number(text, episode_number)
 
     def _text_matches_episode_number(self, text: str, episode_number: int) -> bool:
+        if text.strip().isdigit() and int(text.strip()) == episode_number:
+            return True
         return any(
             pattern in text
             for pattern in (

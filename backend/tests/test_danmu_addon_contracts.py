@@ -542,13 +542,27 @@ class TestDanmuAddonContracts(unittest.TestCase):
                 return self._payload
 
         class FakeClient:
-            async def post(self, *args, **kwargs):
+            async def post(self, url, *args, **kwargs):
+                if "universal_backend_service" in url:
+                    return FakeResponse(payload={
+                        "items": [
+                            {"item_params": {"vid": "season-1-episode-3", "title": "Show_03"}},
+                            {"item_params": {"vid": "season-2-episode-3", "title": "Show_29"}},
+                        ]
+                    })
                 return FakeResponse(payload={
-                    "items": [
-                        {"item_params": {"vid": "season-1-episode-3", "title": "Show_03"}},
-                        {"item_params": {"vid": "season-2-episode-3", "title": "Show_29"}},
-                    ]
+                    "ret": 0,
+                    "data": {
+                        "cards": [{"params": {
+                            "vid": "season-2-episode-3",
+                            "cid": "cid-1",
+                            "title": "Show_29",
+                        }}]
+                    },
                 })
+
+            async def get(self, *args, **kwargs):
+                return FakeResponse()
 
         provider = QQDanmuProvider()
 
