@@ -530,6 +530,29 @@ class TestDanmuAddonContracts(unittest.TestCase):
 
         self.assertEqual("vid-3", result)
 
+    def test_qq_legacy_list_skips_same_episode_trailer(self):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"items": [
+                    {"item_params": {"vid": "trailer", "title": "第3集预告", "duration": "30"}},
+                    {"item_params": {"vid": "episode", "title": "第3集", "duration": "2700"}},
+                ]}
+
+        class FakeClient:
+            async def post(self, url, *args, **kwargs):
+                if "universal_backend_service" in url:
+                    return FakeResponse()
+                return FakeResponse()
+
+            async def get(self, *args, **kwargs):
+                raise AssertionError("legacy list should resolve the episode")
+
+        result = asyncio.run(QQDanmuProvider()._resolve_episode_vid(FakeClient(), "cid", 3, "fallback"))
+        self.assertEqual("episode", result)
+
     def test_qq_episode_vid_prefers_absolute_episode_for_later_seasons(self):
         class FakeResponse:
             def __init__(self, *, payload=None):

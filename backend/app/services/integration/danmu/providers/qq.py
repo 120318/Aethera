@@ -142,7 +142,7 @@ class QQDanmuProvider(BaseDanmuProvider):
                 item_mapping: dict = item
                 item_vid = str(item_mapping.get("vid") or "")
                 item_title = str(item_mapping.get("title") or item_mapping.get("play_title") or "")
-                if item_vid and self._text_matches_episode_number(item_title, candidate_episode_number):
+                if item_vid and self._is_legacy_episode_candidate(item_mapping, candidate_episode_number):
                     return item_vid
         vector_vid = await self._resolve_episode_vid_from_vector_page(
             client,
@@ -168,6 +168,23 @@ class QQDanmuProvider(BaseDanmuProvider):
         if episode_number == 1 and (not season_number or season_number <= 1):
             return fallback_vid
         return None
+
+    def _is_legacy_episode_candidate(self, candidate: dict[str, str], episode_number: int) -> bool:
+        text = " ".join(
+            str(candidate.get(key) or "")
+            for key in ("title", "play_title", "union_title", "c_title_output")
+        )
+        if not text or any(keyword in text for keyword in ("预告", "花絮", "片花", "彩蛋")):
+            return False
+        if str(candidate.get("is_trailer") or "") == "1":
+            return False
+        duration_seconds = self._candidate_duration_seconds(candidate)
+        if duration_seconds is not None and duration_seconds < 600:
+            return False
+        title = str(candidate.get("title") or "").strip()
+        return (title.isdecimal() and int(title) == episode_number) or self._text_matches_episode_number(
+            text, episode_number
+        )
 
     async def _resolve_episode_vid_from_vector_page(
         self,
