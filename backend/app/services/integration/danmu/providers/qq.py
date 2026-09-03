@@ -204,7 +204,8 @@ class QQDanmuProvider(BaseDanmuProvider):
                     for key in ("title", "play_title", "union_title", "c_title_output")
                 )
                 title = str(item_mapping.get("title") or "").strip()
-                has_short_duration = "duration" in item_mapping and self._candidate_duration_seconds(item_mapping) < 600
+                duration_seconds = self._candidate_duration_seconds(item_mapping)
+                has_short_duration = duration_seconds is not None and duration_seconds < 600
                 if (
                     item_vid
                     and str(item_mapping.get("is_trailer") or "") != "1"
@@ -212,7 +213,7 @@ class QQDanmuProvider(BaseDanmuProvider):
                     and not any(keyword in item_title for keyword in ("预告", "花絮", "片花", "彩蛋"))
                     and not has_short_duration
                     and (
-                        (title.isdigit() and int(title) == candidate_episode_number)
+                        (title.isdecimal() and int(title) == candidate_episode_number)
                         or self._text_matches_episode_number(item_title, candidate_episode_number)
                     )
                 ):
@@ -417,17 +418,18 @@ class QQDanmuProvider(BaseDanmuProvider):
             return False
         if not self._candidate_matches_episode_number(candidate, episode_number):
             return False
-        return self._candidate_duration_seconds(candidate) >= 600
+        duration_seconds = self._candidate_duration_seconds(candidate)
+        return duration_seconds is None or duration_seconds >= 600
 
     def _candidate_matches_episode_number(self, candidate: dict[str, str], episode_number: int) -> bool:
         title = str(candidate.get("title") or "")
-        if title.isdigit() and int(title) == episode_number:
+        if title.isdecimal() and int(title) == episode_number:
             return True
         text = " ".join(str(candidate.get(key) or "") for key in ("unionTitle", "playTitle", "htmlTitle"))
         return self._text_matches_episode_number(text, episode_number)
 
     def _text_matches_episode_number(self, text: str, episode_number: int) -> bool:
-        if text.strip().isdigit() and int(text.strip()) == episode_number:
+        if text.strip().isdecimal() and int(text.strip()) == episode_number:
             return True
         return any(
             re.search(pattern, text) is not None
@@ -437,12 +439,15 @@ class QQDanmuProvider(BaseDanmuProvider):
                 rf"(?<!\d)0?{episode_number}集(?!\d)",
                 rf"(?<!\d)0?{episode_number}话(?!\d)",
                 rf"_{episode_number:02d}(?!\d)",
-                rf"(?<!\d)_{episode_number}(?!\d)",
+                rf"_{episode_number}(?!\d)",
             )
         )
 
-    def _candidate_duration_seconds(self, candidate: dict[str, str]) -> int:
-        value = str(candidate.get("duration") or "")
+    def _candidate_duration_seconds(self, candidate: dict[str, str]) -> int | None:
+        raw_value = candidate.get("duration")
+        if raw_value is None or str(raw_value).strip() == "":
+            return None
+        value = str(raw_value).strip()
         if value.isdigit():
             return int(value)
         parts = value.split(":")
@@ -452,8 +457,8 @@ class QQDanmuProvider(BaseDanmuProvider):
             if len(parts) == 3:
                 return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
         except ValueError:
-            return 0
-        return 0
+            return None
+        return None
 
     def _collect_item_params(self, payload) -> list:
         result = []

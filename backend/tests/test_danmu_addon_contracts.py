@@ -797,6 +797,20 @@ class TestDanmuAddonContracts(unittest.TestCase):
 
         self.assertEqual("episode-1", result)
 
+    def test_qq_unknown_vector_duration_is_not_filtered(self):
+        provider = QQDanmuProvider()
+        self.assertIsNone(provider._candidate_duration_seconds({"duration": None}))
+        self.assertIsNone(provider._candidate_duration_seconds({"duration": "unknown"}))
+        self.assertTrue(provider._is_episode_candidate({"title": "1", "duration": None}, 1))
+
+    def test_qq_episode_matching_allows_non_padded_underscore_number(self):
+        provider = QQDanmuProvider()
+        self.assertTrue(provider._text_matches_episode_number("Show2_1", 1))
+
+    def test_qq_vector_numeric_unicode_title_does_not_raise(self):
+        provider = QQDanmuProvider()
+        self.assertFalse(provider._text_matches_episode_number("①", 1))
+
     def test_qq_episode_vid_does_not_reuse_first_season_fallback(self):
         class FakeResponse:
             text = ""
