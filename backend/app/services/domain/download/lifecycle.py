@@ -306,7 +306,7 @@ class DownloadCreationService:
         if progress is None:
             return
         task.progress = progress
-        if progress >= 0.999 and task.status in {TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.PAUSED}:
+        if progress >= 1.0 and task.status in {TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.PAUSED}:
             task.status = TaskStatus.FINISHED
 
     async def create_download(self, req: DownloadTaskCreateInput, search_result: ResourceSearchResult, source: TaskSource = TaskSource.MANUAL) -> TaskData:

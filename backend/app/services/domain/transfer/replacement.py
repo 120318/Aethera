@@ -11,6 +11,7 @@ from app.services.domain.library.service import library_service
 from app.services.domain.resource.filtering import compute_preference_score_from_attrs, is_original_disc_attrs
 from app.services.domain.resource.quality import quality_sort_key
 from app.utils.library_paths import normalize_path_separators
+from app.utils.library_paths import build_library_file_path
 
 
 class LibraryReplacementPolicy:
@@ -34,9 +35,10 @@ class LibraryReplacementPolicy:
         season: int | None,
     ) -> LibraryReplacementPlan:
         quality_profile = self._quality_profile()
+        library_files = await library_service.get_files_by_media(task.media_id, season)
         candidates = [
             item
-            for item in await library_service.get_files_by_media(task.media_id, season)
+            for item in library_files
             if item.task_id != task.id and not self._is_original_disc_file(item)
         ]
         episode_file_ids: dict[int, set[str]] = {}
@@ -45,6 +47,22 @@ class LibraryReplacementPolicy:
             for episode in episodes:
                 if episode.season == season:
                     episode_file_ids.setdefault(int(episode.episode), set()).add(episode.file_id)
+            # A combined old file must remain until every episode it contains has
+            # an imported replacement, including earlier batches from this task.
+            covered = {episode for result in transfer_results for episode in (result.episode_numbers or ([result.episode_number] if result.episode_number else []))}
+            present_task_files = {
+                item.id for item in library_files
+                if item.task_id == task.id and build_library_file_path(item.path, item.file_name).is_file()
+            }
+            covered.update(episode.episode for episode in episodes if episode.season == season and episode.file_id in present_task_files)
+            candidates = [
+                item for item in candidates
+                if set(item.resource_attributes.episodes or []).issubset(covered)
+                and all(
+                    episode.season == season and episode.episode in covered
+                    for episode in episodes if episode.file_id == item.id
+                )
+            ]
         replace_files: dict[str, LibraryFile] = {}
         for transfer_result in transfer_results:
             scoped_candidates = self._video_file_candidates_for_result(task, candidates, transfer_result, season, episode_file_ids)

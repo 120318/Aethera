@@ -235,6 +235,7 @@ class TaskTransferCommandHandler(TaskCommandSupport):
         payload = TaskTransferCommandRecordPayload(
             resolved_task_id=task.id,
             target=_task_media_target(task),
+            file_indices=request.file_indices,
         )
         return self._build_task_command_record(
             body=body,
@@ -245,7 +246,7 @@ class TaskTransferCommandHandler(TaskCommandSupport):
 
     async def execute(self, command: CommandRecord) -> CommandResult:
         payload = command.payload
-        result = await transfer_service.perform_transfer_by_task_id(payload.resolved_task_id)
+        result = await transfer_service.perform_transfer_by_task_id(payload.resolved_task_id, file_indices=payload.file_indices)
         return CommandResult(transferred_files_count=len(result.transferred_files or []))
 
     def resolve_running_message(self) -> str:

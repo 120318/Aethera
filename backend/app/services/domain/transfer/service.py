@@ -24,6 +24,7 @@ from app.utils.library_paths import build_library_file_path
 from . import execution
 from .execution import TransferExecutionContext
 from .replacement import library_replacement_policy
+from .ready_files import ACTIVE_IMPORT_STATUSES, present_file_indices, ready_file_indices, supports_early_import
 
 
 logger = logging.getLogger("app.services.transfer")
@@ -40,7 +41,7 @@ def _nested_message_params(params: dict[str, str] | None) -> str:
 
 
 class TransferService:
-    async def perform_transfer_by_task_id(self, task_id: str) -> TransferResult:
+    async def perform_transfer_by_task_id(self, task_id: str, *, file_indices: list[int] | None = None) -> TransferResult:
         async with domain_lock_service.acquire_task_op(task_id) as acquired:
             if not acquired:
                 raise TransferException("backendErrors.taskBusy")
@@ -48,10 +49,67 @@ class TransferService:
             if not task:
                 raise TransferException("backendErrors.taskNotFound", params={"id": task_id})
             existing_files = await library_service.get_files_by_task(task.id)
+            if file_indices is not None or task.status in ACTIVE_IMPORT_STATUSES:
+                return await self._perform_ready_transfer(task, existing_files, file_indices)
+            if task.status == TaskStatus.FINISHED and existing_files and supports_early_import(task):
+                return await self._finish_incremental_transfer(task, existing_files)
             skip_result = await execution.validate_transfer_reentry(task, existing_files)
             if skip_result is not None:
                 return skip_result
             return await self._perform_transfer(task)
+
+    async def _perform_ready_transfer(
+        self, task: TaskData, existing_files: list[LibraryFile], file_indices: list[int] | None,
+    ) -> TransferResult:
+        # Recheck after acquiring the task lock: selection, downloader and progress
+        # can all change while a command is queued. An empty subset means no work.
+        indices = set(await ready_file_indices(task, existing_files))
+        if file_indices is not None:
+            indices.intersection_update(file_indices)
+        if not indices:
+            return TransferResult(transferred_files=[])
+        return await self._perform_incremental_transfer(task, existing_files, indices, complete=False)
+
+    async def _finish_incremental_transfer(self, task: TaskData, existing_files: list[LibraryFile]) -> TransferResult:
+        selected = {
+            index for index, _ in execution.iter_selected_files(task.metadata.files, execution.resolve_selected_indices(task))
+        }
+        remaining = selected - present_file_indices(existing_files)
+        if remaining:
+            ready = set(await ready_file_indices(task, existing_files))
+            if not remaining.issubset(ready):
+                if not ready:
+                    return TransferResult(transferred_files=[])
+                return await self._perform_incremental_transfer(task, existing_files, ready, complete=False)
+        return await self._perform_incremental_transfer(task, existing_files, remaining, complete=True)
+
+    async def _perform_incremental_transfer(
+        self, task: TaskData, existing_files: list[LibraryFile], indices: set[int], *, complete: bool,
+    ) -> TransferResult:
+        try:
+            if complete:
+                await self._lock_task_status(task)
+            context = await execution.build_transfer_execution_context(task)
+            context.selected_indices = indices
+            results = await execution.execute_transfer(task, context)
+            replacement_plan = await library_replacement_policy.build_plan(task, results, context.season_number)
+            await commit_transfer_results(
+                task, results, existing_files, context, replacement_plan.replace_files,
+                incremental=True, complete=complete,
+            )
+            return TransferResult(transferred_files=results)
+        except AppException as exc:
+            await emit_media_import_failed(task, exc.message_key, exc.params)
+            if complete:
+                await handle_transfer_error(task, exc.message_key, exc.params)
+            raise
+        except (OSError, ValueError) as exc:
+            error_key = "backendErrors.transferFailed"
+            error_params = {"reason": str(exc)}
+            await emit_media_import_failed(task, error_key, error_params)
+            if complete:
+                await handle_transfer_error(task, error_key, error_params)
+            raise
 
     async def _perform_transfer(self, task: TaskData) -> TransferResult:
         logger.info("Starting transfer for task %s", task.id)
@@ -179,6 +237,9 @@ async def commit_transfer_results(
     existing_library_files: list[LibraryFile],
     execution_context: TransferExecutionContext,
     replacement_files: list[LibraryFile] | None = None,
+    *,
+    incremental: bool = False,
+    complete: bool = True,
 ) -> None:
     try:
         replaced_library_files = await library_service.replace_task_entries(
@@ -188,9 +249,16 @@ async def commit_transfer_results(
             transfer_results,
             execution_context.season_number,
             replacement_files,
+            incremental=incremental,
         )
-        await download_service.update_task_state(task.id, TaskStatus.COMPLETED)
-        cleanup_replaced_library_files(replaced_library_files or existing_library_files, transfer_results)
+        if complete:
+            if not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
+                raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})
+        cleanup_replaced_library_files(
+            replaced_library_files if incremental else (replaced_library_files or existing_library_files), transfer_results,
+        )
+        if not transfer_results:
+            return
         try:
             await media_service.refresh_profile_safely(task.media_id, execution_context.season_number)
         except AppException as exc:

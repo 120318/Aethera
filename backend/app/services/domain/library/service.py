@@ -348,6 +348,8 @@ class LibraryService:
         transfer_results: list[TransferFileResult],
         season: int | None = None,
         replacement_files: list[LibraryFile] | None = None,
+        *,
+        incremental: bool = False,
     ) -> list[LibraryFile]:
         return await self._registration.replace_task_entries(
             task_id,
@@ -356,6 +358,7 @@ class LibraryService:
             transfer_results,
             season,
             replacement_files,
+            incremental=incremental,
         )
 
     # Deletion

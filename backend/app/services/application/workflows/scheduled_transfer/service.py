@@ -7,6 +7,8 @@ from app.schemas.domain.download import BatchJobResult, TaskData, TaskErrorStage
 from app.services.application.commands.service import CommandConflictException, command_service
 from app.services.domain.download import download_service
 from app.services.domain.transfer.execution import missing_transfer_source_paths
+from app.services.domain.transfer.ready_files import ACTIVE_IMPORT_STATUSES, find_ready_file_indices
+from app.services.platform.domain_lock_service import domain_lock_service
 
 logger = logging.getLogger("app.services.scheduled_transfer_command")
 
@@ -33,6 +35,31 @@ async def _mark_precheck_transfer_failed(task: TaskData, exc: TransferException)
 
 
 class ScheduledTransferCommandService:
+    async def enqueue_ready_files(self) -> BatchJobResult:
+        tasks = await download_service.get_tasks(status=ACTIVE_IMPORT_STATUSES)
+        result = BatchJobResult(processed=len(tasks))
+        for task in tasks:
+            try:
+                if await domain_lock_service.is_task_op_locked(task.id):
+                    continue
+                indices = await find_ready_file_indices(task)
+                if not indices:
+                    continue
+                await command_service.create_command(
+                    CommandCreateRequest(
+                        type=CommandType.TASK_TRANSFER,
+                        initiator=CommandInitiator.SCHEDULER,
+                        payload=TaskTransferCommandRequestPayload(task_id=task.id, file_indices=indices),
+                    )
+                )
+                result.completed += 1
+            except CommandConflictException:
+                continue
+            except (DownloadException, TransferException, RuntimeError, ValueError, OSError) as exc:
+                logger.warning("Failed to schedule completed files: task=%s error=%s", task.id, exc)
+                result.errors += 1
+        return result
+
     async def enqueue_finished_tasks(self) -> BatchJobResult:
         finished_tasks = await download_service.get_tasks(status=[TaskStatus.FINISHED])
         if not finished_tasks:
