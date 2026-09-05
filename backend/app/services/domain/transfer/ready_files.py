@@ -3,6 +3,7 @@ from pathlib import Path
 from app.schemas.domain.download import TaskData, TaskStatus
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media_types import MediaType
+from app.schemas.domain.torrent_status import TorrentState
 from app.services.domain.download import download_service
 from app.services.domain.library.service import library_service
 from app.services.domain.resource.filtering import is_original_disc_attrs
@@ -14,6 +15,8 @@ from .execution import build_source_path, iter_selected_files, resolve_selected_
 ACTIVE_IMPORT_STATUSES = [TaskStatus.DOWNLOADING, TaskStatus.PAUSED]
 # Checking, allocating, moving, metadata and error states cannot publish files.
 READABLE_TORRENT_STATES = {
+    TorrentState.DOWNLOADING.value, TorrentState.PAUSED.value,
+    TorrentState.SEEDING.value, TorrentState.QUEUED.value,
     "downloading", "stalleddl", "forceddl", "pauseddl", "stoppeddl", "queueddl",
     "uploading", "stalledup", "forcedup", "pausedup", "stoppedup", "queuedup",
 }

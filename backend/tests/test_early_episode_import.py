@@ -110,10 +110,12 @@ async def test_incremental_import_preserves_previous_batches_and_finishes_withou
 
 
 @pytest.mark.asyncio
-async def test_final_import_only_adds_remaining_files(setup_import):
+@pytest.mark.parametrize("state", ["uploading", "seeding", "paused"])
+async def test_final_import_only_adds_remaining_files(setup_import, state):
     env = setup_import
     await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
     env.task.status = TaskStatus.FINISHED
+    env.info.state = state
     env.live[1].progress = env.live[2].progress = 1.0
     result = await transfer_service.perform_transfer_by_task_id(env.task.id)
     assert {item.file_index for item in result.transferred_files} == {5, 9}
@@ -132,7 +134,7 @@ async def test_stale_finished_state_cannot_publish_unfinished_files(setup_import
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["checkingDL", "checkingUP", "moving", "allocating", "error", "missingFiles"])
+@pytest.mark.parametrize("state", ["checkingDL", "checkingUP", "moving", "allocating", "error", "missingFiles", "checking", "missing", "unknown"])
 async def test_unsafe_downloader_states_do_not_import(setup_import, state):
     env = setup_import
     env.info.state = state
@@ -230,13 +232,14 @@ async def test_scheduler_enqueues_one_subset_and_skips_imported_files(setup_impo
 
 
 @pytest.mark.asyncio
-async def test_paused_task_keeps_state_and_task_lock_excludes_concurrent_operations(setup_import):
+@pytest.mark.parametrize("state", ["stoppedDL", "paused"])
+async def test_paused_task_keeps_state_and_task_lock_excludes_concurrent_operations(setup_import, state):
     from app.schemas.exception.exceptions import TransferException
     from app.services.platform.domain_lock_service import domain_lock_service
 
     env = setup_import
     env.task.status = TaskStatus.PAUSED
-    env.info.state = "stoppedDL"
+    env.info.state = state
     async with domain_lock_service.acquire_task_op(env.task.id):
         with pytest.raises(TransferException, match="backendErrors.taskBusy"):
             await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
@@ -246,8 +249,11 @@ async def test_paused_task_keeps_state_and_task_lock_excludes_concurrent_operati
 
 
 @pytest.mark.asyncio
-async def test_combined_old_file_is_preserved_until_all_its_episodes_have_replacements(setup_import):
+@pytest.mark.parametrize("first_resolution", ["480p", "720p", "1080p"])
+@pytest.mark.parametrize("same_batch", [False, True])
+async def test_combined_old_file_requires_equal_or_better_replacements_for_every_episode(setup_import, first_resolution, same_batch):
     env = setup_import
+    env.task.metadata.files[0].attrs.resolution = ResourceAttributes(resolution=first_resolution).resolution
     old_path = env.context.destination_base_path / "old-E1-E2.mkv"
     old_path.parent.mkdir(parents=True, exist_ok=True)
     old_path.write_bytes(b"old")
@@ -262,11 +268,16 @@ async def test_combined_old_file_is_preserved_until_all_its_episodes_have_replac
         )],
         season=1,
     )
-    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
-    assert old_path.is_file()
-    assert len(await library_service.get_files_by_task(old_task_id)) == 1
-    env.live[1].progress = 1.0
-    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[5])
-    assert not old_path.exists()
-    assert await library_service.get_files_by_task(old_task_id) == []
+    if same_batch:
+        env.live[1].progress = 1.0
+        await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2, 5])
+    else:
+        await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+        assert old_path.is_file()
+        assert len(await library_service.get_files_by_task(old_task_id)) == 1
+        env.live[1].progress = 1.0
+        await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[5])
+    preserve_old = first_resolution == "480p"
+    assert old_path.exists() == preserve_old
+    assert len(await library_service.get_files_by_task(old_task_id)) == int(preserve_old)
     assert len(await library_service.get_files_by_task(env.task.id)) == 2

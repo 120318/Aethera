@@ -47,19 +47,32 @@ class LibraryReplacementPolicy:
             for episode in episodes:
                 if episode.season == season:
                     episode_file_ids.setdefault(int(episode.episode), set()).add(episode.file_id)
-            # A combined old file must remain until every episode it contains has
-            # an imported replacement, including earlier batches from this task.
-            covered = {episode for result in transfer_results for episode in (result.episode_numbers or ([result.episode_number] if result.episode_number else []))}
-            present_task_files = {
-                item.id for item in library_files
-                if item.task_id == task.id and build_library_file_path(item.path, item.file_name).is_file()
-            }
-            covered.update(episode.episode for episode in episodes if episode.season == season and episode.file_id in present_task_files)
+            # Every episode needs an equal-or-better replacement. Do not compare
+            # individual file sizes against the total size of a combined file.
+            episode_quality: dict[int, tuple[int, tuple[int, ...]]] = {}
+            incoming_paths = {result.destination_path for result in transfer_results}
+            for result in transfer_results:
+                quality = self._rank(result.file_item.attrs or ResourceAttributes(), 0, quality_profile)[:2]
+                for episode in result.episode_numbers or ([result.episode_number] if result.episode_number else []):
+                    episode_quality[episode] = max(episode_quality.get(episode, quality), quality)
+            for item in library_files:
+                path = build_library_file_path(item.path, item.file_name)
+                if item.task_id != task.id or str(path) in incoming_paths or not path.is_file():
+                    continue
+                quality = self._rank(item.resource_attributes, 0, quality_profile)[:2]
+                for episode in episodes:
+                    if episode.season == season and episode.file_id == item.id:
+                        episode_quality[episode.episode] = max(episode_quality.get(episode.episode, quality), quality)
             candidates = [
                 item for item in candidates
-                if set(item.resource_attributes.episodes or []).issubset(covered)
+                if all(
+                    number in episode_quality and episode_quality[number] >= self._rank(item.resource_attributes, 0, quality_profile)[:2]
+                    for number in set(item.resource_attributes.episodes or []) | {
+                        episode.episode for episode in episodes if episode.file_id == item.id
+                    }
+                )
                 and all(
-                    episode.season == season and episode.episode in covered
+                    episode.season == season
                     for episode in episodes if episode.file_id == item.id
                 )
             ]
