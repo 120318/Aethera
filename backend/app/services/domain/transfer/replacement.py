@@ -11,6 +11,7 @@ from app.services.domain.library.service import library_service
 from app.services.domain.resource.filtering import compute_preference_score_from_attrs, is_original_disc_attrs
 from app.services.domain.resource.quality import quality_sort_key
 from app.utils.library_paths import normalize_path_separators
+from app.utils.library_paths import build_library_file_path
 
 
 class LibraryReplacementPolicy:
@@ -34,9 +35,10 @@ class LibraryReplacementPolicy:
         season: int | None,
     ) -> LibraryReplacementPlan:
         quality_profile = self._quality_profile()
+        library_files = await library_service.get_files_by_media(task.media_id, season)
         candidates = [
             item
-            for item in await library_service.get_files_by_media(task.media_id, season)
+            for item in library_files
             if item.task_id != task.id and not self._is_original_disc_file(item)
         ]
         episode_file_ids: dict[int, set[str]] = {}
@@ -45,6 +47,35 @@ class LibraryReplacementPolicy:
             for episode in episodes:
                 if episode.season == season:
                     episode_file_ids.setdefault(int(episode.episode), set()).add(episode.file_id)
+            # Every episode needs an equal-or-better replacement. Do not compare
+            # individual file sizes against the total size of a combined file.
+            episode_quality: dict[int, tuple[int, tuple[int, ...]]] = {}
+            incoming_paths = {result.destination_path for result in transfer_results}
+            for result in transfer_results:
+                quality = self._rank(result.file_item.attrs or ResourceAttributes(), 0, quality_profile)[:2]
+                for episode in result.episode_numbers or ([result.episode_number] if result.episode_number else []):
+                    episode_quality[episode] = max(episode_quality.get(episode, quality), quality)
+            for item in library_files:
+                path = build_library_file_path(item.path, item.file_name)
+                if item.task_id != task.id or str(path) in incoming_paths or not path.is_file():
+                    continue
+                quality = self._rank(item.resource_attributes, 0, quality_profile)[:2]
+                for episode in episodes:
+                    if episode.season == season and episode.file_id == item.id:
+                        episode_quality[episode.episode] = max(episode_quality.get(episode.episode, quality), quality)
+            candidates = [
+                item for item in candidates
+                if all(
+                    number in episode_quality and episode_quality[number] >= self._rank(item.resource_attributes, 0, quality_profile)[:2]
+                    for number in set(item.resource_attributes.episodes or []) | {
+                        episode.episode for episode in episodes if episode.file_id == item.id
+                    }
+                )
+                and all(
+                    episode.season == season
+                    for episode in episodes if episode.file_id == item.id
+                )
+            ]
         replace_files: dict[str, LibraryFile] = {}
         for transfer_result in transfer_results:
             scoped_candidates = self._video_file_candidates_for_result(task, candidates, transfer_result, season, episode_file_ids)

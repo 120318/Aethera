@@ -200,7 +200,7 @@ class TaskRuntimeService:
             return False
         if torrent_status:
             progress = torrent_status.progress
-            if progress is not None and progress >= 0.999 and task.status in [TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.PAUSED]:
+            if progress is not None and progress >= 1.0 and task.status in [TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.PAUSED]:
                 event_service.emit_media(
                     MediaEventCreate(
                         type=EventTypes.DOWNLOAD_COMPLETED,

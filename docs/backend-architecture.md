@@ -244,6 +244,31 @@ Rules:
 - External system protocols live in `integration`.
 - Parsers, filters, caches, naming helpers, and other supporting capabilities live in their explicit support package.
 
+#### Incremental episode import
+
+The import chain is scheduler -> task transfer command -> task operation lock ->
+downloader file readiness -> materialization -> incremental library registration ->
+one import event for the batch. Media-server metadata and danmu consumers use the
+event's imported files, not all files belonging to the task.
+
+- The task already owns its media snapshot, selection and torrent metadata. File
+  readiness comes from the downloader; registered `task_id` / `file_index` records
+  and visible library files provide the deduplication state.
+- A transfer command may carry `file_indices` in its existing JSON payload. A
+  missing subset requests the normal full import; an empty subset means no work.
+  Execution rechecks readiness and selection under the existing task lock.
+- Completed files of ordinary TV torrents can be hardlinked or copied while the
+  task remains downloading or paused. Checking/moving torrents, mismatched paths,
+  unavailable files and original-disc packages cannot be imported early.
+- Incremental registration replaces only the incoming file indices and explicit
+  quality-replacement conflicts. It preserves earlier batches and their episode
+  records. Full completion imports remaining files and changes the task status;
+  an empty final batch emits no additional import event.
+- Partial import failures belong to the transfer command. They do not promote a
+  downloading task to finished, and retries recompute the unimported file set.
+- This uses existing tables and columns. Source files stay available to the
+  downloader. Profile refresh and import-event consumers remain post-import work.
+
 ### Concurrency Control
 
 - Lock semantics are defined by the domain.

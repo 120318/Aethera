@@ -174,7 +174,7 @@ async def all_transfer_sources_available(task: TaskData) -> bool:
 
     source_base_path = await resolve_source_base_path(task)
     found_any = False
-    for _, file_item in iter_selected_files(task.metadata.files, task.context.selected_files if task.context else None):
+    for _, file_item in iter_selected_files(task.metadata.files, resolve_selected_indices(task)):
         found_any = True
         try:
             source_path = generate_source_path(task, file_item, source_base_path)
@@ -189,7 +189,7 @@ async def missing_transfer_source_paths(task: TaskData) -> list[str]:
     validate_transfer_task(task)
     source_base_path = await resolve_source_base_path(task)
     missing_paths: list[str] = []
-    for _, file_item in iter_selected_files(task.metadata.files, task.context.selected_files if task.context else None):
+    for _, file_item in iter_selected_files(task.metadata.files, resolve_selected_indices(task)):
         source_path = build_source_path(task, file_item, source_base_path)
         if not fs_provider.exists(source_path):
             missing_paths.append(str(source_path))
@@ -210,9 +210,10 @@ async def validate_transfer_reentry(task: TaskData, existing_library_files: list
 
 
 def iter_selected_files(files: list[TorrentFileItem], selected_indices):
-    selected = set(selected_indices) if selected_indices else None
-    for index, file_item in enumerate(files):
-        if selected and index not in selected:
+    selected = set(selected_indices) if selected_indices is not None else None
+    for file_item in files:
+        index = file_item.index
+        if selected is not None and index not in selected:
             continue
         yield index, file_item
 

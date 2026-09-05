@@ -24,8 +24,17 @@ class LibraryReplaceRepository:
         transfer_results: list[TransferFileResult],
         season: int | None = None,
         replacement_files: list[LibraryFile] | None = None,
+        *,
+        incremental: bool = False,
     ) -> list[LibraryFile]:
         existing_files = await self._find_existing_files(task_id)
+        if incremental:
+            incoming_indices = {result.file_index for result in transfer_results}
+            incoming_paths = {Path(result.destination_path) for result in transfer_results}
+            existing_files = [
+                item for item in existing_files
+                if item.file_index in incoming_indices or build_library_file_path(item.path, item.file_name) in incoming_paths
+            ]
         conflicting_files = await self._find_conflicting_files(task_id, transfer_results)
         replacement_files = replacement_files or []
         existing_file_ids = [library_file.id for library_file in existing_files if library_file.id]
@@ -41,7 +50,7 @@ class LibraryReplaceRepository:
 
             if existing_file_ids:
                 session.execute(delete(LibraryEpisodeORM).where(LibraryEpisodeORM.file_id.in_(existing_file_ids)))
-                session.execute(delete(LibraryFileORM).where(LibraryFileORM.task_id == task_id))
+                session.execute(delete(LibraryFileORM).where(LibraryFileORM.id.in_(existing_file_ids)))
             if conflicting_file_ids:
                 session.execute(delete(LibraryEpisodeORM).where(LibraryEpisodeORM.file_id.in_(conflicting_file_ids)))
                 session.execute(delete(LibraryFileORM).where(LibraryFileORM.id.in_(conflicting_file_ids)))

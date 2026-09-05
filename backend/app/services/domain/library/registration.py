@@ -89,8 +89,12 @@ class LibraryRegistrationWorker:
         transfer_results: list[TransferFileResult],
         season: int | None = None,
         replacement_files: list[LibraryFile] | None = None,
+        *,
+        incremental: bool = False,
     ) -> list[LibraryFile]:
-        return await self.replace_repo.replace_task_entries(task_id, directory_id, media_id, transfer_results, season, replacement_files)
+        return await self.replace_repo.replace_task_entries(
+            task_id, directory_id, media_id, transfer_results, season, replacement_files, incremental=incremental,
+        )
 
     async def _add_library_file(
         self,

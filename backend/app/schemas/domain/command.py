@@ -79,6 +79,7 @@ class PilotEpisodeCommandRequestPayload(PayloadBase):
 
 class TaskTransferCommandRequestPayload(PayloadBase):
     task_id: str
+    file_indices: list[int] | None = None
 
 
 class TaskStorageChangeCommandRequestPayload(PayloadBase):
@@ -203,6 +204,7 @@ class PilotEpisodeCommandRecordPayload(PayloadBase):
 class TaskTransferCommandRecordPayload(PayloadBase):
     resolved_task_id: str
     target: MediaTarget
+    file_indices: list[int] | None = None
 
 
 class TaskStorageChangeCommandRecordPayload(PayloadBase):
