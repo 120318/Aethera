@@ -206,6 +206,36 @@ async def test_sync_active_downloads_completed_event_uses_live_torrent_progress(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("state,progress,completion_time,expected", [
+    (TorrentState.SEEDING, 0.9995, None, True),
+    (TorrentState.PAUSED, 0.9995, datetime(2026, 1, 1), True),
+    (TorrentState.DOWNLOADING, 0.9995, None, False),
+    (TorrentState.DOWNLOADING, 0.9995, datetime(2026, 1, 1), False),
+    (TorrentState.SEEDING, 0.998, None, False),
+    (TorrentState.CHECKING, 1.0, datetime(2026, 1, 1), False),
+    (TorrentState.ERROR, 1.0, None, False),
+    (TorrentState.DOWNLOADING, 1.0, None, True),
+])
+async def test_completion_tolerance_requires_downloader_confirmation(monkeypatch, state, progress, completion_time, expected):
+    task = _task(status=TaskStatus.DOWNLOADING)
+    torrent = TorrentStatus(
+        hash=task.torrent_hash, name="Torrent", size=100, progress=progress,
+        state=state, completion_on=completion_time, downloader_id="downloader-1",
+    )
+    events = []
+    monkeypatch.setattr("app.services.domain.download.task_runtime_service.event_service.emit_media", lambda *args, **kwargs: events.append(kwargs))
+    service = TaskRuntimeService(_FakeRepo(task), _FakeClientFactory(torrent_statuses=[torrent]))
+    update = AsyncMock(return_value=True)
+    await service.sync_active_downloads(AsyncMock(return_value=[task]), update)
+    if expected:
+        update.assert_awaited_once_with(task.id, TaskStatus.FINISHED, None, 1.0, None)
+        assert events[0]["meta"].progress == progress
+    else:
+        update.assert_not_awaited()
+        assert events == []
+
+
+@pytest.mark.asyncio
 async def test_recover_stuck_transferring_tasks_force_recovers_all_transferring_tasks():
     task = _task(status=TaskStatus.TRANSFERRING)
     service = TaskRuntimeService(_FakeRepo(task), _FakeClientFactory())

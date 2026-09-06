@@ -200,7 +200,15 @@ class TaskRuntimeService:
             return False
         if torrent_status:
             progress = torrent_status.progress
-            if progress is not None and progress >= 1.0 and task.status in [TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.PAUSED]:
+            state = torrent_status.state.lower()
+            blocked = state in {
+                "checking", "checkingdl", "checkingup", "checkingresumedata", "moving",
+                "allocating", "metadl", "forcedmetadl", "error", "missing", "missingfiles", "unknown",
+            }
+            confirmed_complete = state in {"seeding", "uploading", "stalledup", "forcedup", "pausedup", "stoppedup", "queuedup"}
+            confirmed_complete = confirmed_complete or (state in {"paused", "queued"} and torrent_status.completion_on is not None)
+            completed = progress is not None and not blocked and (progress >= 1.0 or (progress >= 0.999 and confirmed_complete))
+            if completed and task.status in [TaskStatus.PENDING, TaskStatus.DOWNLOADING, TaskStatus.PAUSED]:
                 event_service.emit_media(
                     MediaEventCreate(
                         type=EventTypes.DOWNLOAD_COMPLETED,

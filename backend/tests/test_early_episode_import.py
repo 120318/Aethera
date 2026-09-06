@@ -250,19 +250,21 @@ async def test_paused_task_keeps_state_and_task_lock_excludes_concurrent_operati
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("first_resolution", ["480p", "720p", "1080p"])
+@pytest.mark.parametrize("second_resolution", ["720p", "1080p"])
 @pytest.mark.parametrize("same_batch", [False, True])
-async def test_combined_old_file_requires_equal_or_better_replacements_for_every_episode(setup_import, first_resolution, same_batch):
+async def test_combined_old_file_requires_equal_or_better_replacements_for_every_episode(setup_import, first_resolution, second_resolution, same_batch):
     env = setup_import
     env.task.metadata.files[0].attrs.resolution = ResourceAttributes(resolution=first_resolution).resolution
+    env.task.metadata.files[1].attrs.resolution = ResourceAttributes(resolution=second_resolution).resolution
     old_path = env.context.destination_base_path / "old-E1-E2.mkv"
     old_path.parent.mkdir(parents=True, exist_ok=True)
-    old_path.write_bytes(b"old")
+    old_path.write_bytes(b"old" * 100)
     old_task_id = str(uuid4())
     await library_service.replace_task_entries(
         old_task_id, "dir", env.task.media_id,
         [TransferFileResult(
             source_path=str(old_path), destination_path=str(old_path), file_index=0,
-            file_item=TorrentFileItem(index=0, filename=old_path.name, size=3,
+            file_item=TorrentFileItem(index=0, filename=old_path.name, size=300,
                                       attrs=ResourceAttributes(seasons=[1], episodes=[1, 2], resolution="720p")),
             episode_number=1, episode_numbers=[1, 2],
         )],

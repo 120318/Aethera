@@ -39,6 +39,7 @@ class RTorrentTorrentRow(BaseModel):
     is_active: int = 0
     load_date: int = 0
     completed_bytes: int = 0
+    hashing: int = 0
 
 
 class RTorrentFileRow(BaseModel):
@@ -297,6 +298,7 @@ class RTorrentClient(DownloadClient):
                 "d.is_active=",
                 "d.load_date=",
                 "d.completed_bytes=",
+                "d.hashing=",
             ),
         )
         return [self._to_torrent_row(item) for item in self._rows(raw)]
@@ -350,6 +352,7 @@ class RTorrentClient(DownloadClient):
             is_active=self._to_int(values[11]) if len(values) > 11 else 0,
             load_date=self._to_int(values[12]) if len(values) > 12 else 0,
             completed_bytes=self._to_int(values[13]) if len(values) > 13 else 0,
+            hashing=self._to_int(values[14]) if len(values) > 14 else -1,
         )
 
     def _to_file_row(self, index: int, item: object) -> RTorrentFileRow:
@@ -376,7 +379,7 @@ class RTorrentClient(DownloadClient):
         progress = self._torrent_progress(row)
         save_path = self._map_remote_to_local_path(row.directory) if row.directory else row.directory
         added_on = datetime.fromtimestamp(row.load_date) if row.load_date > 0 else None
-        completion_on = datetime.now() if progress >= 0.999 and row.complete else None
+        completion_on = datetime.now() if progress >= 0.999 and row.complete and row.hashing == 0 else None
         return TorrentStatus(
             hash=row.hash,
             name=row.name,
@@ -398,6 +401,10 @@ class RTorrentClient(DownloadClient):
         )
 
     def _torrent_state(self, row: RTorrentTorrentRow) -> TorrentState:
+        if row.hashing < 0:
+            return TorrentState.UNKNOWN
+        if row.hashing:
+            return TorrentState.CHECKING
         if not row.is_active and not row.state:
             return TorrentState.PAUSED
         if row.complete:

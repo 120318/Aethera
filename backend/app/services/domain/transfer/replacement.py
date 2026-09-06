@@ -42,6 +42,7 @@ class LibraryReplacementPolicy:
             if item.task_id != task.id and not self._is_original_disc_file(item)
         ]
         episode_file_ids: dict[int, set[str]] = {}
+        combined_file_ids: set[str] = set()
         if task.media_id.media_type == MediaType.tv and season is not None:
             episodes = await library_service.get_episodes_by_media(task.media_id)
             for episode in episodes:
@@ -76,9 +77,22 @@ class LibraryReplacementPolicy:
                     for episode in episodes if episode.file_id == item.id
                 )
             ]
+            combined_file_ids = {
+                item.id for item in candidates if item.id and len(
+                    set(item.resource_attributes.episodes or []) | {
+                        episode.episode for episode in episodes if episode.file_id == item.id
+                    }
+                ) > 1
+            }
         replace_files: dict[str, LibraryFile] = {}
         for transfer_result in transfer_results:
             scoped_candidates = self._video_file_candidates_for_result(task, candidates, transfer_result, season, episode_file_ids)
+            # These groups already passed the per-episode quality check above.
+            # Their total size must not be compared to one replacement episode.
+            for candidate in scoped_candidates:
+                if candidate.id in combined_file_ids:
+                    replace_files[candidate.id] = candidate
+            scoped_candidates = [item for item in scoped_candidates if item.id not in combined_file_ids]
             if not scoped_candidates:
                 continue
             incoming_attrs = transfer_result.file_item.attrs or ResourceAttributes()
