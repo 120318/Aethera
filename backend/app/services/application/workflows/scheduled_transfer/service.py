@@ -38,11 +38,15 @@ class ScheduledTransferCommandService:
     async def enqueue_ready_files(self) -> BatchJobResult:
         tasks = await download_service.get_tasks(status=ACTIVE_IMPORT_STATUSES)
         result = BatchJobResult(processed=len(tasks))
+        status_by_task = await download_service.get_torrent_status_by_tasks(tasks)
         for task in tasks:
             try:
                 if await domain_lock_service.is_task_op_locked(task.id):
                     continue
-                indices = await find_ready_file_indices(task)
+                torrent_status = status_by_task[task.id] if task.id in status_by_task else None
+                if torrent_status is None:
+                    continue
+                indices = await find_ready_file_indices(task, torrent_status)
                 if not indices:
                     continue
                 await command_service.create_command(

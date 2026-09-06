@@ -21,6 +21,7 @@ from app.schemas.media_id import MediaID
 from app.services.domain.library.service import library_service
 from app.services.domain.transfer.execution import TransferExecutionContext
 from app.services.domain.transfer.ready_files import find_ready_file_indices
+from app.services.domain.transfer.service import emit_media_import_completed as persist_import_event
 from app.services.domain.transfer.service import transfer_service
 
 
@@ -78,7 +79,10 @@ def setup_import(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.domain.transfer.service.download_service.update_task_state", state_update)
     # Quality policy is irrelevant to these files, which have a distinct media id.
     monkeypatch.setattr("app.services.domain.transfer.replacement.library_replacement_policy._quality_profile", lambda: None)
-    return SimpleNamespace(task=task, live=live, info=info, event=event, state_update=state_update, context=context)
+    return SimpleNamespace(
+        task=task, live=live, info=info, client=client,
+        event=event, state_update=state_update, context=context,
+    )
 
 
 @pytest.mark.asyncio
@@ -226,6 +230,76 @@ async def test_rootless_live_file_name_matches_rooted_torrent_metadata(setup_imp
 
 
 @pytest.mark.asyncio
+async def test_early_import_ignores_subtitle_then_final_import_includes_it(setup_import):
+    env = setup_import
+    subtitle = TorrentFileItem(
+        index=11,
+        filename="Show/E1.srt",
+        size=4,
+        attrs=ResourceAttributes(seasons=[1], episodes=[1], resolution="1080p"),
+    )
+    env.task.metadata.files.append(subtitle)
+    env.task.context.selected_files.append(11)
+    subtitle_path = Path(env.task.save_path) / subtitle.filename
+    subtitle_path.write_bytes(b"subs")
+    env.live.append(DownloadFileInfo(index=11, name=subtitle.filename, size=4, priority=1, progress=1.0))
+
+    assert await find_ready_file_indices(env.task) == [2]
+    first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2, 11])
+    assert {item.file_index for item in first.transferred_files} == {2}
+
+    env.task.status = TaskStatus.FINISHED
+    env.info.state = "seeding"
+    for item in env.live:
+        item.progress = 1.0
+    final = await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert {item.file_index for item in final.transferred_files} == {5, 9, 11}
+    assert env.task.status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_replaced_early_file_is_satisfied_by_visible_higher_quality_episode(setup_import):
+    env = setup_import
+    first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    await persist_import_event(env.task, first.transferred_files)
+    old_file = (await library_service.get_files_by_task(env.task.id))[0]
+    destination = Path(first.transferred_files[0].destination_path)
+    higher_task_id = str(uuid4())
+    await library_service.replace_task_entries(
+        higher_task_id,
+        "dir",
+        env.task.media_id,
+        [TransferFileResult(
+            source_path=str(destination),
+            destination_path=str(destination),
+            file_index=0,
+            file_item=TorrentFileItem(
+                index=0,
+                filename=destination.name,
+                size=4,
+                attrs=ResourceAttributes(seasons=[1], episodes=[1], resolution="2160p"),
+            ),
+            episode_number=1,
+            episode_numbers=[1],
+        )],
+        season=1,
+        replacement_files=[old_file],
+    )
+
+    assert await library_service.get_files_by_task(env.task.id) == []
+    assert await find_ready_file_indices(env.task) == []
+
+    env.task.status = TaskStatus.FINISHED
+    env.info.state = "seeding"
+    env.live[1].progress = env.live[2].progress = 1.0
+    final = await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert {item.file_index for item in final.transferred_files} == {5, 9}
+    assert env.task.status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
 async def test_stale_command_does_not_import_deselected_or_invalidated_files(setup_import):
     env = setup_import
     assert await find_ready_file_indices(env.task) == [2]
@@ -280,10 +354,17 @@ async def test_scheduler_enqueues_one_subset_and_skips_imported_files(setup_impo
         "app.services.application.workflows.scheduled_transfer.service.download_service.get_tasks",
         AsyncMock(return_value=[env.task]),
     )
+    statuses = AsyncMock(return_value={env.task.id: env.info})
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.download_service.get_torrent_status_by_tasks",
+        statuses,
+    )
     create = AsyncMock()
     monkeypatch.setattr("app.services.application.workflows.scheduled_transfer.service.command_service.create_command", create)
     result = await scheduled_transfer_command_service.enqueue_ready_files()
     assert result.completed == 1
+    statuses.assert_awaited_once_with([env.task])
+    env.client.get_torrent_info.assert_not_awaited()
     payload = create.call_args.args[0].payload
     assert payload.file_indices == [2, 5]
     create.side_effect = CommandConflictException()

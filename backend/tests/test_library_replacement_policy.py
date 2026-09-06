@@ -134,6 +134,32 @@ async def test_video_file_replaces_only_same_episode_video_files(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_subtitle_does_not_replace_existing_episode_video(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    old_video = _library_file(
+        "old-video",
+        media_id=media_id,
+        attrs=ResourceAttributes(resolution="720p", resource_form="Video File", seasons=[1], episodes=[1]),
+    )
+    stub = _LibraryServiceStub(
+        [old_video],
+        [LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="old-video", created_at=0.0)],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+
+    plan = await library_replacement_policy.build_plan(
+        _task(media_id, season=1),
+        [_transfer_result(
+            filename="Test.S01E01.2160p.srt",
+            attrs=ResourceAttributes(resolution="2160p", seasons=[1], episodes=[1]),
+        )],
+        season=1,
+    )
+
+    assert plan.replace_files == []
+
+
+@pytest.mark.asyncio
 async def test_original_disc_replaces_existing_original_disc_package_only_when_better(monkeypatch):
     media_id = MediaID.parse("tmdb:movie:1")
     old_disc_file = _library_file(

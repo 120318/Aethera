@@ -1,16 +1,21 @@
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.schemas.domain.addon_events import MediaImportCompletedEventMeta
 from app.schemas.domain.download import TaskData, TaskStatus
+from app.schemas.domain.event import EventType
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media_types import MediaType
-from app.schemas.domain.torrent_status import TorrentState
+from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
 from app.services.domain.download import download_service
 from app.services.domain.library.service import library_service
 from app.services.domain.resource.filtering import is_original_disc_attrs
-from app.utils.library_paths import build_library_file_path
+from app.services.audit.event_service import event_service
+from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file
 
 from .execution import build_source_path, iter_selected_files, resolve_selected_indices, resolve_source_base_path
+from .replacement import library_replacement_policy
 
 
 ACTIVE_IMPORT_STATUSES = [TaskStatus.DOWNLOADING, TaskStatus.PAUSED]
@@ -58,6 +63,42 @@ def present_file_indices(files: list[LibraryFile]) -> set[int]:
     return present
 
 
+def _imported_episode_groups(task_id: str) -> set[frozenset[int]]:
+    _total, events = event_service.list_events(
+        limit=1000,
+        task_id=task_id,
+        types=[EventType.MEDIA_IMPORT_COMPLETED],
+    )
+    groups: set[frozenset[int]] = set()
+    for event in events:
+        try:
+            meta = MediaImportCompletedEventMeta.model_validate(json.loads(event.meta) if event.meta else {})
+        except (ValueError, TypeError):
+            continue
+        for item in meta.imported_files:
+            episodes = item.episode_numbers or ([item.episode_number] if item.episode_number else [])
+            group = frozenset(int(value) for value in episodes if int(value) > 0)
+            if group:
+                groups.add(group)
+    return groups
+
+
+async def satisfied_file_indices(task: TaskData, existing_files: list[LibraryFile]) -> set[int]:
+    satisfied = present_file_indices(existing_files)
+    imported_episode_groups = _imported_episode_groups(task.id)
+    if not imported_episode_groups:
+        return satisfied
+    coverage = download_service.resolve_task_episode_coverage_detail(task)
+    satisfied.update(
+        await library_replacement_policy.satisfied_file_indices(
+            task,
+            coverage.season_number,
+            imported_episode_groups,
+        )
+    )
+    return satisfied
+
+
 def _torrent_relative_path(task: TaskData, filename: str) -> Path:
     relative = Path(filename)
     root_name = Path(task.metadata.name).name
@@ -66,13 +107,18 @@ def _torrent_relative_path(task: TaskData, filename: str) -> Path:
     return relative
 
 
-async def inspect_ready_files(task: TaskData, existing_files: list[LibraryFile]) -> ReadyFileInspection:
+async def inspect_ready_files(
+    task: TaskData,
+    existing_files: list[LibraryFile],
+    torrent_status: TorrentStatus | None = None,
+    known_satisfied_indices: set[int] | None = None,
+) -> ReadyFileInspection:
     if task.status not in [*ACTIVE_IMPORT_STATUSES, TaskStatus.FINISHED] or not supports_early_import(task):
         return ReadyFileInspection([], False)
     client = download_service.task_service.resolve_task_client(task)
     if client is None:
         return ReadyFileInspection([], False)
-    info = await client.get_torrent_info(task.torrent_hash)
+    info = torrent_status or await client.get_torrent_info(task.torrent_hash)
     if info is None:
         return ReadyFileInspection([], False)
     if info.state.lower() not in READABLE_TORRENT_STATES:
@@ -87,9 +133,15 @@ async def inspect_ready_files(task: TaskData, existing_files: list[LibraryFile])
     if not live_files:
         return ReadyFileInspection([], False)
     live_by_index = {item.index: item for item in live_files}
-    imported = present_file_indices(existing_files)
+    imported = (
+        known_satisfied_indices
+        if known_satisfied_indices is not None
+        else await satisfied_file_indices(task, existing_files)
+    )
     ready: list[int] = []
     for index, item in iter_selected_files(task.metadata.files, resolve_selected_indices(task)):
+        if task.status in ACTIVE_IMPORT_STATUSES and not file_name_looks_like_media_file(item.filename):
+            continue
         live = live_by_index.get(index)
         if index in imported or live is None or live.priority <= 0 or live.progress != 1.0:
             continue
@@ -108,11 +160,15 @@ async def inspect_ready_files(task: TaskData, existing_files: list[LibraryFile])
     return ReadyFileInspection(ready, True)
 
 
-async def ready_file_indices(task: TaskData, existing_files: list[LibraryFile]) -> list[int]:
-    return (await inspect_ready_files(task, existing_files)).indices
+async def ready_file_indices(
+    task: TaskData,
+    existing_files: list[LibraryFile],
+    torrent_status: TorrentStatus | None = None,
+) -> list[int]:
+    return (await inspect_ready_files(task, existing_files, torrent_status)).indices
 
 
-async def find_ready_file_indices(task: TaskData) -> list[int]:
+async def find_ready_file_indices(task: TaskData, torrent_status: TorrentStatus | None = None) -> list[int]:
     if not supports_early_import(task):
         return []
-    return await ready_file_indices(task, await library_service.get_files_by_task(task.id))
+    return await ready_file_indices(task, await library_service.get_files_by_task(task.id), torrent_status)

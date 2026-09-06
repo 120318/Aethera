@@ -24,7 +24,7 @@ from app.utils.library_paths import build_library_file_path
 from . import execution
 from .execution import TransferExecutionContext
 from .replacement import library_replacement_policy
-from .ready_files import ACTIVE_IMPORT_STATUSES, inspect_ready_files, present_file_indices, ready_file_indices, supports_early_import
+from .ready_files import ACTIVE_IMPORT_STATUSES, inspect_ready_files, ready_file_indices, satisfied_file_indices, supports_early_import
 
 
 logger = logging.getLogger("app.services.transfer")
@@ -51,8 +51,10 @@ class TransferService:
             existing_files = await library_service.get_files_by_task(task.id)
             if file_indices is not None or task.status in ACTIVE_IMPORT_STATUSES:
                 return await self._perform_ready_transfer(task, existing_files, file_indices)
-            if task.status == TaskStatus.FINISHED and existing_files and supports_early_import(task):
-                return await self._finish_incremental_transfer(task, existing_files)
+            if task.status == TaskStatus.FINISHED and supports_early_import(task):
+                satisfied = await satisfied_file_indices(task, existing_files)
+                if existing_files or satisfied:
+                    return await self._finish_incremental_transfer(task, existing_files, satisfied)
             skip_result = await execution.validate_transfer_reentry(task, existing_files)
             if skip_result is not None:
                 return skip_result
@@ -70,13 +72,22 @@ class TransferService:
             return TransferResult(transferred_files=[])
         return await self._perform_incremental_transfer(task, existing_files, indices, complete=False)
 
-    async def _finish_incremental_transfer(self, task: TaskData, existing_files: list[LibraryFile]) -> TransferResult:
+    async def _finish_incremental_transfer(
+        self,
+        task: TaskData,
+        existing_files: list[LibraryFile],
+        satisfied: set[int],
+    ) -> TransferResult:
         selected = {
             index for index, _ in execution.iter_selected_files(task.metadata.files, execution.resolve_selected_indices(task))
         }
-        remaining = selected - present_file_indices(existing_files)
+        remaining = selected - satisfied
         if remaining:
-            inspection = await inspect_ready_files(task, existing_files)
+            inspection = await inspect_ready_files(
+                task,
+                existing_files,
+                known_satisfied_indices=satisfied,
+            )
             ready = set(inspection.indices)
             if not remaining.issubset(ready):
                 if not ready:

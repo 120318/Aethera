@@ -175,6 +175,9 @@ class DownloadService:
     async def get_torrent_status_by_task_ids(self, task_ids: list[str]) -> Mapping[str, TorrentStatus]:
         return await self.task_service.get_torrent_status_by_task_ids(task_ids)
 
+    async def get_torrent_status_by_tasks(self, tasks: list[TaskData]) -> Mapping[str, TorrentStatus]:
+        return await self.task_service.get_torrent_status_by_tasks(tasks)
+
     async def update_task_state(
         self,
         task_id: str,

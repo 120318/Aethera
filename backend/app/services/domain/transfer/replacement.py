@@ -10,8 +10,9 @@ from app.services.config.settings_service import settings_service
 from app.services.domain.library.service import library_service
 from app.services.domain.resource.filtering import compute_preference_score_from_attrs, is_original_disc_attrs
 from app.services.domain.resource.quality import quality_sort_key
-from app.utils.library_paths import normalize_path_separators
-from app.utils.library_paths import build_library_file_path
+from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file, normalize_path_separators
+
+from .execution import with_context_resource_attrs
 
 
 class LibraryReplacementPolicy:
@@ -26,7 +27,59 @@ class LibraryReplacementPolicy:
 
         if self._is_original_disc_import(transfer_results):
             return await self._build_original_disc_plan(task, transfer_results, season)
-        return await self._build_video_file_plan(task, transfer_results, season)
+        primary_results = [
+            result for result in transfer_results
+            if file_name_looks_like_media_file(result.file_item.filename)
+        ]
+        if not primary_results:
+            return LibraryReplacementPlan(reason="no primary media file replacement")
+        return await self._build_video_file_plan(task, primary_results, season)
+
+    async def satisfied_file_indices(
+        self,
+        task: TaskData,
+        season: int | None,
+        imported_episode_groups: set[frozenset[int]],
+    ) -> set[int]:
+        if task.media_id.media_type != MediaType.tv or season is None or not task.metadata:
+            return set()
+        library_files = await library_service.get_files_by_media(task.media_id, season)
+        episodes = await library_service.get_episodes_by_media(task.media_id)
+        files_by_id = {
+            item.id: item
+            for item in library_files
+            if item.id
+            and file_name_looks_like_media_file(item.file_name)
+            and build_library_file_path(item.path, item.file_name).is_file()
+        }
+        episode_ranks: dict[int, list[tuple[int, tuple[int, ...], int]]] = {}
+        quality_profile = self._quality_profile()
+        for episode in episodes:
+            if episode.season != season or episode.file_id not in files_by_id:
+                continue
+            library_file = files_by_id[episode.file_id]
+            episode_ranks.setdefault(int(episode.episode), []).append(
+                self._rank(library_file.resource_attributes, library_file.file_size or 0, quality_profile)
+            )
+
+        selected = set(task.context.selected_files) if task.context and task.context.selected_files else None
+        satisfied: set[int] = set()
+        for item in task.metadata.files:
+            if selected is not None and item.index not in selected:
+                continue
+            if not file_name_looks_like_media_file(item.filename):
+                continue
+            episode_numbers = {int(value) for value in item.get_episodes() if int(value) > 0}
+            if not episode_numbers or frozenset(episode_numbers) not in imported_episode_groups:
+                continue
+            incoming = with_context_resource_attrs(task, item)
+            incoming_rank = self._rank(incoming.attrs or ResourceAttributes(), incoming.size or 0, quality_profile)
+            if all(
+                number in episode_ranks and max(episode_ranks[number]) >= incoming_rank
+                for number in episode_numbers
+            ):
+                satisfied.add(item.index)
+        return satisfied
 
     async def _build_video_file_plan(
         self,

@@ -224,11 +224,11 @@ def _is_original_disc_package(task: TaskData) -> bool:
 
 def _with_package_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFileItem:
     if not task.metadata or not task.metadata.attrs:
-        return _with_context_resource_attrs(task, file_item)
-    return _with_context_resource_attrs(task, file_item.model_copy(update={"attrs": task.metadata.attrs}))
+        return with_context_resource_attrs(task, file_item)
+    return with_context_resource_attrs(task, file_item.model_copy(update={"attrs": task.metadata.attrs}))
 
 
-def _with_context_resource_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFileItem:
+def with_context_resource_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFileItem:
     context_attrs = task.context.parsed_attributes if task.context and task.context.parsed_attributes else None
     if not context_attrs:
         return file_item
@@ -351,7 +351,7 @@ def build_transfer_plan(task: TaskData, execution_context: TransferExecutionCont
         return _build_disc_package_transfer_plan(task, execution_context)
     transfer_results: list[TransferFileResult] = []
     for index, original_file_item in iter_selected_files(task.metadata.files, execution_context.selected_indices):
-        file_item = _with_context_resource_attrs(task, original_file_item)
+        file_item = with_context_resource_attrs(task, original_file_item)
         source_path = generate_source_path(task, file_item, execution_context.source_base_path)
         destination_path = library_target_path_policy.build_destination_path(
             destination_base_path=execution_context.destination_base_path,
