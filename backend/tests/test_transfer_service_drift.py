@@ -175,6 +175,31 @@ async def test_perform_transfer_by_task_id_rejects_when_library_record_exists_bu
 
 
 @pytest.mark.asyncio
+async def test_full_transfer_converts_filesystem_error_to_domain_error(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.download_service.find_task_by_id",
+        AsyncMock(return_value=task),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.get_files_by_task",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(transfer_service, "_lock_task_status", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.domain.transfer.execution.build_transfer_execution_context",
+        AsyncMock(side_effect=OSError("permission denied")),
+    )
+    monkeypatch.setattr("app.services.domain.transfer.service.emit_media_import_failed", AsyncMock())
+    monkeypatch.setattr("app.services.domain.transfer.service.handle_transfer_error", AsyncMock())
+
+    with pytest.raises(TransferException, match="backendErrors.transferFailed") as exc_info:
+        await transfer_service.perform_transfer_by_task_id(task.id)
+
+    assert exc_info.value.params == {"reason": "permission denied"}
+
+
+@pytest.mark.asyncio
 async def test_build_transfer_execution_context_rejects_when_task_download_path_drift_is_detected(monkeypatch):
     task = _task(status=TaskStatus.FINISHED)
     monkeypatch.setattr(

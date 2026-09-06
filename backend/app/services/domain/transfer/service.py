@@ -115,7 +115,7 @@ class TransferService:
             await emit_media_import_failed(task, error_key, error_params)
             if complete:
                 await handle_transfer_error(task, error_key, error_params)
-            raise
+            raise TransferException(error_key, params=error_params) from exc
 
     async def _perform_transfer(self, task: TaskData) -> TransferResult:
         logger.info("Starting transfer for task %s", task.id)
@@ -143,7 +143,7 @@ class TransferService:
             error_params = {"reason": str(exc)}
             await emit_media_import_failed(task, error_key, error_params)
             await handle_transfer_error(task, error_key, error_params)
-            raise
+            raise TransferException(error_key, params=error_params) from exc
 
     async def _lock_task_status(self, task: TaskData) -> None:
         if not await download_service.update_task_state(task.id, TaskStatus.TRANSFERRING):

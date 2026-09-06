@@ -256,13 +256,14 @@ async def test_multi_episode_file_registers_every_episode(setup_import):
 
 
 @pytest.mark.asyncio
-async def test_failed_partial_transfer_keeps_downloading_and_can_retry(setup_import, monkeypatch):
+async def test_failed_partial_transfer_raises_domain_error_keeps_downloading_and_can_retry(setup_import, monkeypatch):
     env = setup_import
     with monkeypatch.context() as patch:
         patch.setattr("app.services.domain.transfer.execution.execute_transfer", AsyncMock(side_effect=OSError("disk full")))
         patch.setattr("app.services.domain.transfer.service.emit_media_import_failed", AsyncMock())
-        with pytest.raises(OSError):
+        with pytest.raises(TransferException, match="backendErrors.transferFailed") as exc_info:
             await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    assert exc_info.value.params == {"reason": "disk full"}
     assert env.task.status == TaskStatus.DOWNLOADING
     env.state_update.assert_not_awaited()
     assert len((await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])).transferred_files) == 1
