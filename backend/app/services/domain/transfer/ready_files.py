@@ -76,7 +76,9 @@ async def inspect_ready_files(task: TaskData, existing_files: list[LibraryFile])
     if info is None:
         return ReadyFileInspection([], False)
     if info.state.lower() not in READABLE_TORRENT_STATES:
-        can_become_ready = info.state.lower() in {"checkingdl", "checkingup", "moving", "allocating", "checking"}
+        can_become_ready = info.state.lower() in {
+            "checkingdl", "checkingup", "checkingresumedata", "moving", "allocating", "checking",
+        }
         return ReadyFileInspection([], can_become_ready)
     source_base = await resolve_source_base_path(task)
     if Path(info.save_path).resolve() != source_base.resolve():

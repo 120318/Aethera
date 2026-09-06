@@ -142,6 +142,21 @@ async def test_stale_finished_state_cannot_publish_unfinished_files(setup_import
 
 
 @pytest.mark.asyncio
+async def test_finished_incremental_import_waits_for_resume_data_check(setup_import):
+    env = setup_import
+    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    env.task.status = TaskStatus.FINISHED
+    env.info.state = "checkingResumeData"
+
+    result = await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert result.transferred_files == []
+    assert len(await library_service.get_files_by_task(env.task.id)) == 1
+    assert env.task.status == TaskStatus.FINISHED
+    env.state_update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_finished_incremental_import_fails_when_remaining_source_is_missing(setup_import):
     env = setup_import
     await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
@@ -171,7 +186,10 @@ async def test_finished_incremental_import_uses_visible_sources_when_torrent_is_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["checkingDL", "checkingUP", "moving", "allocating", "error", "missingFiles", "checking", "missing", "unknown"])
+@pytest.mark.parametrize(
+    "state",
+    ["checkingDL", "checkingUP", "checkingResumeData", "moving", "allocating", "error", "missingFiles", "checking", "missing", "unknown"],
+)
 async def test_unsafe_downloader_states_do_not_import(setup_import, state):
     env = setup_import
     env.info.state = state
