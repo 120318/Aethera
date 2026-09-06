@@ -6,9 +6,17 @@ from uuid import uuid4
 import pytest
 
 from app.schemas.config import Template, TransferMode
-from app.schemas.domain.download import DownloadFileInfo, TaskContext, TaskData, TaskStatus, TransferFileResult
+from app.schemas.domain.download import (
+    DownloadFileInfo,
+    TaskContext,
+    TaskData,
+    TaskErrorStage,
+    TaskStatus,
+    TransferFileResult,
+)
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata, TorrentCoverageKind
+from app.schemas.exception.exceptions import TransferException
 from app.schemas.media_id import MediaID
 from app.services.domain.library.service import library_service
 from app.services.domain.transfer.execution import TransferExecutionContext
@@ -134,6 +142,35 @@ async def test_stale_finished_state_cannot_publish_unfinished_files(setup_import
 
 
 @pytest.mark.asyncio
+async def test_finished_incremental_import_fails_when_remaining_source_is_missing(setup_import):
+    env = setup_import
+    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    env.task.status = TaskStatus.FINISHED
+    (Path(env.task.save_path) / env.task.metadata.files[1].filename).unlink()
+
+    with pytest.raises(TransferException, match="backendErrors.transferSourceFileNotFound"):
+        await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert env.state_update.await_args.kwargs["error_stage"] == TaskErrorStage.TRANSFER
+
+
+@pytest.mark.asyncio
+async def test_finished_incremental_import_uses_visible_sources_when_torrent_is_gone(setup_import, monkeypatch):
+    env = setup_import
+    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    env.task.status = TaskStatus.FINISHED
+    monkeypatch.setattr(
+        "app.services.domain.transfer.ready_files.download_service.task_service.resolve_task_client",
+        lambda _: None,
+    )
+
+    result = await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert {item.file_index for item in result.transferred_files} == {5, 9}
+    assert env.task.status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["checkingDL", "checkingUP", "moving", "allocating", "error", "missingFiles", "checking", "missing", "unknown"])
 async def test_unsafe_downloader_states_do_not_import(setup_import, state):
     env = setup_import
@@ -161,6 +198,13 @@ async def test_selection_progress_path_and_visibility_are_checked(setup_import):
     assert await find_ready_file_indices(env.task) == []
     source.unlink()
     assert await find_ready_file_indices(env.task) == []
+
+
+@pytest.mark.asyncio
+async def test_rootless_live_file_name_matches_rooted_torrent_metadata(setup_import):
+    env = setup_import
+    env.live[0].name = "E1.mkv"
+    assert await find_ready_file_indices(env.task) == [2]
 
 
 @pytest.mark.asyncio
@@ -234,7 +278,6 @@ async def test_scheduler_enqueues_one_subset_and_skips_imported_files(setup_impo
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["stoppedDL", "paused"])
 async def test_paused_task_keeps_state_and_task_lock_excludes_concurrent_operations(setup_import, state):
-    from app.schemas.exception.exceptions import TransferException
     from app.services.platform.domain_lock_service import domain_lock_service
 
     env = setup_import

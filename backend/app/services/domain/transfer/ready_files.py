@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.schemas.domain.download import TaskData, TaskStatus
@@ -20,6 +21,12 @@ READABLE_TORRENT_STATES = {
     "downloading", "stalleddl", "forceddl", "pauseddl", "stoppeddl", "queueddl",
     "uploading", "stalledup", "forcedup", "pausedup", "stoppedup", "queuedup",
 }
+
+
+@dataclass(frozen=True)
+class ReadyFileInspection:
+    indices: list[int]
+    can_become_ready: bool
 
 
 def supports_early_import(task: TaskData) -> bool:
@@ -51,21 +58,32 @@ def present_file_indices(files: list[LibraryFile]) -> set[int]:
     return present
 
 
-async def ready_file_indices(task: TaskData, existing_files: list[LibraryFile]) -> list[int]:
+def _torrent_relative_path(task: TaskData, filename: str) -> Path:
+    relative = Path(filename)
+    root_name = Path(task.metadata.name).name
+    if relative.parts and root_name and relative.parts[0] == root_name:
+        return Path(*relative.parts[1:])
+    return relative
+
+
+async def inspect_ready_files(task: TaskData, existing_files: list[LibraryFile]) -> ReadyFileInspection:
     if task.status not in [*ACTIVE_IMPORT_STATUSES, TaskStatus.FINISHED] or not supports_early_import(task):
-        return []
+        return ReadyFileInspection([], False)
     client = download_service.task_service.resolve_task_client(task)
     if client is None:
-        return []
+        return ReadyFileInspection([], False)
     info = await client.get_torrent_info(task.torrent_hash)
-    if info is None or info.state.lower() not in READABLE_TORRENT_STATES:
-        return []
+    if info is None:
+        return ReadyFileInspection([], False)
+    if info.state.lower() not in READABLE_TORRENT_STATES:
+        can_become_ready = info.state.lower() in {"checkingdl", "checkingup", "moving", "allocating", "checking"}
+        return ReadyFileInspection([], can_become_ready)
     source_base = await resolve_source_base_path(task)
     if Path(info.save_path).resolve() != source_base.resolve():
-        return []
+        return ReadyFileInspection([], False)
     live_files = await client.get_torrent_files(task.torrent_hash)
     if not live_files:
-        return []
+        return ReadyFileInspection([], False)
     live_by_index = {item.index: item for item in live_files}
     imported = present_file_indices(existing_files)
     ready: list[int] = []
@@ -78,14 +96,18 @@ async def ready_file_indices(task: TaskData, existing_files: list[LibraryFile]) 
         source = build_source_path(task, item, source_base)
         # A renamed file or an incomplete/temp directory needs a fresh path mapping,
         # not an attempt to import an unrelated file at the old metadata path.
-        if (source_base / live.name).resolve() != source.resolve():
+        if _torrent_relative_path(task, live.name) != _torrent_relative_path(task, item.filename):
             continue
         try:
             if source.is_file() and source.stat().st_size == item.size:
                 ready.append(index)
         except OSError:
             continue
-    return ready
+    return ReadyFileInspection(ready, True)
+
+
+async def ready_file_indices(task: TaskData, existing_files: list[LibraryFile]) -> list[int]:
+    return (await inspect_ready_files(task, existing_files)).indices
 
 
 async def find_ready_file_indices(task: TaskData) -> list[int]:

@@ -24,7 +24,7 @@ from app.utils.library_paths import build_library_file_path
 from . import execution
 from .execution import TransferExecutionContext
 from .replacement import library_replacement_policy
-from .ready_files import ACTIVE_IMPORT_STATUSES, present_file_indices, ready_file_indices, supports_early_import
+from .ready_files import ACTIVE_IMPORT_STATUSES, inspect_ready_files, present_file_indices, ready_file_indices, supports_early_import
 
 
 logger = logging.getLogger("app.services.transfer")
@@ -76,9 +76,15 @@ class TransferService:
         }
         remaining = selected - present_file_indices(existing_files)
         if remaining:
-            ready = set(await ready_file_indices(task, existing_files))
+            inspection = await inspect_ready_files(task, existing_files)
+            ready = set(inspection.indices)
             if not remaining.issubset(ready):
                 if not ready:
+                    missing_sources = await execution.missing_transfer_source_paths(task)
+                    if not inspection.can_become_ready or missing_sources:
+                        return await self._perform_incremental_transfer(
+                            task, existing_files, remaining, complete=True,
+                        )
                     return TransferResult(transferred_files=[])
                 return await self._perform_incremental_transfer(task, existing_files, ready, complete=False)
         return await self._perform_incremental_transfer(task, existing_files, remaining, complete=True)
