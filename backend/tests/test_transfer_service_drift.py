@@ -169,20 +169,38 @@ async def test_incremental_commit_cleans_replaced_sidecars_before_event_dispatch
     result = _transfer_file_result().model_copy(
         update={"destination_path": str(tmp_path / "library" / "Test.Show.S01E01.mkv")},
     )
+    nfo_result = _transfer_file_result().model_copy(
+        update={
+            "destination_path": str(Path(result.destination_path).with_suffix(".nfo")),
+            "file_index": 1,
+            "file_item": TorrentFileItem(index=1, filename="Test.Show.S01E01.nfo", size=5),
+            "episode_number": None,
+            "episode_numbers": [],
+        },
+    )
     sidecar = Path(result.destination_path).with_suffix(".danmu.xml")
+    nfo_path = Path(nfo_result.destination_path)
     sidecar.parent.mkdir(parents=True)
     sidecar.write_text("old")
+    nfo_path.write_text("batch")
+    replaced_file = _library_file().model_copy(
+        update={"path": str(Path(result.destination_path).parent), "file_name": Path(result.destination_path).name},
+    )
     order = []
 
-    async def cleanup_sidecars(_paths):
+    async def cleanup_sidecars(video_paths, batch_paths):
         order.append("sidecars")
+        assert video_paths == {result.destination_path}
+        assert batch_paths == {result.destination_path, nfo_result.destination_path}
         sidecar.unlink()
+        assert nfo_path.read_text() == "batch"
 
     async def replace_entries(*_args, **_kwargs):
         order.append("replace")
         assert not sidecar.exists()
+        assert nfo_path.read_text() == "batch"
         sidecar.write_text("new")
-        return [_library_file()]
+        return [replaced_file]
 
     async def cleanup_files(*_args, **_kwargs):
         order.append("files")
@@ -205,10 +223,18 @@ async def test_incremental_commit_cleans_replaced_sidecars_before_event_dispatch
         AsyncMock(),
     )
 
-    await commit_transfer_results(task, [result], [], context, incremental=True, complete=False)
+    await commit_transfer_results(
+        task,
+        [result, nfo_result],
+        [replaced_file],
+        context,
+        incremental=True,
+        complete=False,
+    )
 
     assert order == ["sidecars", "replace", "files"]
     assert sidecar.read_text() == "new"
+    assert nfo_path.read_text() == "batch"
 
 
 @pytest.mark.asyncio

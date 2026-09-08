@@ -27,17 +27,17 @@ class LibraryCleanup:
                 if full_path and full_path.exists() and full_path.is_file():
                     os.remove(str(full_path))
                     logger.debug("Physically removed library file: %s", full_path)
-                self.delete_sidecar_files(full_path)
+                self.delete_sidecar_files(full_path, set())
             except OSError as exc:
                 logger.warning("Failed to remove file %s: %s", item.path, exc)
         self.cleanup_directories_without_media_files(candidate_dirs)
 
-    def delete_sidecar_files(self, media_file: Path) -> None:
+    def delete_sidecar_files(self, media_file: Path, preserved_paths: set[Path]) -> None:
         if not media_file or not media_file.name:
             return
         for suffix in LIBRARY_SIDECAR_EXTENSIONS:
             sidecar = media_file.with_suffix(suffix)
-            if sidecar == media_file:
+            if sidecar == media_file or sidecar in preserved_paths:
                 continue
             try:
                 if sidecar.exists() and sidecar.is_file():

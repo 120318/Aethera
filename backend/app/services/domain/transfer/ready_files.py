@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.schemas.domain.download import TaskData, TaskStatus
+from app.schemas.domain.download import DownloadInfoLookupStatus, TaskData, TaskStatus
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
@@ -108,10 +108,16 @@ async def inspect_ready_files(
         return ReadyFileInspection([], False)
     client = download_service.task_service.resolve_task_client(task)
     if client is None:
-        return ReadyFileInspection([], False, True)
-    info = torrent_status or await client.get_torrent_info(task.torrent_hash)
-    if info is None:
-        return ReadyFileInspection([], False, True)
+        return ReadyFileInspection([], True)
+    if torrent_status is not None:
+        info = torrent_status
+    else:
+        lookup = await client.lookup_torrent_info(task.torrent_hash)
+        if lookup.status == DownloadInfoLookupStatus.MISSING:
+            return ReadyFileInspection([], False, True)
+        if lookup.status == DownloadInfoLookupStatus.UNAVAILABLE or lookup.info is None:
+            return ReadyFileInspection([], True)
+        info = lookup.info
     if not info.files_readable:
         return ReadyFileInspection([], True)
     if info.state.lower() not in READABLE_TORRENT_STATES:
@@ -123,6 +129,8 @@ async def inspect_ready_files(
     if Path(info.save_path).resolve() != source_base.resolve():
         return ReadyFileInspection([], False)
     live_files = await client.get_torrent_files(task.torrent_hash)
+    if live_files is None:
+        return ReadyFileInspection([], True)
     if not live_files:
         return ReadyFileInspection([], False)
     live_by_index = {item.index: item for item in live_files}

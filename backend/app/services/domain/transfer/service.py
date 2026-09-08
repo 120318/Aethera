@@ -18,7 +18,7 @@ from app.services.domain.download.task_runtime_service import event_actor_for_ta
 from app.services.domain.library.service import library_service
 from app.services.domain.media import media_service
 from app.services.platform.domain_lock_service import domain_lock_service
-from app.utils.library_paths import build_library_file_path
+from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file
 
 from . import execution
 from .execution import TransferExecutionContext
@@ -103,6 +103,7 @@ class TransferService:
 
     async def _reject_terminal_file_validation(self, task: TaskData) -> None:
         exc = TransferException("backendErrors.transferSourceFilesNotReady")
+        await self._lock_task_status(task)
         await emit_media_import_failed(task, exc.message_key, exc.params)
         await handle_transfer_error(task, exc.message_key, exc.params)
         raise exc
@@ -277,8 +278,18 @@ async def commit_transfer_results(
             if incremental and transfer_results
             else None
         )
-        replacement_paths = {str(Path(result.destination_path)) for result in transfer_results}
-        await library_service.cleanup_replaced_sidecars(replacement_paths)
+        batch_paths = {str(Path(result.destination_path)) for result in transfer_results}
+        known_replacement_paths = {
+            str(build_library_file_path(item.path, item.file_name))
+            for item in [*existing_library_files, *(replacement_files or [])]
+        }
+        replaced_video_paths = {
+            str(Path(result.destination_path))
+            for result in transfer_results
+            if file_name_looks_like_media_file(result.destination_path)
+            and str(Path(result.destination_path)) in known_replacement_paths
+        }
+        await library_service.cleanup_replaced_sidecars(replaced_video_paths, batch_paths)
         replaced_library_files = await library_service.replace_task_entries(
             task.id,
             task.context.directory_id,

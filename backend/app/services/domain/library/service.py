@@ -379,9 +379,10 @@ class LibraryService:
         if removed_files:
             await asyncio.to_thread(self._cleanup.delete_files, removed_files)
 
-    async def cleanup_replaced_sidecars(self, preserved_paths: set[str]) -> None:
-        for path in sorted(preserved_paths):
-            await asyncio.to_thread(self._cleanup.delete_sidecar_files, Path(path))
+    async def cleanup_replaced_sidecars(self, replaced_video_paths: set[str], batch_paths: set[str]) -> None:
+        preserved_paths = {Path(path) for path in batch_paths}
+        for path in sorted(replaced_video_paths):
+            await asyncio.to_thread(self._cleanup.delete_sidecar_files, Path(path), preserved_paths)
 
     # Deletion
     async def delete_task_library_records(self, task_id: str) -> int:

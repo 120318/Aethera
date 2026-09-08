@@ -17,7 +17,7 @@ import qbittorrentapi
 from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.config import DownloaderConfig
 from app.schemas.exception import ConfigurationException
-from app.schemas.domain.download import DownloadFileInfo, DownloadInfo
+from app.schemas.domain.download import DownloadFileInfo, DownloadInfo, DownloadInfoLookup, DownloadInfoLookupStatus
 from app.schemas.integration.common import ClientOperationResult
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
 from app.utils.path_utils import PathMapper
@@ -274,13 +274,16 @@ class QBittorrentClient(DownloadClient):
             return []
 
     async def get_torrent_info(self, torrent_hash: str) -> Optional[DownloadInfo]:
+        return (await self.lookup_torrent_info(torrent_hash)).info
+
+    async def lookup_torrent_info(self, torrent_hash: str) -> DownloadInfoLookup:
         try:
             await self.authenticate()
             torrents = await self._call_with_reauth(
                 lambda client: asyncio.to_thread(self._qb_get_torrent_info, client, torrent_hash)
             )
             if not torrents:
-                return None
+                return DownloadInfoLookup(status=DownloadInfoLookupStatus.MISSING)
 
             t = QBTorrentInfo.model_validate(torrents[0])
             files: Optional[list[DownloadFileInfo]] = None
@@ -316,10 +319,10 @@ class QBittorrentClient(DownloadClient):
 
             di.save_path = self._map_remote_to_local_path(di.save_path)
             di.content_path = self._map_remote_to_local_path(di.content_path) if di.content_path else di.content_path
-            return di
+            return DownloadInfoLookup(status=DownloadInfoLookupStatus.FOUND, info=di)
         except (qbittorrentapi.LoginFailed, qbittorrentapi.APIConnectionError, qbittorrentapi.APIError, OSError, ValueError, TypeError) as e:
             logger.error(f"Failed to parse torrent info: {e}")
-            return None
+            return DownloadInfoLookup(status=DownloadInfoLookupStatus.UNAVAILABLE)
 
     async def get_torrent_files(self, torrent_hash: str) -> Optional[list[DownloadFileInfo]]:
         await self.authenticate()

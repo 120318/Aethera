@@ -1,9 +1,11 @@
 from datetime import datetime
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.clients.rtorrent import RTorrentClient
 from app.schemas.config import RTorrentConfig
+from app.schemas.domain.download import DownloadInfoLookupStatus
 from app.schemas.domain.torrent_status import TorrentState
 
 pytestmark = [pytest.mark.drift]
@@ -109,6 +111,18 @@ async def test_rtorrent_reports_pending_and_active_hash_checks_before_download_s
 def test_rtorrent_missing_hash_status_is_not_treated_as_readable():
     client = FakeRTorrentClient()
     assert client._torrent_state(client._to_torrent_row([])) == TorrentState.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_rtorrent_lookup_distinguishes_missing_torrent_from_query_failure(monkeypatch):
+    client = FakeRTorrentClient()
+
+    missing = await client.lookup_torrent_info("missing")
+    monkeypatch.setattr(client, "_load_torrent_rows", AsyncMock(side_effect=ValueError("offline")))
+    unavailable = await client.lookup_torrent_info("abc")
+
+    assert missing.status == DownloadInfoLookupStatus.MISSING
+    assert unavailable.status == DownloadInfoLookupStatus.UNAVAILABLE
 
 
 @pytest.mark.asyncio

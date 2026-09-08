@@ -13,7 +13,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from app.schemas.config import DownloaderConfig
-from app.schemas.domain.download import DownloadFileInfo, DownloadInfo
+from app.schemas.domain.download import DownloadFileInfo, DownloadInfo, DownloadInfoLookup, DownloadInfoLookupStatus
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
 from app.schemas.integration.common import ClientOperationResult
 from app.services.integration.download.client import DownloadClient, DownloadClientCapabilities
@@ -162,32 +162,35 @@ class RTorrentClient(DownloadClient):
             return []
 
     async def get_torrent_info(self, torrent_hash: str) -> DownloadInfo | None:
-        rows = await self.get_torrents([torrent_hash])
-        if not rows:
-            return None
-        status = rows[0]
-        files = await self.get_torrent_files(torrent_hash)
-        added_on = status.added_on or datetime.fromtimestamp(0)
-        content_path = self._map_remote_to_local_path(status.save_path or "")
+        return (await self.lookup_torrent_info(torrent_hash)).info
+
+    async def lookup_torrent_info(self, torrent_hash: str) -> DownloadInfoLookup:
         try:
-            row = next(item for item in await self._load_torrent_rows() if item.hash.lower() == torrent_hash.lower())
-            content_path = self._map_remote_to_local_path(row.base_path or row.directory)
-        except (StopIteration, httpx.HTTPError, xmlrpc_client.Error, ValueError, TypeError):
-            pass
-        return DownloadInfo(
+            row = next(
+                (item for item in await self._load_torrent_rows() if item.hash.lower() == torrent_hash.lower()),
+                None,
+            )
+            if row is None:
+                return DownloadInfoLookup(status=DownloadInfoLookupStatus.MISSING)
+            status = self._to_status(row)
+            files = await self.get_torrent_files(torrent_hash)
+        except (httpx.HTTPError, xmlrpc_client.Error, ValueError, TypeError) as exc:
+            logger.error("Failed to look up rTorrent torrent(%s): %s", torrent_hash, exc)
+            return DownloadInfoLookup(status=DownloadInfoLookupStatus.UNAVAILABLE)
+        return DownloadInfoLookup(status=DownloadInfoLookupStatus.FOUND, info=DownloadInfo(
             hash=status.hash,
             name=status.name,
             size=status.size,
             progress=status.progress,
             state=status.state.value,
             save_path=status.save_path or "",
-            content_path=content_path,
-            added_on=added_on,
+            content_path=self._map_remote_to_local_path(row.base_path or row.directory),
+            added_on=status.added_on or datetime.fromtimestamp(0),
             completion_on=status.completion_on,
             category=None,
             tags=[],
             files=files,
-        )
+        ))
 
     async def get_torrent_files(self, torrent_hash: str) -> list[DownloadFileInfo] | None:
         try:

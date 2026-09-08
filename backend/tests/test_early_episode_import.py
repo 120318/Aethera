@@ -10,6 +10,7 @@ from app.db.repositories.task_repository import TaskRepository
 from app.schemas.config import Template, TransferMode
 from app.schemas.domain.download import (
     DownloadFileInfo,
+    DownloadInfoLookupStatus,
     TaskContext,
     TaskData,
     TaskErrorStage,
@@ -63,7 +64,13 @@ async def setup_import(tmp_path, monkeypatch):
         for n, item in enumerate(task.metadata.files)
     ]
     info = SimpleNamespace(save_path=task.save_path, state="downloading", files_readable=True)
-    client = SimpleNamespace(get_torrent_info=AsyncMock(return_value=info), get_torrent_files=AsyncMock(return_value=live))
+    client = SimpleNamespace(
+        get_torrent_info=AsyncMock(return_value=info),
+        lookup_torrent_info=AsyncMock(
+            return_value=SimpleNamespace(status=DownloadInfoLookupStatus.FOUND, info=info),
+        ),
+        get_torrent_files=AsyncMock(return_value=live),
+    )
     monkeypatch.setattr("app.services.domain.transfer.ready_files.download_service.task_service.resolve_task_client", lambda _: client)
     monkeypatch.setattr("app.services.domain.transfer.service.download_service.find_task_by_id", AsyncMock(return_value=task))
     context = TransferExecutionContext(
@@ -197,19 +204,35 @@ async def test_finished_incremental_import_fails_when_remaining_source_is_missin
 
 
 @pytest.mark.asyncio
-async def test_finished_incremental_import_uses_visible_sources_when_torrent_is_gone(setup_import, monkeypatch):
+async def test_finished_incremental_import_uses_visible_sources_when_torrent_is_confirmed_missing(setup_import):
     env = setup_import
     await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
     env.task.status = TaskStatus.FINISHED
-    monkeypatch.setattr(
-        "app.services.domain.transfer.ready_files.download_service.task_service.resolve_task_client",
-        lambda _: None,
+    env.client.lookup_torrent_info.return_value = SimpleNamespace(
+        status=DownloadInfoLookupStatus.MISSING,
+        info=None,
     )
 
     result = await transfer_service.perform_transfer_by_task_id(env.task.id)
 
     assert {item.file_index for item in result.transferred_files} == {5, 9}
     assert env.task.status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_finished_incremental_import_waits_when_downloader_is_unavailable(setup_import):
+    env = setup_import
+    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    env.task.status = TaskStatus.FINISHED
+    env.client.lookup_torrent_info.return_value = SimpleNamespace(
+        status=DownloadInfoLookupStatus.UNAVAILABLE,
+        info=None,
+    )
+
+    result = await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert result.transferred_files == []
+    assert env.task.status == TaskStatus.FINISHED
 
 
 @pytest.mark.asyncio
@@ -320,6 +343,7 @@ async def test_finished_incremental_import_does_not_wait_forever_for_zero_byte_a
     with pytest.raises(TransferException, match="backendErrors.transferSourceFilesNotReady"):
         await transfer_service.perform_transfer_by_task_id(env.task.id)
 
+    assert env.state_update.await_args_list[-2].args[1] == TaskStatus.TRANSFERRING
     assert env.state_update.await_args.kwargs["error_stage"] == TaskErrorStage.TRANSFER
 
 
@@ -335,6 +359,7 @@ async def test_finished_incremental_import_rejects_deselected_live_file_even_whe
     with pytest.raises(TransferException, match="backendErrors.transferSourceFilesNotReady"):
         await transfer_service.perform_transfer_by_task_id(env.task.id)
 
+    assert env.state_update.await_args_list[-2].args[1] == TaskStatus.TRANSFERRING
     assert env.state_update.await_args.kwargs["error_stage"] == TaskErrorStage.TRANSFER
 
 

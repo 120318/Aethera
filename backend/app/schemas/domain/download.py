@@ -167,6 +167,17 @@ class TransferResult(BaseModel):
     files: list[DownloadFileInfo] | None = None
 
 
+class DownloadInfoLookupStatus(str, Enum):
+    FOUND = "found"
+    MISSING = "missing"
+    UNAVAILABLE = "unavailable"
+
+
+class DownloadInfoLookup(BaseModel):
+    status: DownloadInfoLookupStatus
+    info: DownloadInfo | None = None
+
+
 class BatchJobResult(BaseModel):
     """Result of a batch job operation."""
 
