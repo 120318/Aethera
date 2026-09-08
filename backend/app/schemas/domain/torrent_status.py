@@ -31,6 +31,7 @@ class TorrentStatus(BaseModel):
     
     # Internal note.
     state: TorrentState = Field(..., description="Field description")
+    files_readable: bool = True
     download_speed: int = Field(default=0, description="Field description")
     upload_speed: int = Field(default=0, description="Field description")
     ratio: float = Field(default=0.0, description="Field description")

@@ -251,6 +251,9 @@ class QBittorrentClient(DownloadClient):
                     size=t.size,
                     progress=t.progress,
                     state=_map_qb_state_to_torrent_state(t.state),
+                    files_readable=t.state.lower() not in {
+                        "metadl", "forcedmetadl", "allocating", "moving",
+                    },
                     download_speed=t.dlspeed,
                     upload_speed=t.upspeed,
                     ratio=t.ratio,

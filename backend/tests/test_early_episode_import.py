@@ -61,7 +61,7 @@ async def setup_import(tmp_path, monkeypatch):
         DownloadFileInfo(index=item.index, name=item.filename, size=4, priority=1, progress=1.0 if n == 0 else 0.5)
         for n, item in enumerate(task.metadata.files)
     ]
-    info = SimpleNamespace(save_path=task.save_path, state="downloading")
+    info = SimpleNamespace(save_path=task.save_path, state="downloading", files_readable=True)
     client = SimpleNamespace(get_torrent_info=AsyncMock(return_value=info), get_torrent_files=AsyncMock(return_value=live))
     monkeypatch.setattr("app.services.domain.transfer.ready_files.download_service.task_service.resolve_task_client", lambda _: client)
     monkeypatch.setattr("app.services.domain.transfer.service.download_service.find_task_by_id", AsyncMock(return_value=task))
@@ -449,6 +449,29 @@ async def test_scheduler_enqueues_one_subset_and_skips_imported_files(setup_impo
 
 
 @pytest.mark.asyncio
+async def test_scheduler_skips_batch_status_with_unreadable_files(setup_import, monkeypatch):
+    from app.services.application.workflows.scheduled_transfer.service import scheduled_transfer_command_service
+
+    env = setup_import
+    env.info.files_readable = False
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.download_service.get_tasks",
+        AsyncMock(return_value=[env.task]),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.download_service.get_torrent_status_by_tasks",
+        AsyncMock(return_value={env.task.id: env.info}),
+    )
+    create = AsyncMock()
+    monkeypatch.setattr("app.services.application.workflows.scheduled_transfer.service.command_service.create_command", create)
+
+    result = await scheduled_transfer_command_service.enqueue_ready_files()
+
+    assert result.completed == 0
+    create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["stoppedDL", "paused"])
 async def test_paused_task_keeps_state_and_task_lock_excludes_concurrent_operations(setup_import, state):
     from app.services.platform.domain_lock_service import domain_lock_service
@@ -499,3 +522,64 @@ async def test_combined_old_file_requires_equal_or_better_replacements_for_every
     assert old_path.exists() == preserve_old
     assert len(await library_service.get_files_by_task(old_task_id)) == int(preserve_old)
     assert len(await library_service.get_files_by_task(env.task.id)) == 2
+
+
+@pytest.mark.asyncio
+async def test_combined_file_uses_higher_quality_existing_episode_not_replaced_by_lower_batch_file(setup_import):
+    env = setup_import
+    env.task.metadata.files[0].attrs.resolution = ResourceAttributes(resolution="480p").resolution
+    env.task.metadata.files[1].attrs.resolution = ResourceAttributes(resolution="720p").resolution
+    env.live[1].progress = 1.0
+
+    old_path = env.context.destination_base_path / "old-E1-E2.mkv"
+    old_path.parent.mkdir(parents=True, exist_ok=True)
+    old_path.write_bytes(b"old combined")
+    old_task_id = str(uuid4())
+    await library_service.replace_task_entries(
+        old_task_id,
+        "dir",
+        env.task.media_id,
+        [TransferFileResult(
+            source_path=str(old_path),
+            destination_path=str(old_path),
+            file_index=0,
+            file_item=TorrentFileItem(
+                index=0,
+                filename=old_path.name,
+                size=old_path.stat().st_size,
+                attrs=ResourceAttributes(seasons=[1], episodes=[1, 2], resolution="720p"),
+            ),
+            episode_number=1,
+            episode_numbers=[1, 2],
+        )],
+        season=1,
+    )
+    better_path = env.context.destination_base_path / "better-E1.mkv"
+    better_path.write_bytes(b"better")
+    better_task_id = str(uuid4())
+    await library_service.replace_task_entries(
+        better_task_id,
+        "dir",
+        env.task.media_id,
+        [TransferFileResult(
+            source_path=str(better_path),
+            destination_path=str(better_path),
+            file_index=0,
+            file_item=TorrentFileItem(
+                index=0,
+                filename=better_path.name,
+                size=better_path.stat().st_size,
+                attrs=ResourceAttributes(seasons=[1], episodes=[1], resolution="1080p"),
+            ),
+            episode_number=1,
+            episode_numbers=[1],
+        )],
+        season=1,
+    )
+
+    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2, 5])
+
+    assert not old_path.exists()
+    assert better_path.exists()
+    assert await library_service.get_files_by_task(old_task_id) == []
+    assert len(await library_service.get_files_by_task(better_task_id)) == 1

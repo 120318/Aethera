@@ -68,6 +68,24 @@ async def test_qbittorrent_batch_status_maps_remote_save_path(monkeypatch):
     statuses = await client.get_torrents(["abc"])
 
     assert statuses[0].save_path == "/downloads/tv"
+    assert statuses[0].files_readable is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["metaDL", "forcedMetaDL", "allocating", "moving"])
+async def test_qbittorrent_batch_status_marks_transient_file_stages_unreadable(monkeypatch, state):
+    client = QBittorrentClient(QBittorrentConfig(id="qb-1", type="qbittorrent"))
+    monkeypatch.setattr(client, "authenticate", AsyncMock())
+    monkeypatch.setattr(client, "_call_with_reauth", AsyncMock(return_value=[{
+        "hash": "abc",
+        "name": "Show",
+        "state": state,
+        "save_path": "/downloads/tv",
+    }]))
+
+    statuses = await client.get_torrents(["abc"])
+
+    assert statuses[0].files_readable is False
 
 
 @pytest.mark.asyncio

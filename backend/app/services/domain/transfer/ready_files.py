@@ -111,6 +111,8 @@ async def inspect_ready_files(
     info = torrent_status or await client.get_torrent_info(task.torrent_hash)
     if info is None:
         return ReadyFileInspection([], False)
+    if not info.files_readable:
+        return ReadyFileInspection([], True)
     if info.state.lower() not in READABLE_TORRENT_STATES:
         can_become_ready = info.state.lower() in {
             "checkingdl", "checkingup", "checkingresumedata", "moving", "allocating", "checking",

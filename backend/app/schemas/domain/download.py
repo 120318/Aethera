@@ -146,6 +146,7 @@ class DownloadInfo(BaseModel):
     size: int
     progress: float
     state: str
+    files_readable: bool = True
     save_path: str
     added_on: datetime
     completion_on: datetime | None = None
