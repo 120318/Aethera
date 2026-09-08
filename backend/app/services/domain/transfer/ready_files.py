@@ -1,17 +1,13 @@
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.schemas.domain.addon_events import MediaImportCompletedEventMeta
 from app.schemas.domain.download import TaskData, TaskStatus
-from app.schemas.domain.event import EventType
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
 from app.services.domain.download import download_service
 from app.services.domain.library.service import library_service
 from app.services.domain.resource.filtering import is_original_disc_attrs
-from app.services.audit.event_service import event_service
 from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file
 
 from .execution import build_source_path, iter_selected_files, resolve_selected_indices, resolve_source_base_path
@@ -63,29 +59,23 @@ def present_file_indices(files: list[LibraryFile]) -> set[int]:
     return present
 
 
-def _imported_episode_groups(task_id: str) -> set[frozenset[int]]:
-    _total, events = event_service.list_events(
-        limit=1000,
-        task_id=task_id,
-        types=[EventType.MEDIA_IMPORT_COMPLETED],
-    )
+def _imported_episode_groups(task: TaskData) -> set[frozenset[int]]:
     groups: set[frozenset[int]] = set()
-    for event in events:
-        try:
-            meta = MediaImportCompletedEventMeta.model_validate(json.loads(event.meta) if event.meta else {})
-        except (ValueError, TypeError):
+    if not task.metadata:
+        return groups
+    imported = set(task.context.imported_file_indices)
+    for item in task.metadata.files:
+        if item.index not in imported or not file_name_looks_like_media_file(item.filename):
             continue
-        for item in meta.imported_files:
-            episodes = item.episode_numbers or ([item.episode_number] if item.episode_number else [])
-            group = frozenset(int(value) for value in episodes if int(value) > 0)
-            if group:
-                groups.add(group)
+        group = frozenset(int(value) for value in item.get_episodes() if int(value) > 0)
+        if group:
+            groups.add(group)
     return groups
 
 
 async def satisfied_file_indices(task: TaskData, existing_files: list[LibraryFile]) -> set[int]:
     satisfied = present_file_indices(existing_files)
-    imported_episode_groups = _imported_episode_groups(task.id)
+    imported_episode_groups = _imported_episode_groups(task)
     if not imported_episode_groups:
         return satisfied
     coverage = download_service.resolve_task_episode_coverage_detail(task)

@@ -268,6 +268,15 @@ async def commit_transfer_results(
             replacement_files,
             incremental=incremental,
         )
+        if incremental and transfer_results and not await download_service.record_imported_file_indices(
+            task.id,
+            [result.file_index for result in transfer_results],
+        ):
+            raise TransferException("backendErrors.taskNotFound", params={"id": task.id})
+        if incremental:
+            task.context.imported_file_indices = sorted(
+                set(task.context.imported_file_indices) | {result.file_index for result in transfer_results}
+            )
         if complete:
             if not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
                 raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})

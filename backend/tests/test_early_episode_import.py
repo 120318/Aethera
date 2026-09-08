@@ -21,7 +21,6 @@ from app.schemas.media_id import MediaID
 from app.services.domain.library.service import library_service
 from app.services.domain.transfer.execution import TransferExecutionContext
 from app.services.domain.transfer.ready_files import find_ready_file_indices
-from app.services.domain.transfer.service import emit_media_import_completed as persist_import_event
 from app.services.domain.transfer.service import transfer_service
 
 
@@ -77,11 +76,19 @@ def setup_import(tmp_path, monkeypatch):
         return True
     state_update = AsyncMock(side_effect=update_state)
     monkeypatch.setattr("app.services.domain.transfer.service.download_service.update_task_state", state_update)
+    async def record_imported(_, indices):
+        task.context.imported_file_indices = sorted(set(task.context.imported_file_indices) | set(indices))
+        return True
+    imported_update = AsyncMock(side_effect=record_imported)
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.download_service.record_imported_file_indices",
+        imported_update,
+    )
     # Quality policy is irrelevant to these files, which have a distinct media id.
     monkeypatch.setattr("app.services.domain.transfer.replacement.library_replacement_policy._quality_profile", lambda: None)
     return SimpleNamespace(
         task=task, live=live, info=info, client=client,
-        event=event, state_update=state_update, context=context,
+        event=event, state_update=state_update, imported_update=imported_update, context=context,
     )
 
 
@@ -262,7 +269,7 @@ async def test_early_import_ignores_subtitle_then_final_import_includes_it(setup
 async def test_replaced_early_file_is_satisfied_by_visible_higher_quality_episode(setup_import):
     env = setup_import
     first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
-    await persist_import_event(env.task, first.transferred_files)
+    assert env.task.context.imported_file_indices == [2]
     old_file = (await library_service.get_files_by_task(env.task.id))[0]
     destination = Path(first.transferred_files[0].destination_path)
     higher_task_id = str(uuid4())

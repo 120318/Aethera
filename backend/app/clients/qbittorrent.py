@@ -260,7 +260,7 @@ class QBittorrentClient(DownloadClient):
                     added_on=datetime.fromtimestamp(t.added_on) if t.added_on > 0 else None,
                     completion_on=datetime.fromtimestamp(t.completion_on) if t.completion_on > 0 else None,
                     downloader_id=f"qbittorrent_{self.config.id if self.config else 'unknown'}",
-                    save_path=t.save_path,
+                    save_path=self._map_remote_to_local_path(t.save_path),
                     category=t.category,
                     tags=t.tags.split(",") if t.tags else [],
                 )
