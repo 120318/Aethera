@@ -131,11 +131,15 @@ async def inspect_ready_files(
         else await satisfied_file_indices(task, existing_files)
     )
     ready: list[int] = []
+    can_become_ready = task.status in ACTIVE_IMPORT_STATUSES
     for index, item in iter_selected_files(task.metadata.files, resolve_selected_indices(task)):
         if task.status in ACTIVE_IMPORT_STATUSES and not file_name_looks_like_media_file(item.filename):
             continue
         live = live_by_index.get(index)
-        if index in imported or live is None or live.priority <= 0 or live.progress != 1.0:
+        if index in imported or live is None or live.priority <= 0:
+            continue
+        if live.progress != 1.0:
+            can_become_ready = True
             continue
         if item.size <= 0 or live.size != item.size:
             continue
@@ -149,7 +153,7 @@ async def inspect_ready_files(
                 ready.append(index)
         except OSError:
             continue
-    return ReadyFileInspection(ready, True)
+    return ReadyFileInspection(ready, can_become_ready)
 
 
 async def ready_file_indices(

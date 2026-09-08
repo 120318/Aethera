@@ -304,6 +304,26 @@ async def test_early_import_ignores_subtitle_then_final_import_includes_it(setup
 
 
 @pytest.mark.asyncio
+async def test_finished_incremental_import_does_not_wait_forever_for_zero_byte_auxiliary_file(setup_import):
+    env = setup_import
+    env.task.context.selected_files = [2]
+    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    auxiliary = TorrentFileItem(index=11, filename="Show/empty.nfo", size=0)
+    env.task.metadata.files.append(auxiliary)
+    env.task.context.selected_files.append(11)
+    auxiliary_path = Path(env.task.save_path) / auxiliary.filename
+    auxiliary_path.touch()
+    env.live.append(DownloadFileInfo(index=11, name=auxiliary.filename, size=0, priority=1, progress=1.0))
+    env.task.status = TaskStatus.FINISHED
+    env.info.state = "seeding"
+
+    final = await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert {item.file_index for item in final.transferred_files} == {11}
+    assert env.task.status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
 async def test_replaced_early_file_is_satisfied_by_visible_higher_quality_episode(setup_import):
     env = setup_import
     first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
