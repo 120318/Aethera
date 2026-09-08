@@ -6,6 +6,7 @@ from app.schemas.domain.library import LibraryFile, LibraryPackageSummary
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.quality_profile import QualityProfile
 from app.schemas.domain.resource_attributes import ResourceAttributes
+from app.schemas.exception.exceptions import TransferException
 from app.services.config.settings_service import settings_service
 from app.services.domain.library.service import library_service
 from app.services.domain.resource.filtering import compute_preference_score_from_attrs, is_original_disc_attrs
@@ -21,6 +22,8 @@ class LibraryReplacementPolicy:
         task: TaskData,
         transfer_results: list[TransferFileResult],
         season: int | None,
+        *,
+        incremental: bool = False,
     ) -> LibraryReplacementPlan:
         if not transfer_results:
             return LibraryReplacementPlan(reason="empty transfer")
@@ -33,7 +36,7 @@ class LibraryReplacementPolicy:
         ]
         if not primary_results:
             return LibraryReplacementPlan(reason="no primary media file replacement")
-        return await self._build_video_file_plan(task, primary_results, season)
+        return await self._build_video_file_plan(task, primary_results, season, incremental=incremental)
 
     async def satisfied_file_indices(
         self,
@@ -45,13 +48,19 @@ class LibraryReplacementPolicy:
             return set()
         library_files = await library_service.get_files_by_media(task.media_id, season)
         episodes = await library_service.get_episodes_by_media(task.media_id)
-        files_by_id = {
-            item.id: item
-            for item in library_files
-            if item.id
-            and file_name_looks_like_media_file(item.file_name)
-            and build_library_file_path(item.path, item.file_name).is_file()
-        }
+        files_by_id: dict[str, LibraryFile] = {}
+        for item in library_files:
+            if not item.id or not file_name_looks_like_media_file(item.file_name):
+                continue
+            path = build_library_file_path(item.path, item.file_name)
+            try:
+                if path.is_file():
+                    files_by_id[item.id] = item
+            except OSError as exc:
+                raise TransferException(
+                    "backendErrors.transferFailed",
+                    params={"reason": str(exc)},
+                ) from exc
         episode_ranks: dict[int, list[tuple[int, tuple[int, ...], int]]] = {}
         quality_profile = self._quality_profile()
         for episode in episodes:
@@ -95,13 +104,25 @@ class LibraryReplacementPolicy:
         task: TaskData,
         transfer_results: list[TransferFileResult],
         season: int | None,
+        *,
+        incremental: bool,
     ) -> LibraryReplacementPlan:
         quality_profile = self._quality_profile()
         library_files = await library_service.get_files_by_media(task.media_id, season)
+        incoming_indices = {result.file_index for result in transfer_results}
+        incoming_paths = {result.destination_path for result in transfer_results}
         candidates = [
             item
             for item in library_files
-            if item.task_id != task.id and not self._is_original_disc_file(item)
+            if not self._is_original_disc_file(item)
+            and (
+                item.task_id != task.id
+                or (
+                    incremental
+                    and item.file_index not in incoming_indices
+                    and str(build_library_file_path(item.path, item.file_name)) not in incoming_paths
+                )
+            )
         ]
         episode_file_ids: dict[int, set[str]] = {}
         combined_file_ids: set[str] = set()

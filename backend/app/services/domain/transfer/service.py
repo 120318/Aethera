@@ -109,7 +109,12 @@ class TransferService:
             context = await execution.build_transfer_execution_context(task)
             context.selected_indices = indices
             results = await execution.execute_transfer(task, context)
-            replacement_plan = await library_replacement_policy.build_plan(task, results, context.season_number)
+            replacement_plan = await library_replacement_policy.build_plan(
+                task,
+                results,
+                context.season_number,
+                incremental=True,
+            )
             await commit_transfer_results(
                 task, results, existing_files, context, replacement_plan.replace_files,
                 incremental=True, complete=complete,

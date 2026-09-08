@@ -192,6 +192,28 @@ async def test_finished_incremental_import_uses_visible_sources_when_torrent_is_
 
 
 @pytest.mark.asyncio
+async def test_finished_incremental_import_converts_library_stat_error(setup_import, monkeypatch):
+    env = setup_import
+    first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    env.task.status = TaskStatus.FINISHED
+    library_path = Path(first.transferred_files[0].destination_path)
+    original_is_file = Path.is_file
+
+    def fail_library_stat(path):
+        if path == library_path:
+            raise OSError("library unavailable")
+        return original_is_file(path)
+
+    monkeypatch.setattr(Path, "is_file", fail_library_stat)
+
+    with pytest.raises(TransferException, match="backendErrors.transferFailed") as exc_info:
+        await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert exc_info.value.params == {"reason": "library unavailable"}
+    assert env.task.status == TaskStatus.FINISHED
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "state",
     ["checkingDL", "checkingUP", "checkingResumeData", "moving", "allocating", "error", "missingFiles", "checking", "missing", "unknown"],
@@ -400,6 +422,29 @@ async def test_multi_episode_file_registers_every_episode(setup_import):
     files = await library_service.get_files_by_task(env.task.id)
     episodes = await library_service.get_episodes_by_media(env.task.media_id)
     assert {item.episode for item in episodes if item.file_id == files[0].id} == {1, 2}
+
+
+@pytest.mark.asyncio
+async def test_later_incremental_batch_replaces_lower_quality_file_from_same_task(setup_import):
+    env = setup_import
+    env.context.template_config.file_template = "{title} - S{season:00}E{episode:00} - {resolution}"
+    env.task.metadata.files[1].attrs.episodes = [1]
+    env.task.metadata.files[1].attrs.resolution = ResourceAttributes(resolution="2160p").resolution
+
+    first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    first_path = Path(first.transferred_files[0].destination_path)
+    assert first_path.is_file()
+
+    env.live[1].progress = 1.0
+    second = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[5])
+    second_path = Path(second.transferred_files[0].destination_path)
+    files = await library_service.get_files_by_task(env.task.id)
+
+    assert not first_path.exists()
+    assert second_path.is_file()
+    assert len(files) == 1
+    assert files[0].file_index == 5
+    assert str(files[0].resource_attributes.resolution) == "2160p"
 
 
 @pytest.mark.asyncio
