@@ -74,10 +74,19 @@ class LibraryReplacementPolicy:
                 continue
             incoming = with_context_resource_attrs(task, item)
             incoming_rank = self._rank(incoming.attrs or ResourceAttributes(), incoming.size or 0, quality_profile)
-            if all(
-                number in episode_ranks and max(episode_ranks[number]) >= incoming_rank
-                for number in episode_numbers
-            ):
+            if len(episode_numbers) > 1:
+                incoming_quality = incoming_rank[:2]
+                is_satisfied = all(
+                    number in episode_ranks
+                    and max(rank[:2] for rank in episode_ranks[number]) >= incoming_quality
+                    for number in episode_numbers
+                )
+            else:
+                is_satisfied = all(
+                    number in episode_ranks and max(episode_ranks[number]) >= incoming_rank
+                    for number in episode_numbers
+                )
+            if is_satisfied:
                 satisfied.add(item.index)
         return satisfied
 

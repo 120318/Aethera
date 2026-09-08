@@ -326,6 +326,53 @@ async def test_replaced_early_file_is_satisfied_by_visible_higher_quality_episod
 
 
 @pytest.mark.asyncio
+async def test_replaced_combined_file_ignores_total_size_when_single_episodes_match_quality(setup_import):
+    env = setup_import
+    combined_item = env.task.metadata.files[0]
+    combined_item.size = 100
+    combined_item.attrs.episodes = [1, 2]
+    combined_item.attrs.resolution = ResourceAttributes(resolution="720p").resolution
+    source = Path(env.task.save_path) / combined_item.filename
+    source.write_bytes(b"x" * 100)
+    env.live[0].size = 100
+
+    first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    old_file = (await library_service.get_files_by_task(env.task.id))[0]
+    assert env.task.context.imported_file_indices == [2]
+
+    replacement_task_id = str(uuid4())
+    replacement_results = []
+    for episode in (1, 2):
+        path = env.context.destination_base_path / f"replacement-E{episode}.mkv"
+        path.write_bytes(b"y" * 40)
+        replacement_results.append(TransferFileResult(
+            source_path=str(path),
+            destination_path=str(path),
+            file_index=episode,
+            file_item=TorrentFileItem(
+                index=episode,
+                filename=path.name,
+                size=40,
+                attrs=ResourceAttributes(seasons=[1], episodes=[episode], resolution="720p"),
+            ),
+            episode_number=episode,
+            episode_numbers=[episode],
+        ))
+    await library_service.replace_task_entries(
+        replacement_task_id,
+        "dir",
+        env.task.media_id,
+        replacement_results,
+        season=1,
+        replacement_files=[old_file],
+    )
+
+    assert await library_service.get_files_by_task(env.task.id) == []
+    assert await find_ready_file_indices(env.task) == []
+    assert first.transferred_files[0].file_index == 2
+
+
+@pytest.mark.asyncio
 async def test_stale_command_does_not_import_deselected_or_invalidated_files(setup_import):
     env = setup_import
     assert await find_ready_file_indices(env.task) == [2]
