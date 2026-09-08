@@ -317,10 +317,25 @@ async def test_finished_incremental_import_does_not_wait_forever_for_zero_byte_a
     env.task.status = TaskStatus.FINISHED
     env.info.state = "seeding"
 
-    final = await transfer_service.perform_transfer_by_task_id(env.task.id)
+    with pytest.raises(TransferException, match="backendErrors.transferSourceFilesNotReady"):
+        await transfer_service.perform_transfer_by_task_id(env.task.id)
 
-    assert {item.file_index for item in final.transferred_files} == {11}
-    assert env.task.status == TaskStatus.COMPLETED
+    assert env.state_update.await_args.kwargs["error_stage"] == TaskErrorStage.TRANSFER
+
+
+@pytest.mark.asyncio
+async def test_finished_incremental_import_rejects_deselected_live_file_even_when_source_exists(setup_import):
+    env = setup_import
+    env.task.context.selected_files = [2, 5]
+    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    env.task.status = TaskStatus.FINISHED
+    env.info.state = "seeding"
+    env.live[1].priority = 0
+
+    with pytest.raises(TransferException, match="backendErrors.transferSourceFilesNotReady"):
+        await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert env.state_update.await_args.kwargs["error_stage"] == TaskErrorStage.TRANSFER
 
 
 @pytest.mark.asyncio

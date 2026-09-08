@@ -157,6 +157,61 @@ async def test_commit_transfer_results_refreshes_tv_profile_with_execution_seaso
 
 
 @pytest.mark.asyncio
+async def test_incremental_commit_cleans_replaced_sidecars_before_event_dispatch_is_visible(tmp_path, monkeypatch):
+    task = _task(status=TaskStatus.DOWNLOADING)
+    context = TransferExecutionContext(
+        source_base_path=tmp_path / "downloads",
+        destination_base_path=tmp_path / "library",
+        title="Test Show",
+        year=2024,
+        season_number=1,
+    )
+    result = _transfer_file_result().model_copy(
+        update={"destination_path": str(tmp_path / "library" / "Test.Show.S01E01.mkv")},
+    )
+    sidecar = Path(result.destination_path).with_suffix(".danmu.xml")
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("old")
+    order = []
+
+    async def cleanup_sidecars(_paths):
+        order.append("sidecars")
+        sidecar.unlink()
+
+    async def replace_entries(*_args, **_kwargs):
+        order.append("replace")
+        assert not sidecar.exists()
+        sidecar.write_text("new")
+        return [_library_file()]
+
+    async def cleanup_files(*_args, **_kwargs):
+        order.append("files")
+        assert sidecar.read_text() == "new"
+
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.cleanup_replaced_sidecars",
+        cleanup_sidecars,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.replace_task_entries",
+        replace_entries,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.cleanup_replaced_files",
+        cleanup_files,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.media_service.refresh_profile_safely",
+        AsyncMock(),
+    )
+
+    await commit_transfer_results(task, [result], [], context, incremental=True, complete=False)
+
+    assert order == ["sidecars", "replace", "files"]
+    assert sidecar.read_text() == "new"
+
+
+@pytest.mark.asyncio
 async def test_perform_transfer_by_task_id_rejects_when_library_record_exists_but_sources_are_missing(monkeypatch):
     task = _task(status=TaskStatus.COMPLETED)
     monkeypatch.setattr("app.services.domain.transfer.execution.all_transfer_sources_available", AsyncMock(return_value=False))

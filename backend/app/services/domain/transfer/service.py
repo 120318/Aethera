@@ -91,13 +91,21 @@ class TransferService:
             if not remaining.issubset(ready):
                 if not ready:
                     missing_sources = await execution.missing_transfer_source_paths(task)
-                    if not inspection.can_become_ready or missing_sources:
+                    if missing_sources or inspection.source_fallback_allowed:
                         return await self._perform_incremental_transfer(
                             task, existing_files, remaining, complete=True,
                         )
-                    return TransferResult(transferred_files=[])
+                    if inspection.can_become_ready:
+                        return TransferResult(transferred_files=[])
+                    await self._reject_terminal_file_validation(task)
                 return await self._perform_incremental_transfer(task, existing_files, ready, complete=False)
         return await self._perform_incremental_transfer(task, existing_files, remaining, complete=True)
+
+    async def _reject_terminal_file_validation(self, task: TaskData) -> None:
+        exc = TransferException("backendErrors.transferSourceFilesNotReady")
+        await emit_media_import_failed(task, exc.message_key, exc.params)
+        await handle_transfer_error(task, exc.message_key, exc.params)
+        raise exc
 
     async def _perform_incremental_transfer(
         self, task: TaskData, existing_files: list[LibraryFile], indices: set[int], *, complete: bool,
@@ -269,6 +277,8 @@ async def commit_transfer_results(
             if incremental and transfer_results
             else None
         )
+        replacement_paths = {str(Path(result.destination_path)) for result in transfer_results}
+        await library_service.cleanup_replaced_sidecars(replacement_paths)
         replaced_library_files = await library_service.replace_task_entries(
             task.id,
             task.context.directory_id,

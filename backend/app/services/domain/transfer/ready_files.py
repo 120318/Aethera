@@ -28,6 +28,7 @@ READABLE_TORRENT_STATES = {
 class ReadyFileInspection:
     indices: list[int]
     can_become_ready: bool
+    source_fallback_allowed: bool = False
 
 
 def supports_early_import(task: TaskData) -> bool:
@@ -107,10 +108,10 @@ async def inspect_ready_files(
         return ReadyFileInspection([], False)
     client = download_service.task_service.resolve_task_client(task)
     if client is None:
-        return ReadyFileInspection([], False)
+        return ReadyFileInspection([], False, True)
     info = torrent_status or await client.get_torrent_info(task.torrent_hash)
     if info is None:
-        return ReadyFileInspection([], False)
+        return ReadyFileInspection([], False, True)
     if not info.files_readable:
         return ReadyFileInspection([], True)
     if info.state.lower() not in READABLE_TORRENT_STATES:

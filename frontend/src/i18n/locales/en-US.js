@@ -308,6 +308,7 @@ export default {
     transferTorrentRootNameMissing: 'Torrent root name is missing for multi-file source resolution: {task_id}',
     transferSourceFileNotFound: 'Download source file not found: {filename}',
     transferSourceFilesMissing: 'Some download source files are missing, so re-transfer cannot continue safely',
+    transferSourceFilesNotReady: 'The downloader rejected one or more source files, so they cannot be transferred safely',
     transferDiscFileConflict: 'A disc file with the same name already exists and cannot be overwritten',
     transferFileNotBetter: 'A file with the same name already exists and the new resource is not better',
     transferFileUpgradeUnknown: 'A file with the same name already exists and the upgrade cannot be confirmed',

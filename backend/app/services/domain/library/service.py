@@ -372,17 +372,16 @@ class LibraryService:
 
     async def cleanup_replaced_files(self, files: list[LibraryFile], preserved_paths: set[str]) -> None:
         removed_files: list[LibraryFile] = []
-        preserved_sidecars: list[Path] = []
         for file in files:
             full_path = build_library_file_path(file.path, file.file_name)
-            if str(full_path) in preserved_paths:
-                preserved_sidecars.append(full_path)
-            else:
+            if str(full_path) not in preserved_paths:
                 removed_files.append(file)
         if removed_files:
             await asyncio.to_thread(self._cleanup.delete_files, removed_files)
-        for path in preserved_sidecars:
-            await asyncio.to_thread(self._cleanup.delete_sidecar_files, path)
+
+    async def cleanup_replaced_sidecars(self, preserved_paths: set[str]) -> None:
+        for path in sorted(preserved_paths):
+            await asyncio.to_thread(self._cleanup.delete_sidecar_files, Path(path))
 
     # Deletion
     async def delete_task_library_records(self, task_id: str) -> int:

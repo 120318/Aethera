@@ -308,6 +308,7 @@ export default {
     transferTorrentRootNameMissing: '多文件资源缺少种子根目录名：{task_id}',
     transferSourceFileNotFound: '下载源文件不存在：{filename}',
     transferSourceFilesMissing: '存在缺失的下载源文件，无法安全重新转移',
+    transferSourceFilesNotReady: '下载器拒绝了部分源文件，无法安全转移',
     transferDiscFileConflict: '当前已存在同名原盘文件，无法覆盖',
     transferFileNotBetter: '当前已存在同名文件，新资源不是更优版本',
     transferFileUpgradeUnknown: '当前已存在同名文件，无法确认新资源是否为升级版本',
