@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -186,18 +185,6 @@ class DownloadTaskService:
             return None
         enriched = self.enrich_tasks_with_downloader_info([task])
         return enriched[0] if enriched else None
-
-    async def record_imported_file_indices(self, task_id: str, file_indices: list[int]) -> bool:
-        if not file_indices:
-            return True
-        task = await self._repo.find_by_id(task_id)
-        if not task:
-            return False
-        task.context.imported_file_indices = sorted(
-            set(task.context.imported_file_indices) | set(file_indices)
-        )
-        task.updated_at = datetime.now()
-        return await self._repo.update_task(task)
 
     def enrich_tasks_with_downloader_info(self, tasks: list[TaskData]) -> list[TaskData]:
         downloader_map = self._get_downloader_display_map()

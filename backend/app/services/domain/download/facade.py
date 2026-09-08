@@ -123,9 +123,6 @@ class DownloadService:
     async def find_task_by_id(self, task_id: str) -> TaskData | None:
         return await self.task_service.find_task_by_id(task_id)
 
-    async def record_imported_file_indices(self, task_id: str, file_indices: list[int]) -> bool:
-        return await self.task_service.record_imported_file_indices(task_id, file_indices)
-
     async def pause_tasks(self, task_ids: list[str]) -> Mapping[str, bool]:
         return await self.task_service.pause_tasks(task_ids)
 

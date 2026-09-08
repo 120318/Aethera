@@ -8,7 +8,7 @@ from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.addon_events import ImportedMediaFile, MediaImportCompletedEventMeta
 from app.schemas.domain.addon_events import MediaImportFailedEventMeta
 from app.schemas.domain.download import TaskData, TaskErrorStage, TaskStatus, TransferFileResult, TransferResult
-from app.schemas.domain.event import EventEntityRef, EventLevel, EventSource, MediaEventCreate
+from app.schemas.domain.event import Event, EventEntityRef, EventLevel, EventSource, MediaEventCreate
 from app.schemas.domain.library import LibraryFile
 from app.schemas.exception.base import AppException
 from app.schemas.exception.exceptions import TransferException
@@ -182,38 +182,42 @@ def _task_import_entities(task: TaskData) -> list[EventEntityRef]:
     return [EventEntityRef(type="task", id=task.id), EventEntityRef(type="media", id=str(task.media_id))]
 
 
+def build_media_import_completed_event(task: TaskData, transfer_results: list[TransferFileResult]) -> Event:
+    media = task.context.media
+    if media is None:
+        raise TransferException("backendErrors.transferMediaSnapshotMissing", params={"task_id": task.id, "media_id": str(task.media_id)})
+    file_path = transfer_results[0].destination_path if transfer_results else ""
+    return event_service.build_media_event(
+        MediaEventCreate(
+            type=EventTypes.MEDIA_IMPORT_COMPLETED,
+            media=media,
+            task_id=task.id,
+            actor=event_actor_for_task(task),
+            source=EventSource.base,
+            entities=_task_import_entities(task),
+        ),
+        meta=MediaImportCompletedEventMeta(
+            task_id=task.id,
+            directory_id=task.context.directory_id,
+            media_id=task.media_id,
+            resource_title=task.context.resource_title,
+            torrent_name=task.metadata.name if task.metadata else None,
+            file_path=file_path,
+            imported_files=[
+                ImportedMediaFile(
+                    destination_path=result.destination_path,
+                    episode_number=result.episode_number,
+                    episode_numbers=result.episode_numbers,
+                )
+                for result in transfer_results
+            ],
+        ),
+    )
+
+
 async def emit_media_import_completed(task: TaskData, transfer_results: list[TransferFileResult]) -> None:
     try:
-        media = task.context.media
-        if media is None:
-            raise TransferException("backendErrors.transferMediaSnapshotMissing", params={"task_id": task.id, "media_id": str(task.media_id)})
-        file_path = transfer_results[0].destination_path if transfer_results else ""
-        event_service.emit_media(
-            MediaEventCreate(
-                type=EventTypes.MEDIA_IMPORT_COMPLETED,
-                media=media,
-                task_id=task.id,
-                actor=event_actor_for_task(task),
-                source=EventSource.base,
-                entities=_task_import_entities(task),
-            ),
-            meta=MediaImportCompletedEventMeta(
-                task_id=task.id,
-                directory_id=task.context.directory_id,
-                media_id=task.media_id,
-                resource_title=task.context.resource_title,
-                torrent_name=task.metadata.name if task.metadata else None,
-                file_path=file_path,
-                imported_files=[
-                    ImportedMediaFile(
-                        destination_path=result.destination_path,
-                        episode_number=result.episode_number,
-                        episode_numbers=result.episode_numbers,
-                    )
-                    for result in transfer_results
-                ],
-            ),
-        )
+        event_service.persist_built_event(build_media_import_completed_event(task, transfer_results))
     except AppException as exc:
         logger.warning("Failed to emit media import event for task %s: %s", task.id, exc)
 
@@ -259,6 +263,11 @@ async def commit_transfer_results(
     complete: bool = True,
 ) -> None:
     try:
+        completion_event = (
+            build_media_import_completed_event(task, transfer_results)
+            if incremental and transfer_results
+            else None
+        )
         replaced_library_files = await library_service.replace_task_entries(
             task.id,
             task.context.directory_id,
@@ -267,12 +276,18 @@ async def commit_transfer_results(
             execution_context.season_number,
             replacement_files,
             incremental=incremental,
+            imported_file_indices=(
+                [result.file_index for result in transfer_results]
+                if incremental and transfer_results
+                else None
+            ),
+            completion_event=completion_event,
+            dispatch_records=(
+                event_service.build_dispatch_records(completion_event)
+                if completion_event is not None
+                else None
+            ),
         )
-        if incremental and transfer_results and not await download_service.record_imported_file_indices(
-            task.id,
-            [result.file_index for result in transfer_results],
-        ):
-            raise TransferException("backendErrors.taskNotFound", params={"id": task.id})
         if incremental:
             task.context.imported_file_indices = sorted(
                 set(task.context.imported_file_indices) | {result.file_index for result in transfer_results}
@@ -289,7 +304,8 @@ async def commit_transfer_results(
             await media_service.refresh_profile_safely(task.media_id, execution_context.season_number)
         except AppException as exc:
             logger.warning("Failed to refresh profile after transfer for task %s: %s", task.id, exc)
-        await emit_media_import_completed(task, transfer_results)
+        if completion_event is None:
+            await emit_media_import_completed(task, transfer_results)
     except AppException as exc:
         raise TransferException("backendErrors.transferCommitFailed", params={"reason_key": exc.message_key})
 

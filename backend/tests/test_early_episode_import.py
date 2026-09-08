@@ -4,7 +4,9 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 
+from app.db.repositories.task_repository import TaskRepository
 from app.schemas.config import Template, TransferMode
 from app.schemas.domain.download import (
     DownloadFileInfo,
@@ -14,11 +16,13 @@ from app.schemas.domain.download import (
     TaskStatus,
     TransferFileResult,
 )
+from app.schemas.domain.event import EventType
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata, TorrentCoverageKind
 from app.schemas.exception.exceptions import TransferException
 from app.schemas.media_id import MediaID
 from app.services.domain.library.service import library_service
+from app.services.audit.event_service import event_service
 from app.services.domain.transfer.execution import TransferExecutionContext
 from app.services.domain.transfer.ready_files import find_ready_file_indices
 from app.services.domain.transfer.service import transfer_service
@@ -27,8 +31,8 @@ from app.services.domain.transfer.service import transfer_service
 pytestmark = [pytest.mark.drift, pytest.mark.aggregation]
 
 
-@pytest.fixture
-def setup_import(tmp_path, monkeypatch):
+@pytest_asyncio.fixture
+async def setup_import(tmp_path, monkeypatch):
     media_id = MediaID.parse(f"tmdb:tv:{uuid4().int % 1000000000 + 1}")
     task = TaskData(
         id=str(uuid4()), torrent_hash="hash", media_id=media_id,
@@ -48,6 +52,7 @@ def setup_import(tmp_path, monkeypatch):
             ],
         ),
     )
+    await TaskRepository().insert(task)
     for item in task.metadata.files:
         source = Path(task.save_path) / item.filename
         source.parent.mkdir(parents=True, exist_ok=True)
@@ -69,26 +74,16 @@ def setup_import(tmp_path, monkeypatch):
         return context.model_copy(deep=True)
     monkeypatch.setattr("app.services.domain.transfer.execution.build_transfer_execution_context", build_context)
     monkeypatch.setattr("app.services.domain.transfer.service.media_service.refresh_profile_safely", AsyncMock())
-    event = AsyncMock()
-    monkeypatch.setattr("app.services.domain.transfer.service.emit_media_import_completed", event)
     async def update_state(_, state, **kwargs):
         task.status = state
         return True
     state_update = AsyncMock(side_effect=update_state)
     monkeypatch.setattr("app.services.domain.transfer.service.download_service.update_task_state", state_update)
-    async def record_imported(_, indices):
-        task.context.imported_file_indices = sorted(set(task.context.imported_file_indices) | set(indices))
-        return True
-    imported_update = AsyncMock(side_effect=record_imported)
-    monkeypatch.setattr(
-        "app.services.domain.transfer.service.download_service.record_imported_file_indices",
-        imported_update,
-    )
     # Quality policy is irrelevant to these files, which have a distinct media id.
     monkeypatch.setattr("app.services.domain.transfer.replacement.library_replacement_policy._quality_profile", lambda: None)
     return SimpleNamespace(
         task=task, live=live, info=info, client=client,
-        event=event, state_update=state_update, imported_update=imported_update, context=context,
+        state_update=state_update, context=context,
     )
 
 
@@ -110,7 +105,7 @@ async def test_incremental_import_preserves_previous_batches_and_finishes_withou
 
     assert (await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])).transferred_files == []
     assert (await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[])).transferred_files == []
-    assert env.event.await_count == 1
+    assert event_service.list_events(task_id=env.task.id, types=[EventType.MEDIA_IMPORT_COMPLETED])[0] == 1
 
     env.live[1].progress = env.live[2].progress = 1.0
     batch = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[5, 9])
@@ -118,14 +113,14 @@ async def test_incremental_import_preserves_previous_batches_and_finishes_withou
     files = await library_service.get_files_by_task(env.task.id)
     assert {item.file_index for item in files} == {2, 5, 9}
     assert destination.stat().st_ino == inode
-    assert env.event.await_count == 2  # One event for both episodes.
+    assert event_service.list_events(task_id=env.task.id, types=[EventType.MEDIA_IMPORT_COMPLETED])[0] == 2
 
     env.task.status = TaskStatus.FINISHED
     final = await transfer_service.perform_transfer_by_task_id(env.task.id)
     assert final.transferred_files == []
     assert env.task.status == TaskStatus.COMPLETED
     assert len(await library_service.get_files_by_task(env.task.id)) == 3
-    assert env.event.await_count == 2
+    assert event_service.list_events(task_id=env.task.id, types=[EventType.MEDIA_IMPORT_COMPLETED])[0] == 2
 
 
 @pytest.mark.asyncio
@@ -293,6 +288,28 @@ async def test_replaced_early_file_is_satisfied_by_visible_higher_quality_episod
         season=1,
         replacement_files=[old_file],
     )
+    combined_path = env.context.destination_base_path / "old-E1-E2.mkv"
+    combined_path.write_bytes(b"old combined")
+    combined_task_id = str(uuid4())
+    await library_service.replace_task_entries(
+        combined_task_id,
+        "dir",
+        env.task.media_id,
+        [TransferFileResult(
+            source_path=str(combined_path),
+            destination_path=str(combined_path),
+            file_index=0,
+            file_item=TorrentFileItem(
+                index=0,
+                filename=combined_path.name,
+                size=combined_path.stat().st_size,
+                attrs=ResourceAttributes(seasons=[1], episodes=[1, 2], resolution="720p"),
+            ),
+            episode_number=1,
+            episode_numbers=[1, 2],
+        )],
+        season=1,
+    )
 
     assert await library_service.get_files_by_task(env.task.id) == []
     assert await find_ready_file_indices(env.task) == []
@@ -304,6 +321,8 @@ async def test_replaced_early_file_is_satisfied_by_visible_higher_quality_episod
 
     assert {item.file_index for item in final.transferred_files} == {5, 9}
     assert env.task.status == TaskStatus.COMPLETED
+    assert not combined_path.exists()
+    assert await library_service.get_files_by_task(combined_task_id) == []
 
 
 @pytest.mark.asyncio
@@ -315,7 +334,7 @@ async def test_stale_command_does_not_import_deselected_or_invalidated_files(set
     env.task.context.selected_files = [2]
     env.live[0].progress = 0.3
     assert (await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])).transferred_files == []
-    env.event.assert_not_awaited()
+    assert event_service.list_events(task_id=env.task.id, types=[EventType.MEDIA_IMPORT_COMPLETED])[0] == 0
 
 
 @pytest.mark.asyncio

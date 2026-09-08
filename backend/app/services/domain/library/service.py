@@ -10,6 +10,7 @@ from app.db.repositories.library_replace_repository import LibraryReplaceReposit
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.addon_events import LibraryFileMissingEventMeta
 from app.schemas.domain.download import TaskData, TransferFileResult
+from app.schemas.domain.event import Event
 from app.schemas.domain.event import EventActor, EventEntityRef, EventLevel, EventSource, MediaEventCreate
 from app.schemas.domain.library import (
     LibraryFileArtifact,
@@ -23,6 +24,7 @@ from app.schemas.domain.library import (
 )
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_attributes import ResourceAttributes
+from app.schemas.persistence.event_dispatch import EventDispatchRecord
 from app.schemas.media_id import MediaID
 from app.services.audit.event_service import event_service
 from app.services.domain.library.cleanup import LibraryCleanup
@@ -350,6 +352,9 @@ class LibraryService:
         replacement_files: list[LibraryFile] | None = None,
         *,
         incremental: bool = False,
+        imported_file_indices: list[int] | None = None,
+        completion_event: Event | None = None,
+        dispatch_records: list[EventDispatchRecord] | None = None,
     ) -> list[LibraryFile]:
         return await self._registration.replace_task_entries(
             task_id,
@@ -359,6 +364,9 @@ class LibraryService:
             season,
             replacement_files,
             incremental=incremental,
+            imported_file_indices=imported_file_indices,
+            completion_event=completion_event,
+            dispatch_records=dispatch_records,
         )
 
     # Deletion

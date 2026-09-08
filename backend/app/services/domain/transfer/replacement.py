@@ -101,6 +101,14 @@ class LibraryReplacementPolicy:
             for episode in episodes:
                 if episode.season == season:
                     episode_file_ids.setdefault(int(episode.episode), set()).add(episode.file_id)
+            replaceable_file_ids = {
+                candidate.id
+                for result in transfer_results
+                for candidate in self._video_file_candidates_for_result(
+                    task, candidates, result, season, episode_file_ids,
+                )
+                if candidate.id
+            }
             # Every episode needs an equal-or-better replacement. Do not compare
             # individual file sizes against the total size of a combined file.
             episode_quality: dict[int, tuple[int, tuple[int, ...]]] = {}
@@ -111,7 +119,7 @@ class LibraryReplacementPolicy:
                     episode_quality[episode] = max(episode_quality.get(episode, quality), quality)
             for item in library_files:
                 path = build_library_file_path(item.path, item.file_name)
-                if item.task_id != task.id or str(path) in incoming_paths or not path.is_file():
+                if item.id in replaceable_file_ids or str(path) in incoming_paths or not path.is_file():
                     continue
                 quality = self._rank(item.resource_attributes, 0, quality_profile)[:2]
                 for episode in episodes:

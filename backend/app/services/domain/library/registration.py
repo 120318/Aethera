@@ -8,8 +8,10 @@ from app.db.repositories.library_file_repository import LibraryFileRepository
 from app.db.repositories.library_meta_repository import LibraryMetaRepository
 from app.db.repositories.library_replace_repository import LibraryReplaceRepository
 from app.schemas.domain.download import TransferFileResult
+from app.schemas.domain.event import Event
 from app.schemas.domain.library import LibraryEpisode, LibraryFile, LibraryMeta
 from app.schemas.domain.resource_attributes import ResourceAttributes
+from app.schemas.persistence.event_dispatch import EventDispatchRecord
 from app.schemas.media_id import MediaID
 from app.utils.library_paths import split_library_storage_path
 
@@ -91,9 +93,21 @@ class LibraryRegistrationWorker:
         replacement_files: list[LibraryFile] | None = None,
         *,
         incremental: bool = False,
+        imported_file_indices: list[int] | None = None,
+        completion_event: Event | None = None,
+        dispatch_records: list[EventDispatchRecord] | None = None,
     ) -> list[LibraryFile]:
         return await self.replace_repo.replace_task_entries(
-            task_id, directory_id, media_id, transfer_results, season, replacement_files, incremental=incremental,
+            task_id,
+            directory_id,
+            media_id,
+            transfer_results,
+            season,
+            replacement_files,
+            incremental=incremental,
+            imported_file_indices=imported_file_indices,
+            completion_event=completion_event,
+            dispatch_records=dispatch_records,
         )
 
     async def _add_library_file(

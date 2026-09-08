@@ -22,12 +22,6 @@ class _FakeRepo:
     async def find_by_id(self, task_id: str) -> TaskData | None:
         return self.tasks.get(task_id)
 
-    async def update_task(self, task: TaskData) -> bool:
-        if task.id not in self.tasks:
-            return False
-        self.tasks[task.id] = task.model_copy(deep=True)
-        return True
-
     async def delete_by_id(self, task_id: str) -> bool:
         return self.tasks.pop(task_id, None) is not None
 
@@ -129,24 +123,6 @@ async def test_get_torrent_status_by_task_ids_assigns_shared_hash_status_to_all_
 
     assert result == {task_a.id: status, task_b.id: status}
     assert client.requested_hashes == [["shared-hash"]]
-
-
-@pytest.mark.asyncio
-async def test_record_imported_file_indices_persists_union_in_task_context():
-    task = _task("task-1")
-    task.context.imported_file_indices = [2]
-    repo = _FakeRepo([task])
-    service = DownloadTaskService(
-        repo,
-        _FakeClientFactory(_FakeClient([])),
-        downloader_display_map_provider=lambda: {},
-        refresh_completed_task_health=lambda *_: None,
-    )
-
-    assert await service.record_imported_file_indices(task.id, [5, 2]) is True
-
-    persisted = await repo.find_by_id(task.id)
-    assert persisted.context.imported_file_indices == [2, 5]
 
 
 @pytest.mark.asyncio
