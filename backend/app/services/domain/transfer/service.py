@@ -106,6 +106,10 @@ class TransferService:
         try:
             if complete:
                 await self._lock_task_status(task)
+            if not indices:
+                if complete and not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
+                    raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})
+                return TransferResult(transferred_files=[])
             context = await execution.build_transfer_execution_context(task)
             context.selected_indices = indices
             results = await execution.execute_transfer(task, context)

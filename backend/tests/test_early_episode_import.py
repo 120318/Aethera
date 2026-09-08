@@ -124,6 +124,26 @@ async def test_incremental_import_preserves_previous_batches_and_finishes_withou
 
 
 @pytest.mark.asyncio
+async def test_empty_final_batch_does_not_require_transfer_context(setup_import, monkeypatch):
+    env = setup_import
+    for item in env.live:
+        item.progress = 1.0
+    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2, 5, 9])
+    env.task.status = TaskStatus.FINISHED
+    build_context = AsyncMock(side_effect=TransferException("backendErrors.transferTaskContextMissing"))
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.execution.build_transfer_execution_context",
+        build_context,
+    )
+
+    result = await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert result.transferred_files == []
+    assert env.task.status == TaskStatus.COMPLETED
+    build_context.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["uploading", "seeding", "paused"])
 async def test_final_import_only_adds_remaining_files(setup_import, state):
     env = setup_import
@@ -628,3 +648,63 @@ async def test_combined_file_uses_higher_quality_existing_episode_not_replaced_b
     assert better_path.exists()
     assert await library_service.get_files_by_task(old_task_id) == []
     assert len(await library_service.get_files_by_task(better_task_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_subtitle_does_not_prove_combined_video_episode_replacement(setup_import):
+    env = setup_import
+    env.task.metadata.files[1].attrs.resolution = ResourceAttributes(resolution="720p").resolution
+    env.live[1].progress = 1.0
+
+    combined_path = env.context.destination_base_path / "old-E1-E2.mkv"
+    combined_path.parent.mkdir(parents=True, exist_ok=True)
+    combined_path.write_bytes(b"old combined")
+    combined_task_id = str(uuid4())
+    await library_service.replace_task_entries(
+        combined_task_id,
+        "dir",
+        env.task.media_id,
+        [TransferFileResult(
+            source_path=str(combined_path),
+            destination_path=str(combined_path),
+            file_index=0,
+            file_item=TorrentFileItem(
+                index=0,
+                filename=combined_path.name,
+                size=combined_path.stat().st_size,
+                attrs=ResourceAttributes(seasons=[1], episodes=[1, 2], resolution="720p"),
+            ),
+            episode_number=1,
+            episode_numbers=[1, 2],
+        )],
+        season=1,
+    )
+    subtitle_path = env.context.destination_base_path / "subtitle-E1.srt"
+    subtitle_path.write_text("subtitle")
+    subtitle_task_id = str(uuid4())
+    await library_service.replace_task_entries(
+        subtitle_task_id,
+        "dir",
+        env.task.media_id,
+        [TransferFileResult(
+            source_path=str(subtitle_path),
+            destination_path=str(subtitle_path),
+            file_index=0,
+            file_item=TorrentFileItem(
+                index=0,
+                filename=subtitle_path.name,
+                size=subtitle_path.stat().st_size,
+                attrs=ResourceAttributes(seasons=[1], episodes=[1], resolution="1080p"),
+            ),
+            episode_number=1,
+            episode_numbers=[1],
+        )],
+        season=1,
+    )
+
+    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[5])
+
+    assert combined_path.is_file()
+    assert subtitle_path.is_file()
+    assert len(await library_service.get_files_by_task(combined_task_id)) == 1
+    assert len(await library_service.get_files_by_task(subtitle_task_id)) == 1

@@ -109,11 +109,15 @@ class LibraryReplacementPolicy:
     ) -> LibraryReplacementPlan:
         quality_profile = self._quality_profile()
         library_files = await library_service.get_files_by_media(task.media_id, season)
+        primary_library_files = [
+            item for item in library_files
+            if file_name_looks_like_media_file(item.file_name)
+        ]
         incoming_indices = {result.file_index for result in transfer_results}
         incoming_paths = {result.destination_path for result in transfer_results}
         candidates = [
             item
-            for item in library_files
+            for item in primary_library_files
             if not self._is_original_disc_file(item)
             and (
                 item.task_id != task.id
@@ -164,7 +168,7 @@ class LibraryReplacementPolicy:
                 quality = self._rank(result.file_item.attrs or ResourceAttributes(), 0, quality_profile)[:2]
                 for episode in result.episode_numbers or ([result.episode_number] if result.episode_number else []):
                     episode_quality[episode] = max(episode_quality.get(episode, quality), quality)
-            for item in library_files:
+            for item in primary_library_files:
                 path = build_library_file_path(item.path, item.file_name)
                 if item.id in replaceable_file_ids or str(path) in incoming_paths or not path.is_file():
                     continue
