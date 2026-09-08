@@ -9,7 +9,7 @@ from sqlalchemy import delete, select, tuple_
 
 from app.db.repositories.event_dispatch_repository import EventDispatchRepository
 from app.db.repositories.event_repository import EventRepository
-from app.db.sql.models import LibraryEpisodeORM, LibraryFileORM, LibraryMetaORM, TaskORM
+from app.db.sql.models import LibraryEpisodeORM, LibraryFileArtifactORM, LibraryFileORM, LibraryMetaORM, TaskORM
 from app.db.sql.session import SessionLocal
 from app.schemas.media_id import MediaID
 from app.schemas.domain.download import TransferFileResult
@@ -48,6 +48,7 @@ class LibraryReplaceRepository:
         existing_file_ids = [library_file.id for library_file in existing_files if library_file.id]
         conflicting_file_ids = [library_file.id for library_file in conflicting_files if library_file.id]
         replacement_file_ids = [library_file.id for library_file in replacement_files if library_file.id]
+        removed_file_ids = list({*existing_file_ids, *conflicting_file_ids, *replacement_file_ids})
         existing_paths = {
             build_library_file_path(library_file.path, library_file.file_name): library_file
             for library_file in [*existing_files, *conflicting_files, *replacement_files]
@@ -61,6 +62,12 @@ class LibraryReplaceRepository:
                     raise ValueError(f"Task not found while recording imported files: {task_id}")
             self._upsert_library_meta(session, media_id)
 
+            if removed_file_ids:
+                session.execute(
+                    delete(LibraryFileArtifactORM).where(
+                        LibraryFileArtifactORM.library_file_id.in_(removed_file_ids)
+                    )
+                )
             if existing_file_ids:
                 session.execute(delete(LibraryEpisodeORM).where(LibraryEpisodeORM.file_id.in_(existing_file_ids)))
                 session.execute(delete(LibraryFileORM).where(LibraryFileORM.id.in_(existing_file_ids)))

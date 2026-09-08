@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 from app.db.repositories.library_episode_repository import LibraryEpisodeRepository
@@ -368,6 +369,20 @@ class LibraryService:
             completion_event=completion_event,
             dispatch_records=dispatch_records,
         )
+
+    async def cleanup_replaced_files(self, files: list[LibraryFile], preserved_paths: set[str]) -> None:
+        removed_files: list[LibraryFile] = []
+        preserved_sidecars: list[Path] = []
+        for file in files:
+            full_path = build_library_file_path(file.path, file.file_name)
+            if str(full_path) in preserved_paths:
+                preserved_sidecars.append(full_path)
+            else:
+                removed_files.append(file)
+        if removed_files:
+            await asyncio.to_thread(self._cleanup.delete_files, removed_files)
+        for path in preserved_sidecars:
+            await asyncio.to_thread(self._cleanup.delete_sidecar_files, path)
 
     # Deletion
     async def delete_task_library_records(self, task_id: str) -> int:

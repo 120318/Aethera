@@ -201,7 +201,7 @@ class TaskRuntimeService:
         if torrent_status:
             progress = torrent_status.progress
             state = torrent_status.state.lower()
-            blocked = state in {
+            blocked = not torrent_status.files_readable or state in {
                 "checking", "checkingdl", "checkingup", "checkingresumedata", "moving",
                 "allocating", "metadl", "forcedmetadl", "error", "missing", "missingfiles", "unknown",
             }

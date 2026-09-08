@@ -18,7 +18,6 @@ from app.services.domain.download.task_runtime_service import event_actor_for_ta
 from app.services.domain.library.service import library_service
 from app.services.domain.media import media_service
 from app.services.platform.domain_lock_service import domain_lock_service
-from app.utils.fs_utils import fs_provider
 from app.utils.library_paths import build_library_file_path
 
 from . import execution
@@ -170,21 +169,14 @@ class TransferService:
             raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})
 
 
-def cleanup_replaced_library_files(
+async def cleanup_replaced_library_files(
     existing_library_files: list[LibraryFile],
     transfer_results: list[TransferFileResult],
 ) -> None:
     if not existing_library_files:
         return
     replacement_paths = {str(Path(result.destination_path)) for result in transfer_results}
-    for library_file in existing_library_files:
-        full_path = build_library_file_path(library_file.path, library_file.file_name)
-        if str(full_path) in replacement_paths or not fs_provider.exists(full_path):
-            continue
-        try:
-            fs_provider.remove(full_path)
-        except OSError as exc:
-            logger.warning("Failed to remove replaced library file %s: %s", full_path, exc)
+    await library_service.cleanup_replaced_files(existing_library_files, replacement_paths)
 
 
 def _task_import_entities(task: TaskData) -> list[EventEntityRef]:
@@ -304,7 +296,7 @@ async def commit_transfer_results(
         if complete:
             if not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
                 raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})
-        cleanup_replaced_library_files(
+        await cleanup_replaced_library_files(
             replaced_library_files if incremental else (replaced_library_files or existing_library_files), transfer_results,
         )
         if not transfer_results:

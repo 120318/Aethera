@@ -17,6 +17,7 @@ from app.schemas.domain.download import (
     TransferFileResult,
 )
 from app.schemas.domain.event import EventType
+from app.schemas.domain.library import LibraryFileArtifactStatus, LibraryFileArtifactType
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata, TorrentCoverageKind
 from app.schemas.exception.exceptions import TransferException
@@ -454,6 +455,23 @@ async def test_later_incremental_batch_replaces_lower_quality_file_from_same_tas
     first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
     first_path = Path(first.transferred_files[0].destination_path)
     assert first_path.is_file()
+    first_file = (await library_service.get_files_by_task(env.task.id))[0]
+    xml_path = first_path.with_suffix(".danmu.xml")
+    ass_path = first_path.with_suffix(".danmu.ass")
+    xml_path.write_text("xml")
+    ass_path.write_text("ass")
+    await library_service.mark_artifact(
+        library_file_id=first_file.id,
+        artifact_type=LibraryFileArtifactType.danmu_xml,
+        expected_path=str(xml_path),
+        status=LibraryFileArtifactStatus.succeeded,
+    )
+    await library_service.mark_artifact(
+        library_file_id=first_file.id,
+        artifact_type=LibraryFileArtifactType.danmu_ass,
+        expected_path=str(ass_path),
+        status=LibraryFileArtifactStatus.succeeded,
+    )
 
     env.live[1].progress = 1.0
     second = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[5])
@@ -461,10 +479,13 @@ async def test_later_incremental_batch_replaces_lower_quality_file_from_same_tas
     files = await library_service.get_files_by_task(env.task.id)
 
     assert not first_path.exists()
+    assert not xml_path.exists()
+    assert not ass_path.exists()
     assert second_path.is_file()
     assert len(files) == 1
     assert files[0].file_index == 5
     assert str(files[0].resource_attributes.resolution) == "2160p"
+    assert await library_service.get_artifacts_by_file_ids([first_file.id]) == []
 
 
 @pytest.mark.asyncio

@@ -7,12 +7,20 @@ from sqlalchemy import text
 os.environ["DATA_PATH"] = f"/tmp/aethera-test-data-{uuid.uuid4()}"
 
 from app.db.repositories.library_replace_repository import LibraryReplaceRepository
-from app.db.sql.models import EventDispatchORM, EventORM, LibraryEpisodeORM, LibraryFileORM, LibraryMetaORM, TaskORM
+from app.db.sql.models import (
+    EventDispatchORM,
+    EventORM,
+    LibraryEpisodeORM,
+    LibraryFileArtifactORM,
+    LibraryFileORM,
+    LibraryMetaORM,
+    TaskORM,
+)
 from app.db.sql.session import SessionLocal
 from app.schemas.media_id import MediaID
 from app.schemas.domain.download import TransferFileResult
 from app.schemas.domain.event import Event, EventType
-from app.schemas.domain.library import LibraryFile
+from app.schemas.domain.library import LibraryFile, LibraryFileArtifactStatus, LibraryFileArtifactType
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem
 from app.schemas.persistence.event_dispatch import EventDispatchRecord
@@ -24,6 +32,7 @@ pytestmark = [pytest.mark.aggregation]
 @pytest.fixture(autouse=True)
 def _fresh_library_tables():
     with SessionLocal() as session:
+        session.execute(text("DELETE FROM library_file_artifacts"))
         session.execute(text("DELETE FROM library_episodes"))
         session.execute(text("DELETE FROM library_files"))
         session.execute(text("DELETE FROM library_meta"))
@@ -33,6 +42,7 @@ def _fresh_library_tables():
         session.commit()
     yield
     with SessionLocal() as session:
+        session.execute(text("DELETE FROM library_file_artifacts"))
         session.execute(text("DELETE FROM library_episodes"))
         session.execute(text("DELETE FROM library_files"))
         session.execute(text("DELETE FROM library_meta"))
@@ -138,6 +148,20 @@ async def test_replace_task_entries_removes_explicit_replacement_files():
                 created_at=1000.0,
             )
         )
+        session.add(
+            LibraryFileArtifactORM(
+                id="artifact-replaced",
+                library_file_id="file-replaced",
+                artifact_type=LibraryFileArtifactType.danmu_ass.value,
+                expected_path="/data/library/Movies/Test Movie (2024)/Test.Movie.2024.1080p.danmu.ass",
+                status=LibraryFileArtifactStatus.succeeded.value,
+                last_success_at=1000.0,
+                last_error=None,
+                next_retry_at=None,
+                created_at=1000.0,
+                updated_at=1000.0,
+            )
+        )
         session.commit()
 
     repo = LibraryReplaceRepository()
@@ -179,12 +203,14 @@ async def test_replace_task_entries_removes_explicit_replacement_files():
     with SessionLocal() as session:
         files = session.query(LibraryFileORM).all()
         episodes = session.query(LibraryEpisodeORM).all()
+        artifacts = session.query(LibraryFileArtifactORM).all()
 
     assert [item.id for item in replaced] == ["file-replaced"]
     assert len(files) == 1
     assert files[0].task_id == "task-new"
     assert files[0].file_name == "Test.Movie.2024.2160p.mkv"
     assert episodes == []
+    assert artifacts == []
 
 
 @pytest.mark.asyncio

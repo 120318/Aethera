@@ -206,6 +206,32 @@ async def test_sync_active_downloads_completed_event_uses_live_torrent_progress(
 
 
 @pytest.mark.asyncio
+async def test_sync_active_downloads_does_not_finish_when_files_are_unreadable(monkeypatch):
+    task = _task(status=TaskStatus.DOWNLOADING)
+    torrent = TorrentStatus(
+        hash=task.torrent_hash,
+        name="Torrent",
+        size=100,
+        progress=1.0,
+        state=TorrentState.DOWNLOADING,
+        files_readable=False,
+        downloader_id="downloader-1",
+    )
+    events = []
+    monkeypatch.setattr(
+        "app.services.domain.download.task_runtime_service.event_service.emit_media",
+        lambda *args, **kwargs: events.append(kwargs),
+    )
+    service = TaskRuntimeService(_FakeRepo(task), _FakeClientFactory(torrent_statuses=[torrent]))
+    update = AsyncMock(return_value=True)
+
+    await service.sync_active_downloads(AsyncMock(return_value=[task]), update)
+
+    update.assert_not_awaited()
+    assert events == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("state,progress,completion_time,expected", [
     (TorrentState.SEEDING, 0.9995, None, True),
     (TorrentState.PAUSED, 0.9995, datetime(2026, 1, 1), True),
