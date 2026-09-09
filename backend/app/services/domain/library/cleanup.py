@@ -19,6 +19,13 @@ LIBRARY_SIDECAR_EXTENSIONS = {
 
 class LibraryCleanup:
     def delete_files(self, files: list[LibraryFile]) -> None:
+        candidate_dirs = self._delete_files(files)
+        self.cleanup_directories_without_media_files(candidate_dirs)
+
+    def delete_replaced_files(self, files: list[LibraryFile]) -> None:
+        self._delete_files(files)
+
+    def _delete_files(self, files: list[LibraryFile]) -> list[Path]:
         candidate_dirs: list[Path] = []
         for item in files:
             try:
@@ -30,7 +37,7 @@ class LibraryCleanup:
                 self.delete_sidecar_files(full_path, set())
             except OSError as exc:
                 logger.warning("Failed to remove file %s: %s", item.path, exc)
-        self.cleanup_directories_without_media_files(candidate_dirs)
+        return candidate_dirs
 
     def delete_sidecar_files(self, media_file: Path, preserved_paths: set[Path]) -> None:
         if not media_file or not media_file.name:

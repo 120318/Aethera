@@ -17,6 +17,37 @@ from .execution import with_context_resource_attrs
 
 
 class LibraryReplacementPolicy:
+    def select_batch_winners(self, transfer_results: list[TransferFileResult]) -> list[TransferFileResult]:
+        quality_profile = self._quality_profile()
+        videos = [
+            result for result in transfer_results
+            if file_name_looks_like_media_file(result.file_item.filename)
+        ]
+        winner_by_path: dict[str, TransferFileResult] = {}
+        for result in videos:
+            path = normalize_path_separators(result.destination_path)
+            current = winner_by_path.get(path)
+            if current is None or self._batch_rank(result, quality_profile) > self._batch_rank(current, quality_profile):
+                winner_by_path[path] = result
+
+        winner_by_episodes: dict[frozenset[int], TransferFileResult] = {}
+        for result in winner_by_path.values():
+            episodes = frozenset(result.episode_numbers or ([result.episode_number] if result.episode_number else []))
+            if not episodes:
+                continue
+            current = winner_by_episodes.get(episodes)
+            if current is None or self._batch_rank(result, quality_profile) > self._batch_rank(current, quality_profile):
+                winner_by_episodes[episodes] = result
+
+        winner_indices = {
+            result.file_index for result in winner_by_path.values()
+            if not (result.episode_numbers or ([result.episode_number] if result.episode_number else []))
+        } | {result.file_index for result in winner_by_episodes.values()}
+        return [
+            result for result in transfer_results
+            if not file_name_looks_like_media_file(result.file_item.filename) or result.file_index in winner_indices
+        ]
+
     async def build_plan(
         self,
         task: TaskData,
@@ -312,6 +343,16 @@ class LibraryReplacementPolicy:
         preference_score = compute_preference_score_from_attrs(attrs, quality_profile)[0]
         ranking = quality_profile.ranking if quality_profile else None
         return preference_score, quality_sort_key(attrs, ranking), int(size or 0)
+
+    def _batch_rank(
+        self,
+        result: TransferFileResult,
+        quality_profile: QualityProfile | None,
+    ) -> tuple[tuple[int, tuple[int, ...], int], int]:
+        return (
+            self._rank(result.file_item.attrs or ResourceAttributes(), result.file_item.size or 0, quality_profile),
+            -result.file_index,
+        )
 
     def _quality_profile(self) -> QualityProfile | None:
         return settings_service.get_default_quality_profile()

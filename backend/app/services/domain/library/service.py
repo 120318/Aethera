@@ -377,7 +377,7 @@ class LibraryService:
             if str(full_path) not in preserved_paths:
                 removed_files.append(file)
         if removed_files:
-            await asyncio.to_thread(self._cleanup.delete_files, removed_files)
+            await asyncio.to_thread(self._cleanup.delete_replaced_files, removed_files)
 
     async def cleanup_replaced_sidecars(self, replaced_video_paths: set[str], batch_paths: set[str]) -> None:
         preserved_paths = {Path(path) for path in batch_paths}

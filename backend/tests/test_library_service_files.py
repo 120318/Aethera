@@ -111,3 +111,29 @@ def test_delete_files_removes_same_stem_nfo_sidecar(tmp_path):
     assert not danmu_xml_file.exists()
     assert not danmu_ass_file.exists()
     assert other_episode_file.exists()
+
+
+def test_delete_replaced_files_preserves_directory_with_registered_auxiliary_file(tmp_path):
+    episode_file = tmp_path / "Show.S01E01.mkv"
+    subtitle_file = tmp_path / "Show.S01E01.srt"
+    episode_file.write_text("video")
+    subtitle_file.write_text("subtitle")
+    cleanup = LibraryCleanup()
+
+    cleanup.delete_replaced_files([
+        LibraryFile(
+            id="episode-file",
+            task_id="task-1",
+            directory_id="dir-1",
+            media_id=MediaID.parse("tmdb:tv:100088"),
+            path=str(tmp_path),
+            file_name=episode_file.name,
+            file_size=10,
+            created_at=1.0,
+            resource_attributes=ResourceAttributes(seasons=[1], episodes=[1]),
+        )
+    ])
+
+    assert not episode_file.exists()
+    assert subtitle_file.exists()
+    assert tmp_path.exists()

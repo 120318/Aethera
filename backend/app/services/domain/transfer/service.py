@@ -120,7 +120,10 @@ class TransferService:
                 return TransferResult(transferred_files=[])
             context = await execution.build_transfer_execution_context(task)
             context.selected_indices = indices
-            results = await execution.execute_transfer(task, context)
+            transfer_plan = library_replacement_policy.select_batch_winners(
+                execution.build_transfer_plan(task, context),
+            )
+            results = await execution.execute_transfer_plan(task, context, transfer_plan)
             replacement_plan = await library_replacement_policy.build_plan(
                 task,
                 results,
@@ -129,7 +132,7 @@ class TransferService:
             )
             await commit_transfer_results(
                 task, results, existing_files, context, replacement_plan.replace_files,
-                incremental=True, complete=complete,
+                incremental=True, complete=complete, handled_file_indices=indices,
             )
             return TransferResult(transferred_files=results)
         except AppException as exc:
@@ -151,7 +154,9 @@ class TransferService:
             await self._lock_task_status(task)
             existing_library_files = await library_service.get_files_by_task(task.id)
             execution_context = await execution.build_transfer_execution_context(task)
-            transfer_results = await execution.execute_transfer(task, execution_context)
+            full_transfer_plan = execution.build_transfer_plan(task, execution_context)
+            transfer_plan = library_replacement_policy.select_batch_winners(full_transfer_plan)
+            transfer_results = await execution.execute_transfer_plan(task, execution_context, transfer_plan)
             replacement_plan = await library_replacement_policy.build_plan(task, transfer_results, execution_context.season_number)
             await commit_transfer_results(
                 task,
@@ -159,6 +164,7 @@ class TransferService:
                 existing_library_files,
                 execution_context,
                 replacement_plan.replace_files,
+                handled_file_indices={result.file_index for result in full_transfer_plan},
             )
             logger.info("Transfer completed: task=%s files=%d", task.id, len(transfer_results))
             return TransferResult(transferred_files=transfer_results)
@@ -271,6 +277,7 @@ async def commit_transfer_results(
     *,
     incremental: bool = False,
     complete: bool = True,
+    handled_file_indices: set[int] | None = None,
 ) -> None:
     try:
         completion_event = (
@@ -299,7 +306,7 @@ async def commit_transfer_results(
             replacement_files,
             incremental=incremental,
             imported_file_indices=(
-                [result.file_index for result in transfer_results]
+                sorted(handled_file_indices or {result.file_index for result in transfer_results})
                 if incremental and transfer_results
                 else None
             ),
@@ -312,7 +319,8 @@ async def commit_transfer_results(
         )
         if incremental:
             task.context.imported_file_indices = sorted(
-                set(task.context.imported_file_indices) | {result.file_index for result in transfer_results}
+                set(task.context.imported_file_indices)
+                | (handled_file_indices or {result.file_index for result in transfer_results})
             )
         if complete:
             if not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):

@@ -375,8 +375,11 @@ def build_transfer_plan(task: TaskData, execution_context: TransferExecutionCont
     return transfer_results
 
 
-async def execute_transfer(task: TaskData, execution_context: TransferExecutionContext) -> list[TransferFileResult]:
-    transfer_results = build_transfer_plan(task, execution_context)
+async def execute_transfer_plan(
+    task: TaskData,
+    execution_context: TransferExecutionContext,
+    transfer_results: list[TransferFileResult],
+) -> list[TransferFileResult]:
     await validate_transfer_upgrade_policy(task, transfer_results)
     materializer = transfer_materializer_registry.resolve(execution_context.transfer_mode)
     for transfer_result in transfer_results:
@@ -389,3 +392,7 @@ async def execute_transfer(task: TaskData, execution_context: TransferExecutionC
         except (TransferException, OSError):
             raise
     return transfer_results
+
+
+async def execute_transfer(task: TaskData, execution_context: TransferExecutionContext) -> list[TransferFileResult]:
+    return await execute_transfer_plan(task, execution_context, build_transfer_plan(task, execution_context))

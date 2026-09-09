@@ -549,10 +549,29 @@ async def test_later_incremental_batch_replaces_lower_quality_file_from_same_tas
 
 
 @pytest.mark.asyncio
+async def test_same_incremental_batch_keeps_only_best_video_for_the_same_episode(setup_import):
+    env = setup_import
+    env.context.template_config.file_template = "{title} - S{season:00}E{episode:00} - {resolution}"
+    env.task.metadata.files[0].attrs.resolution = ResourceAttributes(resolution="720p").resolution
+    env.task.metadata.files[1].attrs.episodes = [1]
+    env.task.metadata.files[1].attrs.resolution = ResourceAttributes(resolution="2160p").resolution
+    env.live[1].progress = 1.0
+
+    result = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2, 5])
+    files = await library_service.get_files_by_task(env.task.id)
+
+    assert [item.file_index for item in result.transferred_files] == [5]
+    assert [item.file_index for item in files] == [5]
+    assert str(files[0].resource_attributes.resolution) == "2160p"
+    assert env.task.context.imported_file_indices == [2, 5]
+    assert await find_ready_file_indices(env.task) == []
+
+
+@pytest.mark.asyncio
 async def test_failed_partial_transfer_raises_domain_error_keeps_downloading_and_can_retry(setup_import, monkeypatch):
     env = setup_import
     with monkeypatch.context() as patch:
-        patch.setattr("app.services.domain.transfer.execution.execute_transfer", AsyncMock(side_effect=OSError("disk full")))
+        patch.setattr("app.services.domain.transfer.execution.execute_transfer_plan", AsyncMock(side_effect=OSError("disk full")))
         patch.setattr("app.services.domain.transfer.service.emit_media_import_failed", AsyncMock())
         with pytest.raises(TransferException, match="backendErrors.transferFailed") as exc_info:
             await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
