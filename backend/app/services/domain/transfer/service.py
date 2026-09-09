@@ -90,7 +90,7 @@ class TransferService:
             ready = set(inspection.indices)
             if not remaining.issubset(ready):
                 if not ready:
-                    missing_sources = await execution.missing_transfer_source_paths(task)
+                    missing_sources = await execution.missing_transfer_source_paths(task, remaining)
                     if missing_sources or inspection.source_fallback_allowed:
                         return await self._perform_incremental_transfer(
                             task, existing_files, remaining, complete=True,

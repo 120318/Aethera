@@ -185,11 +185,16 @@ async def all_transfer_sources_available(task: TaskData) -> bool:
     return found_any
 
 
-async def missing_transfer_source_paths(task: TaskData) -> list[str]:
+async def missing_transfer_source_paths(
+    task: TaskData,
+    file_indices: set[int] | None = None,
+) -> list[str]:
     validate_transfer_task(task)
     source_base_path = await resolve_source_base_path(task)
     missing_paths: list[str] = []
     for _, file_item in iter_selected_files(task.metadata.files, resolve_selected_indices(task)):
+        if file_indices is not None and file_item.index not in file_indices:
+            continue
         source_path = build_source_path(task, file_item, source_base_path)
         if not fs_provider.exists(source_path):
             missing_paths.append(str(source_path))

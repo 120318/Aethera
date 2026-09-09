@@ -10,7 +10,13 @@ from app.services.domain.library.service import library_service
 from app.services.domain.resource.filtering import is_original_disc_attrs
 from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file
 
-from .execution import build_source_path, iter_selected_files, resolve_selected_indices, resolve_source_base_path
+from .execution import (
+    build_source_path,
+    iter_selected_files,
+    resolve_selected_indices,
+    resolve_source_base_path,
+    with_context_resource_attrs,
+)
 from .replacement import library_replacement_policy
 
 
@@ -68,7 +74,8 @@ def _imported_episode_groups(task: TaskData) -> set[frozenset[int]]:
     for item in task.metadata.files:
         if item.index not in imported or not file_name_looks_like_media_file(item.filename):
             continue
-        group = frozenset(int(value) for value in item.get_episodes() if int(value) > 0)
+        execution_item = with_context_resource_attrs(task, item)
+        group = frozenset(int(value) for value in execution_item.get_episodes() if int(value) > 0)
         if group:
             groups.add(group)
     return groups

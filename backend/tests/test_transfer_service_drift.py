@@ -77,6 +77,26 @@ async def test_missing_transfer_source_paths_reports_selected_files_not_visible(
     assert missing_paths == ["/data/download/downloads/show/Test.Show.S01.2024.1080p.WEB-DL/Test.Show.S01E01.2024.1080p.WEB-DL.mkv"]
 
 
+@pytest.mark.asyncio
+async def test_missing_transfer_source_paths_checks_requested_indices_only(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+    task.metadata.files.append(
+        TorrentFileItem(
+            index=1,
+            filename="Test.Show.S01E02.2024.1080p.WEB-DL.mkv",
+            size=100,
+        )
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.execution.fs_provider.exists",
+        lambda path: "S01E02" in str(path),
+    )
+
+    missing_paths = await missing_transfer_source_paths(task, {1})
+
+    assert missing_paths == []
+
+
 def _transfer_file_result() -> TransferFileResult:
     return TransferFileResult(
         source_path="/downloads/Test.Show.S01E01.2024.1080p.WEB-DL.mkv",

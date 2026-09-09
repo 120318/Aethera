@@ -176,6 +176,21 @@ async def test_stale_finished_state_cannot_publish_unfinished_files(setup_import
 
 
 @pytest.mark.asyncio
+async def test_finished_incremental_import_ignores_missing_source_for_satisfied_index(setup_import):
+    env = setup_import
+    first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    Path(first.transferred_files[0].source_path).unlink()
+    env.task.status = TaskStatus.FINISHED
+
+    result = await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert result.transferred_files == []
+    assert {item.file_index for item in await library_service.get_files_by_task(env.task.id)} == {2}
+    assert env.task.status == TaskStatus.FINISHED
+    env.state_update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_finished_incremental_import_waits_for_resume_data_check(setup_import):
     env = setup_import
     await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
@@ -426,6 +441,44 @@ async def test_replaced_early_file_is_satisfied_by_visible_higher_quality_episod
     assert env.task.status == TaskStatus.COMPLETED
     assert not combined_path.exists()
     assert await library_service.get_files_by_task(combined_task_id) == []
+
+
+@pytest.mark.asyncio
+async def test_replaced_early_file_restores_episode_group_from_context_attributes(setup_import):
+    env = setup_import
+    first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    old_file = (await library_service.get_files_by_task(env.task.id))[0]
+    destination = Path(first.transferred_files[0].destination_path)
+    env.task.metadata.files[0].attrs = ResourceAttributes(resolution="1080p")
+    env.task.context.parsed_attributes = ResourceAttributes(
+        seasons=[1],
+        episodes=[1],
+        resolution="1080p",
+    )
+    await library_service.replace_task_entries(
+        str(uuid4()),
+        "dir",
+        env.task.media_id,
+        [TransferFileResult(
+            source_path=str(destination),
+            destination_path=str(destination),
+            file_index=0,
+            file_item=TorrentFileItem(
+                index=0,
+                filename=destination.name,
+                size=4,
+                attrs=ResourceAttributes(seasons=[1], episodes=[1], resolution="2160p"),
+            ),
+            episode_number=1,
+            episode_numbers=[1],
+        )],
+        season=1,
+        replacement_files=[old_file],
+    )
+
+    assert env.task.context.imported_file_indices == [2]
+    assert await library_service.get_files_by_task(env.task.id) == []
+    assert await find_ready_file_indices(env.task) == []
 
 
 @pytest.mark.asyncio
