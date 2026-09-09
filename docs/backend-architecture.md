@@ -276,8 +276,14 @@ event's imported files, not all files belonging to the task.
   an empty final batch emits no additional import event.
 - Transfer commit modes are explicit: partial incremental, final incremental,
   full import, and idempotent repair. Filesystem sidecars are never deleted before
-  the library transaction commits. Import events contain primary video files
-  only, and consumers defensively reject auxiliary library records.
+  the library transaction commits. Same-path replacement snapshots stale
+  sidecars and deletes them after commit only when no consumer has rewritten
+  them; sidecars materialized by the transfer batch are preserved. Import events
+  contain primary video files only, and consumers defensively reject auxiliary
+  library records.
+- Directory integrity treats a completed task whose owned files were removed by
+  quality replacement as satisfied only when its imported-file ledger is
+  complete and visible replacement files still cover the task's media episodes.
 - Partial import failures belong to the transfer command. They do not promote a
   downloading task to finished, and retries recompute the unimported file set.
 - This uses existing tables and columns. Source files stay available to the

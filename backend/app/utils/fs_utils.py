@@ -48,9 +48,14 @@ def write_text_file(path: Union[str, Path], content: str, *, encoding: str = "ut
     target = Path(path)
     existed = target.exists()
     ensure_directory(target.parent)
-    target.write_text(content, encoding=encoding)
-    if not existed:
-        _chmod_created(target, mode)
+    existing_mode = stat.S_IMODE(target.stat().st_mode) if existed else mode
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(content, encoding=encoding)
+        _chmod_created(temporary, existing_mode)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 class FileSystemProvider:

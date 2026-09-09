@@ -8,6 +8,7 @@ from app.schemas.config import DirectoryConfig
 from app.schemas.domain.download import TaskContext, TaskData, TaskStatus
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media import MediaExecutionSnapshot
+from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
 from app.schemas.media_id import MediaID
@@ -564,6 +565,56 @@ async def test_directory_integrity_scan_reports_task_without_library_file(tmp_pa
     assert result.items[0].task_completed_at is not None
     assert result.items[0].repair_action == "retry_transfer"
     assert result.summary.tasks_missing_library_files == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("visible_episodes", "expected_issue_count"),
+    [([1, 2], 0), ([1], 1)],
+)
+async def test_directory_integrity_recognizes_fully_replaced_task_coverage(
+    tmp_path,
+    monkeypatch,
+    visible_episodes,
+    expected_issue_count,
+):
+    library_root = tmp_path / "library"
+    download_root = tmp_path / "download"
+    library_root.mkdir()
+    download_root.mkdir()
+    replacement_path = library_root / "replacement.mkv"
+    replacement_path.write_text("replacement")
+    media_id = MediaID.parse("tmdb:tv:1")
+    task = _task(download_root)
+    task.media_id = media_id
+    task.context.media = task.context.media.model_copy(update={"media_id": media_id, "season_number": 1})
+    task.context.imported_file_indices = [0, 1]
+    task.metadata.files[0].attrs = ResourceAttributes(seasons=[1], episodes=[1])
+    task.metadata.files[1].attrs = ResourceAttributes(seasons=[1], episodes=[2])
+    replacement = LibraryFile(
+        id="replacement-file",
+        task_id="replacement-task",
+        directory_id="dir-1",
+        media_id=media_id,
+        path=str(library_root),
+        file_name=replacement_path.name,
+        file_size=replacement_path.stat().st_size,
+        file_index=0,
+        created_at=1.0,
+        resource_attributes=ResourceAttributes(seasons=[1], episodes=visible_episodes),
+    )
+    directory = DirectoryConfig(id="dir-1", name="TV", path=str(library_root), download_path=str(download_root))
+    service = DirectoryIntegrityService()
+    service.library_repo = AsyncListRepo([replacement])
+    service.task_repo = AsyncListRepo([task])
+
+    monkeypatch.setattr(integrity_module.settings_service, "list_directories", lambda: [directory])
+    monkeypatch.setattr(integrity_module, "LATEST_RESULT_PATH", tmp_path / "latest.json")
+
+    result = await service.scan()
+
+    issues = [item for item in result.items if item.issue_type == DirectoryIntegrityIssueType.task_missing_library_file]
+    assert len(issues) == expected_issue_count
 
 
 @pytest.mark.asyncio

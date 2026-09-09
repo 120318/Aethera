@@ -19,6 +19,7 @@ from app.schemas.domain.library import (
     LibraryFileArtifactType,
     LibraryEpisode,
     LibraryFile,
+    LibrarySidecarSnapshot,
     LibraryMediaLayout,
     LibraryPackageSummary,
     LibraryTaskFileHealth,
@@ -381,10 +382,27 @@ class LibraryService:
         if removed_files:
             await asyncio.to_thread(self._cleanup.delete_replaced_files, removed_files)
 
-    async def cleanup_replaced_sidecars(self, replaced_video_paths: set[str], batch_paths: set[str]) -> None:
-        preserved_paths = {Path(path) for path in batch_paths}
-        for path in sorted(replaced_video_paths):
-            await asyncio.to_thread(self._cleanup.delete_sidecar_files, Path(path), preserved_paths)
+    async def snapshot_replaced_sidecars(
+        self,
+        incoming_video_paths: set[str],
+        batch_paths: set[str],
+    ) -> list[LibrarySidecarSnapshot]:
+        return await asyncio.to_thread(
+            self._cleanup.snapshot_sidecar_files,
+            {Path(path) for path in incoming_video_paths},
+            {Path(path) for path in batch_paths},
+        )
+
+    async def cleanup_replaced_sidecars(
+        self,
+        snapshots: list[LibrarySidecarSnapshot],
+        replaced_video_paths: set[str],
+    ) -> None:
+        await asyncio.to_thread(
+            self._cleanup.delete_unchanged_sidecar_files,
+            snapshots,
+            {Path(path) for path in replaced_video_paths},
+        )
 
     # Deletion
     async def delete_task_library_records(self, task_id: str) -> int:

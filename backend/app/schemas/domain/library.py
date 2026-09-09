@@ -29,6 +29,15 @@ class LibraryFile(BaseModel):
     resource_attributes: ResourceAttributes = Field(default_factory=ResourceAttributes)
 
 
+class LibrarySidecarSnapshot(BaseModel):
+    media_path: str
+    sidecar_path: str
+    size: int
+    modified_ns: int
+    inode: int
+    content_digest: str
+
+
 class LibraryFileArtifactType(str, Enum):
     nfo = "nfo"
     danmu_xml = "danmu_xml"

@@ -20,10 +20,10 @@ from app.schemas.runtime.directory_integrity import (
 from app.services.domain.directory_integrity.models import DirectoryIntegritySnapshot, DownloaderTorrentIndex, MediaDisplayIndex, TrackerMessageIndex
 from app.services.domain.directory_integrity.size_summary import build_directory_size_index
 from app.services.domain.directory_integrity.summary import build_directory_integrity_summary
+from app.services.domain.directory_integrity.task_replacement import task_library_relationship_is_satisfied
 from app.utils.library_paths import build_download_path, build_library_file_path, path_looks_like_media_file
 
 logger = logging.getLogger("app.services.directory_integrity.scanner")
-
 DOWNLOAD_AUDIT_STATUSES = {
     TaskStatus.FINISHED,
     TaskStatus.COMPLETED,
@@ -161,7 +161,7 @@ class DirectoryIntegrityScanner:
         task_ids = {task.id for task in tasks}
         items: list[DirectoryIntegrityItem] = []
         for task in tasks:
-            if task.context.directory_id != directory.id or task.status not in DOWNLOAD_AUDIT_STATUSES or task.id in files_by_task_id:
+            if task_library_relationship_is_satisfied(task, directory.id, DOWNLOAD_AUDIT_STATUSES, files_by_task_id, directory_files):
                 continue
             task_completed_at = self._datetime_to_timestamp(task.updated_at)
             if task_completed_at and scanned_at - task_completed_at < TASK_MISSING_LIBRARY_FILE_GRACE_SECONDS:

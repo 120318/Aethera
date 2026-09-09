@@ -172,6 +172,39 @@ async def test_video_file_replaces_only_same_episode_video_files(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_combined_video_replaces_only_lower_quality_single_episode_candidates(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    episode_one = _library_file(
+        "episode-1",
+        media_id=media_id,
+        file_name="Test.S01E01.720p.mkv",
+        attrs=ResourceAttributes(resolution="720p", seasons=[1], episodes=[1]),
+    )
+    episode_two = _library_file(
+        "episode-2",
+        media_id=media_id,
+        file_name="Test.S01E02.2160p.mkv",
+        attrs=ResourceAttributes(resolution="2160p", seasons=[1], episodes=[2]),
+    )
+    stub = _LibraryServiceStub(
+        [episode_one, episode_two],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="episode-1", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="episode-2", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+
+    plan = await library_replacement_policy.build_plan(
+        _task(media_id, season=1),
+        [_batch_result(0, [1, 2], "1080p")],
+        season=1,
+    )
+
+    assert [item.id for item in plan.replace_files] == ["episode-1"]
+
+
+@pytest.mark.asyncio
 async def test_subtitle_does_not_replace_existing_episode_video(monkeypatch):
     media_id = MediaID.parse("tmdb:tv:1")
     old_video = _library_file(

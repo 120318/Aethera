@@ -5,6 +5,7 @@ from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.media_id import MediaID
 from app.services.domain.library.cleanup import LibraryCleanup
 from app.services.domain.library.service import LibraryService
+from app.utils.fs_utils import write_text_file
 
 
 class FakeFileRepo:
@@ -137,3 +138,33 @@ def test_delete_replaced_files_preserves_directory_with_registered_auxiliary_fil
     assert not episode_file.exists()
     assert subtitle_file.exists()
     assert tmp_path.exists()
+
+
+def test_replaced_sidecar_snapshot_deletes_only_stale_unpreserved_files(tmp_path):
+    video = tmp_path / "Show.S01E01.mkv"
+    nfo = video.with_suffix(".nfo")
+    danmu = video.with_suffix(".danmu.xml")
+    video.write_text("video")
+    nfo.write_text("batch nfo")
+    danmu.write_text("old danmu")
+    cleanup = LibraryCleanup()
+
+    snapshots = cleanup.snapshot_sidecar_files({video}, {nfo})
+    cleanup.delete_unchanged_sidecar_files(snapshots, {video})
+
+    assert nfo.exists()
+    assert not danmu.exists()
+
+
+def test_replaced_sidecar_snapshot_preserves_concurrently_rewritten_file(tmp_path):
+    video = tmp_path / "Show.S01E01.mkv"
+    danmu = video.with_suffix(".danmu.xml")
+    video.write_text("video")
+    danmu.write_text("old")
+    cleanup = LibraryCleanup()
+
+    snapshots = cleanup.snapshot_sidecar_files({video}, set())
+    write_text_file(danmu, "new")
+    cleanup.delete_unchanged_sidecar_files(snapshots, {video})
+
+    assert danmu.read_text() == "new"

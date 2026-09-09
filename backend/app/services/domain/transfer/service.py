@@ -338,6 +338,16 @@ async def commit_transfer_results(
     handled_file_indices: set[int] | None = None,
 ) -> None:
     try:
+        batch_paths = {str(Path(result.destination_path)) for result in transfer_results}
+        incoming_video_paths = {
+            str(Path(result.destination_path))
+            for result in transfer_results
+            if file_name_looks_like_media_file(result.destination_path)
+        }
+        sidecar_snapshots = await library_service.snapshot_replaced_sidecars(
+            incoming_video_paths,
+            batch_paths,
+        )
         completion_event = (
             build_media_import_completed_event(task, transfer_results)
             if commit_mode.incremental and transfer_results
@@ -369,6 +379,16 @@ async def commit_transfer_results(
                 set(task.context.imported_file_indices)
                 | (handled_file_indices or {result.file_index for result in transfer_results})
             )
+        replaced_video_paths = {
+            str(build_library_file_path(item.path, item.file_name))
+            for item in replaced_library_files
+            if file_name_looks_like_media_file(item.file_name or "")
+            and str(build_library_file_path(item.path, item.file_name)) in incoming_video_paths
+        }
+        await library_service.cleanup_replaced_sidecars(
+            sidecar_snapshots,
+            replaced_video_paths,
+        )
         if commit_mode.completes_task:
             if not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
                 raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})

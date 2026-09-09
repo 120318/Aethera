@@ -264,13 +264,14 @@ class LibraryReplacementPolicy:
                 continue
             incoming_attrs = transfer_result.file_item.attrs or ResourceAttributes()
             incoming_size = transfer_result.file_item.size or 0
-            best_existing = max(scoped_candidates, key=lambda item: self._rank(item.resource_attributes, item.file_size or 0, quality_profile))
-            if self._rank(incoming_attrs, incoming_size, quality_profile) > self._rank(
-                best_existing.resource_attributes, best_existing.file_size or 0, quality_profile
-            ):
-                for candidate in scoped_candidates:
-                    if candidate.id:
-                        replace_files[candidate.id] = candidate
+            incoming_rank = self._rank(incoming_attrs, incoming_size, quality_profile)
+            for candidate in scoped_candidates:
+                if candidate.id and incoming_rank > self._rank(
+                    candidate.resource_attributes,
+                    candidate.file_size or 0,
+                    quality_profile,
+                ):
+                    replace_files[candidate.id] = candidate
 
         return LibraryReplacementPlan(
             replace_files=list(replace_files.values()),
