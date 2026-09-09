@@ -79,6 +79,24 @@ def _transfer_result(
     )
 
 
+def _batch_result(index: int, episodes: list[int], resolution: str) -> TransferFileResult:
+    episode_suffix = "E" + "E".join(f"{episode:02d}" for episode in episodes)
+    filename = f"Test.S01{episode_suffix}.{resolution}.mkv"
+    return TransferFileResult(
+        source_path=f"/downloads/{filename}",
+        destination_path=f"/library/{filename}",
+        file_index=index,
+        episode_number=episodes[0],
+        episode_numbers=episodes,
+        file_item=TorrentFileItem(
+            index=index,
+            filename=filename,
+            size=2000,
+            attrs=ResourceAttributes(seasons=[1], episodes=episodes, resolution=resolution),
+        ),
+    )
+
+
 class _LibraryServiceStub:
     def __init__(self, files: list[LibraryFile], episodes: list[LibraryEpisode] | None = None) -> None:
         self.files = files
@@ -101,6 +119,26 @@ class _LibraryServiceStub:
 @pytest.fixture(autouse=True)
 def _quality_profile(monkeypatch):
     monkeypatch.setattr(library_replacement_policy, "_quality_profile", lambda: QualityProfile(name="Default"))
+
+
+@pytest.mark.parametrize("single_resolution", ["720p", "2160p"])
+def test_batch_winners_drop_combined_file_covered_by_equal_or_better_single_episodes(single_resolution):
+    winners = library_replacement_policy.select_batch_winners([
+        _batch_result(0, [1, 2], "720p"),
+        _batch_result(1, [1], single_resolution),
+        _batch_result(2, [2], single_resolution),
+    ])
+
+    assert [result.file_index for result in winners] == [1, 2]
+
+
+def test_batch_winners_keep_combined_file_with_exclusive_episode():
+    winners = library_replacement_policy.select_batch_winners([
+        _batch_result(0, [1, 2], "720p"),
+        _batch_result(1, [1], "2160p"),
+    ])
+
+    assert [result.file_index for result in winners] == [0, 1]
 
 
 @pytest.mark.asyncio

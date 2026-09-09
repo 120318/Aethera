@@ -177,6 +177,45 @@ async def test_commit_transfer_results_refreshes_tv_profile_with_execution_seaso
 
 
 @pytest.mark.asyncio
+async def test_idempotent_commit_does_not_clean_preserved_existing_files(monkeypatch):
+    task = _task(status=TaskStatus.TRANSFERRING)
+    context = TransferExecutionContext(
+        source_base_path=Path("/downloads"),
+        destination_base_path=Path("/library"),
+        title="Test Show",
+        year=2024,
+        season_number=1,
+    )
+    cleanup_mock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.replace_task_entries",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.cleanup_replaced_sidecars",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.cleanup_replaced_files",
+        cleanup_mock,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.download_service.update_task_state",
+        AsyncMock(return_value=True),
+    )
+
+    await commit_transfer_results(
+        task,
+        [],
+        [_library_file()],
+        context,
+        preserve_existing=True,
+    )
+
+    cleanup_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_incremental_commit_cleans_replaced_sidecars_before_event_dispatch_is_visible(tmp_path, monkeypatch):
     task = _task(status=TaskStatus.DOWNLOADING)
     context = TransferExecutionContext(
@@ -438,7 +477,7 @@ async def test_execute_transfer_skips_existing_same_task_file_materialization(mo
 
     results = await execute_transfer(task, context)
 
-    assert len(results) == 1
+    assert results == []
     assert calls == []
 
 

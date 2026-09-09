@@ -31,12 +31,13 @@ class LibraryReplaceRepository:
         replacement_files: list[LibraryFile] | None = None,
         *,
         incremental: bool = False,
+        preserve_existing: bool = False,
         imported_file_indices: list[int] | None = None,
         completion_event: Event | None = None,
         dispatch_records: list[EventDispatchRecord] | None = None,
     ) -> list[LibraryFile]:
         existing_files = await self._find_existing_files(task_id)
-        if incremental:
+        if incremental or preserve_existing:
             incoming_indices = {result.file_index for result in transfer_results}
             incoming_paths = {Path(result.destination_path) for result in transfer_results}
             existing_files = [

@@ -39,10 +39,34 @@ class LibraryReplacementPolicy:
             if current is None or self._batch_rank(result, quality_profile) > self._batch_rank(current, quality_profile):
                 winner_by_episodes[episodes] = result
 
+        episode_winners = list(winner_by_episodes.items())
+        covered_indices: set[int] = set()
+        for episodes, result in episode_winners:
+            quality = self._rank(result.file_item.attrs or ResourceAttributes(), 0, quality_profile)[:2]
+            if all(
+                any(
+                    other.file_index != result.file_index
+                    and episode in other_episodes
+                    and (
+                        self._rank(other.file_item.attrs or ResourceAttributes(), 0, quality_profile)[:2] > quality
+                        or (
+                            self._rank(other.file_item.attrs or ResourceAttributes(), 0, quality_profile)[:2] == quality
+                            and other_episodes < episodes
+                        )
+                    )
+                    for other_episodes, other in episode_winners
+                )
+                for episode in episodes
+            ):
+                covered_indices.add(result.file_index)
+
         winner_indices = {
             result.file_index for result in winner_by_path.values()
             if not (result.episode_numbers or ([result.episode_number] if result.episode_number else []))
-        } | {result.file_index for result in winner_by_episodes.values()}
+        } | {
+            result.file_index for result in winner_by_episodes.values()
+            if result.file_index not in covered_indices
+        }
         return [
             result for result in transfer_results
             if not file_name_looks_like_media_file(result.file_item.filename) or result.file_index in winner_indices

@@ -387,6 +387,7 @@ async def execute_transfer_plan(
 ) -> list[TransferFileResult]:
     await validate_transfer_upgrade_policy(task, transfer_results)
     materializer = transfer_materializer_registry.resolve(execution_context.transfer_mode)
+    materialized_results: list[TransferFileResult] = []
     for transfer_result in transfer_results:
         source_path = Path(transfer_result.source_path)
         destination_path = Path(transfer_result.destination_path)
@@ -394,9 +395,10 @@ async def execute_transfer_plan(
             if await should_skip_existing_task_materialization(task, transfer_result):
                 continue
             await asyncio.to_thread(materializer.materialize, source_path, destination_path)
+            materialized_results.append(transfer_result)
         except (TransferException, OSError):
             raise
-    return transfer_results
+    return materialized_results
 
 
 async def execute_transfer(task: TaskData, execution_context: TransferExecutionContext) -> list[TransferFileResult]:

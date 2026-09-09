@@ -165,6 +165,7 @@ class TransferService:
                 execution_context,
                 replacement_plan.replace_files,
                 handled_file_indices={result.file_index for result in full_transfer_plan},
+                preserve_existing=len(transfer_results) < len(transfer_plan),
             )
             logger.info("Transfer completed: task=%s files=%d", task.id, len(transfer_results))
             return TransferResult(transferred_files=transfer_results)
@@ -278,6 +279,7 @@ async def commit_transfer_results(
     incremental: bool = False,
     complete: bool = True,
     handled_file_indices: set[int] | None = None,
+    preserve_existing: bool = False,
 ) -> None:
     try:
         completion_event = (
@@ -305,6 +307,7 @@ async def commit_transfer_results(
             execution_context.season_number,
             replacement_files,
             incremental=incremental,
+            preserve_existing=preserve_existing,
             imported_file_indices=(
                 sorted(handled_file_indices or {result.file_index for result in transfer_results})
                 if incremental and transfer_results
@@ -326,7 +329,12 @@ async def commit_transfer_results(
             if not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
                 raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})
         await cleanup_replaced_library_files(
-            replaced_library_files if incremental else (replaced_library_files or existing_library_files), transfer_results,
+            (
+                replaced_library_files
+                if incremental or preserve_existing
+                else (replaced_library_files or existing_library_files)
+            ),
+            transfer_results,
         )
         if not transfer_results:
             return

@@ -214,6 +214,71 @@ async def test_replace_task_entries_removes_explicit_replacement_files():
 
 
 @pytest.mark.asyncio
+async def test_replace_task_entries_preserves_unmodified_task_file_artifacts():
+    media_id = MediaID.parse("tmdb:tv:1")
+    with SessionLocal() as session:
+        session.add(
+            LibraryFileORM(
+                id="file-existing",
+                task_id="task-new",
+                directory_id="dir-1",
+                media_id=str(media_id),
+                path="TV/Test/Season 01",
+                file_name="Test.S01E01.mkv",
+                file_size=1000,
+                file_index=0,
+                created_at=1000.0,
+                resource_attributes_json=ResourceAttributes(
+                    seasons=[1], episodes=[1], resolution="1080p",
+                ).model_dump(mode="json"),
+            )
+        )
+        session.add(
+            LibraryFileArtifactORM(
+                id="artifact-existing",
+                library_file_id="file-existing",
+                artifact_type=LibraryFileArtifactType.danmu_xml.value,
+                expected_path="/data/library/TV/Test/Season 01/Test.S01E01.danmu.xml",
+                status=LibraryFileArtifactStatus.succeeded.value,
+                last_success_at=1000.0,
+                last_error=None,
+                next_retry_at=None,
+                created_at=1000.0,
+                updated_at=1000.0,
+            )
+        )
+        session.commit()
+
+    await LibraryReplaceRepository().replace_task_entries(
+        "task-new",
+        "dir-1",
+        media_id,
+        [TransferFileResult(
+            source_path="/downloads/Test.S01E02.mkv",
+            destination_path="/data/library/TV/Test/Season 01/Test.S01E02.mkv",
+            file_index=1,
+            episode_number=2,
+            episode_numbers=[2],
+            file_item=TorrentFileItem(
+                index=1,
+                filename="Test.S01E02.mkv",
+                size=1000,
+                attrs=ResourceAttributes(seasons=[1], episodes=[2], resolution="1080p"),
+            ),
+        )],
+        season=1,
+        preserve_existing=True,
+    )
+
+    with SessionLocal() as session:
+        files = session.query(LibraryFileORM).order_by(LibraryFileORM.file_index).all()
+        artifacts = session.query(LibraryFileArtifactORM).all()
+
+    assert [item.file_index for item in files] == [0, 1]
+    assert [item.id for item in artifacts] == ["artifact-existing"]
+
+
+@pytest.mark.asyncio
 async def test_replace_task_entries_registers_multi_episode_file():
     media_id = MediaID.parse("tmdb:tv:1")
     repo = LibraryReplaceRepository()
