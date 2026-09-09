@@ -13,12 +13,17 @@ os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 from app.schemas.exception.exceptions import DownloadException, TransferException
 from app.schemas.config import Template, TransferMode
 from app.schemas.media_id import MediaID
+from app.schemas.domain.addon_events import MediaImportCompletedEventMeta
 from app.schemas.domain.download import TaskContext, TaskData, TaskStatus, TransferFileResult
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
 from app.services.domain.transfer import transfer_service
-from app.services.domain.transfer.service import commit_transfer_results
+from app.services.domain.transfer.service import (
+    TransferCommitMode,
+    build_media_import_completed_event,
+    commit_transfer_results,
+)
 from app.services.domain.transfer.execution import TransferExecutionContext, build_transfer_execution_context, build_transfer_plan, execute_transfer, generate_source_path, missing_transfer_source_paths
 
 
@@ -192,10 +197,6 @@ async def test_idempotent_commit_does_not_clean_preserved_existing_files(monkeyp
         AsyncMock(return_value=[]),
     )
     monkeypatch.setattr(
-        "app.services.domain.transfer.service.library_service.cleanup_replaced_sidecars",
-        AsyncMock(),
-    )
-    monkeypatch.setattr(
         "app.services.domain.transfer.service.library_service.cleanup_replaced_files",
         cleanup_mock,
     )
@@ -209,14 +210,14 @@ async def test_idempotent_commit_does_not_clean_preserved_existing_files(monkeyp
         [],
         [_library_file()],
         context,
-        preserve_existing=True,
+        commit_mode=TransferCommitMode.IDEMPOTENT_REPAIR,
     )
 
     cleanup_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_incremental_commit_cleans_replaced_sidecars_before_event_dispatch_is_visible(tmp_path, monkeypatch):
+async def test_incremental_commit_does_not_delete_sidecars_before_database_commit(tmp_path, monkeypatch):
     task = _task(status=TaskStatus.DOWNLOADING)
     context = TransferExecutionContext(
         source_base_path=tmp_path / "downloads",
@@ -247,16 +248,9 @@ async def test_incremental_commit_cleans_replaced_sidecars_before_event_dispatch
     )
     order = []
 
-    async def cleanup_sidecars(video_paths, batch_paths):
-        order.append("sidecars")
-        assert video_paths == {result.destination_path}
-        assert batch_paths == {result.destination_path, nfo_result.destination_path}
-        sidecar.unlink()
-        assert nfo_path.read_text() == "batch"
-
     async def replace_entries(*_args, **_kwargs):
         order.append("replace")
-        assert not sidecar.exists()
+        assert sidecar.read_text() == "old"
         assert nfo_path.read_text() == "batch"
         sidecar.write_text("new")
         return [replaced_file]
@@ -265,10 +259,6 @@ async def test_incremental_commit_cleans_replaced_sidecars_before_event_dispatch
         order.append("files")
         assert sidecar.read_text() == "new"
 
-    monkeypatch.setattr(
-        "app.services.domain.transfer.service.library_service.cleanup_replaced_sidecars",
-        cleanup_sidecars,
-    )
     monkeypatch.setattr(
         "app.services.domain.transfer.service.library_service.replace_task_entries",
         replace_entries,
@@ -287,13 +277,31 @@ async def test_incremental_commit_cleans_replaced_sidecars_before_event_dispatch
         [result, nfo_result],
         [replaced_file],
         context,
-        incremental=True,
-        complete=False,
+        commit_mode=TransferCommitMode.PARTIAL_INCREMENTAL,
     )
 
-    assert order == ["sidecars", "replace", "files"]
+    assert order == ["replace", "files"]
     assert sidecar.read_text() == "new"
     assert nfo_path.read_text() == "batch"
+
+
+def test_media_import_event_contains_primary_video_files_only():
+    task = _task(status=TaskStatus.TRANSFERRING)
+    video = _transfer_file_result()
+    subtitle = video.model_copy(update={
+        "destination_path": "/library/TV/Test Show/Test.Show.S01E01.srt",
+        "file_index": 1,
+        "file_item": TorrentFileItem(index=1, filename="Test.Show.S01E01.srt", size=10),
+        "episode_number": None,
+        "episode_numbers": [],
+    })
+
+    event = build_media_import_completed_event(task, [video, subtitle])
+
+    assert event is not None
+    meta = MediaImportCompletedEventMeta.model_validate_json(event.meta)
+    assert [item.destination_path for item in meta.imported_files] == [video.destination_path]
+    assert build_media_import_completed_event(task, [subtitle]) is None
 
 
 @pytest.mark.asyncio
@@ -439,10 +447,14 @@ async def test_execute_transfer_uses_copy_materializer_for_copy_mode(monkeypatch
 
     monkeypatch.setattr("app.services.domain.transfer.execution.transfer_materializer_registry.resolve", resolve_materializer)
 
-    results = await execute_transfer(task, context)
+    report = await execute_transfer(task, context)
 
-    assert len(results) == 1
-    assert calls == [(Path(results[0].source_path), Path(results[0].destination_path))]
+    assert len(report.materialized_files) == 1
+    assert report.skipped_existing_files == []
+    assert calls == [(
+        Path(report.materialized_files[0].source_path),
+        Path(report.materialized_files[0].destination_path),
+    )]
 
 
 @pytest.mark.asyncio
@@ -475,9 +487,10 @@ async def test_execute_transfer_skips_existing_same_task_file_materialization(mo
     monkeypatch.setattr("app.services.domain.transfer.execution.library_service.find_file_by_path", AsyncMock(return_value=existing_file))
     monkeypatch.setattr("app.services.domain.transfer.execution.transfer_materializer_registry.resolve", lambda mode: RecordingMaterializer())
 
-    results = await execute_transfer(task, context)
+    report = await execute_transfer(task, context)
 
-    assert results == []
+    assert report.materialized_files == []
+    assert len(report.skipped_existing_files) == 1
     assert calls == []
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from enum import Enum
 from pathlib import Path
 
 from app.schemas.constants.event_types import EventTypes
@@ -23,10 +24,36 @@ from app.utils.library_paths import build_library_file_path, file_name_looks_lik
 from . import execution
 from .execution import TransferExecutionContext
 from .replacement import library_replacement_policy
-from .ready_files import ACTIVE_IMPORT_STATUSES, inspect_ready_files, ready_file_indices, satisfied_file_indices, supports_early_import
+from .ready_files import (
+    ACTIVE_IMPORT_STATUSES,
+    ReadyFileDisposition,
+    inspect_ready_files,
+    ready_file_indices,
+    satisfied_file_indices,
+    supports_early_import,
+)
 
 
 logger = logging.getLogger("app.services.transfer")
+
+
+class TransferCommitMode(str, Enum):
+    PARTIAL_INCREMENTAL = "partial_incremental"
+    FINAL_INCREMENTAL = "final_incremental"
+    FULL_IMPORT = "full_import"
+    IDEMPOTENT_REPAIR = "idempotent_repair"
+
+    @property
+    def incremental(self) -> bool:
+        return self in {self.PARTIAL_INCREMENTAL, self.FINAL_INCREMENTAL}
+
+    @property
+    def completes_task(self) -> bool:
+        return self != self.PARTIAL_INCREMENTAL
+
+    @property
+    def preserves_existing(self) -> bool:
+        return self == self.IDEMPOTENT_REPAIR
 
 
 def _nested_message_params(params: dict[str, str] | None) -> str:
@@ -69,7 +96,12 @@ class TransferService:
             indices.intersection_update(file_indices)
         if not indices:
             return TransferResult(transferred_files=[])
-        return await self._perform_incremental_transfer(task, existing_files, indices, complete=False)
+        return await self._perform_incremental_transfer(
+            task,
+            existing_files,
+            indices,
+            TransferCommitMode.PARTIAL_INCREMENTAL,
+        )
 
     async def _finish_incremental_transfer(
         self,
@@ -91,15 +123,19 @@ class TransferService:
             if not remaining.issubset(ready):
                 if not ready:
                     missing_sources = await execution.missing_transfer_source_paths(task, remaining)
-                    if missing_sources or inspection.source_fallback_allowed:
+                    if missing_sources or inspection.disposition == ReadyFileDisposition.SOURCE_FALLBACK:
                         return await self._perform_incremental_transfer(
-                            task, existing_files, remaining, complete=True,
+                            task, existing_files, remaining, TransferCommitMode.FINAL_INCREMENTAL,
                         )
-                    if inspection.can_become_ready:
+                    if inspection.disposition == ReadyFileDisposition.WAIT:
                         return TransferResult(transferred_files=[])
                     await self._reject_terminal_file_validation(task)
-                return await self._perform_incremental_transfer(task, existing_files, ready, complete=False)
-        return await self._perform_incremental_transfer(task, existing_files, remaining, complete=True)
+                return await self._perform_incremental_transfer(
+                    task, existing_files, ready, TransferCommitMode.PARTIAL_INCREMENTAL,
+                )
+        return await self._perform_incremental_transfer(
+            task, existing_files, remaining, TransferCommitMode.FINAL_INCREMENTAL,
+        )
 
     async def _reject_terminal_file_validation(self, task: TaskData) -> None:
         exc = TransferException("backendErrors.transferSourceFilesNotReady")
@@ -109,13 +145,17 @@ class TransferService:
         raise exc
 
     async def _perform_incremental_transfer(
-        self, task: TaskData, existing_files: list[LibraryFile], indices: set[int], *, complete: bool,
+        self,
+        task: TaskData,
+        existing_files: list[LibraryFile],
+        indices: set[int],
+        commit_mode: TransferCommitMode,
     ) -> TransferResult:
         try:
-            if complete:
+            if commit_mode.completes_task:
                 await self._lock_task_status(task)
             if not indices:
-                if complete and not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
+                if commit_mode.completes_task and not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
                     raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})
                 return TransferResult(transferred_files=[])
             context = await execution.build_transfer_execution_context(task)
@@ -123,7 +163,8 @@ class TransferService:
             transfer_plan = library_replacement_policy.select_batch_winners(
                 execution.build_transfer_plan(task, context),
             )
-            results = await execution.execute_transfer_plan(task, context, transfer_plan)
+            execution_report = await execution.execute_transfer_plan(task, context, transfer_plan)
+            results = execution_report.materialized_files
             replacement_plan = await library_replacement_policy.build_plan(
                 task,
                 results,
@@ -132,19 +173,20 @@ class TransferService:
             )
             await commit_transfer_results(
                 task, results, existing_files, context, replacement_plan.replace_files,
-                incremental=True, complete=complete, handled_file_indices=indices,
+                commit_mode=commit_mode,
+                handled_file_indices=indices,
             )
             return TransferResult(transferred_files=results)
         except AppException as exc:
             await emit_media_import_failed(task, exc.message_key, exc.params)
-            if complete:
+            if commit_mode.completes_task:
                 await handle_transfer_error(task, exc.message_key, exc.params)
             raise
         except (OSError, ValueError) as exc:
             error_key = "backendErrors.transferFailed"
             error_params = {"reason": str(exc)}
             await emit_media_import_failed(task, error_key, error_params)
-            if complete:
+            if commit_mode.completes_task:
                 await handle_transfer_error(task, error_key, error_params)
             raise TransferException(error_key, params=error_params) from exc
 
@@ -156,7 +198,8 @@ class TransferService:
             execution_context = await execution.build_transfer_execution_context(task)
             full_transfer_plan = execution.build_transfer_plan(task, execution_context)
             transfer_plan = library_replacement_policy.select_batch_winners(full_transfer_plan)
-            transfer_results = await execution.execute_transfer_plan(task, execution_context, transfer_plan)
+            execution_report = await execution.execute_transfer_plan(task, execution_context, transfer_plan)
+            transfer_results = execution_report.materialized_files
             replacement_plan = await library_replacement_policy.build_plan(task, transfer_results, execution_context.season_number)
             await commit_transfer_results(
                 task,
@@ -164,8 +207,12 @@ class TransferService:
                 existing_library_files,
                 execution_context,
                 replacement_plan.replace_files,
+                commit_mode=(
+                    TransferCommitMode.IDEMPOTENT_REPAIR
+                    if execution_report.skipped_existing_files
+                    else TransferCommitMode.FULL_IMPORT
+                ),
                 handled_file_indices={result.file_index for result in full_transfer_plan},
-                preserve_existing=len(transfer_results) < len(transfer_plan),
             )
             logger.info("Transfer completed: task=%s files=%d", task.id, len(transfer_results))
             return TransferResult(transferred_files=transfer_results)
@@ -199,11 +246,20 @@ def _task_import_entities(task: TaskData) -> list[EventEntityRef]:
     return [EventEntityRef(type="task", id=task.id), EventEntityRef(type="media", id=str(task.media_id))]
 
 
-def build_media_import_completed_event(task: TaskData, transfer_results: list[TransferFileResult]) -> Event:
+def build_media_import_completed_event(
+    task: TaskData,
+    transfer_results: list[TransferFileResult],
+) -> Event | None:
+    primary_results = [
+        result for result in transfer_results
+        if file_name_looks_like_media_file(result.destination_path)
+    ]
+    if not primary_results:
+        return None
     media = task.context.media
     if media is None:
         raise TransferException("backendErrors.transferMediaSnapshotMissing", params={"task_id": task.id, "media_id": str(task.media_id)})
-    file_path = transfer_results[0].destination_path if transfer_results else ""
+    file_path = primary_results[0].destination_path
     return event_service.build_media_event(
         MediaEventCreate(
             type=EventTypes.MEDIA_IMPORT_COMPLETED,
@@ -226,7 +282,7 @@ def build_media_import_completed_event(task: TaskData, transfer_results: list[Tr
                     episode_number=result.episode_number,
                     episode_numbers=result.episode_numbers,
                 )
-                for result in transfer_results
+                for result in primary_results
             ],
         ),
     )
@@ -234,7 +290,9 @@ def build_media_import_completed_event(task: TaskData, transfer_results: list[Tr
 
 async def emit_media_import_completed(task: TaskData, transfer_results: list[TransferFileResult]) -> None:
     try:
-        event_service.persist_built_event(build_media_import_completed_event(task, transfer_results))
+        event = build_media_import_completed_event(task, transfer_results)
+        if event is not None:
+            event_service.persist_built_event(event)
     except AppException as exc:
         logger.warning("Failed to emit media import event for task %s: %s", task.id, exc)
 
@@ -276,29 +334,15 @@ async def commit_transfer_results(
     execution_context: TransferExecutionContext,
     replacement_files: list[LibraryFile] | None = None,
     *,
-    incremental: bool = False,
-    complete: bool = True,
+    commit_mode: TransferCommitMode = TransferCommitMode.FULL_IMPORT,
     handled_file_indices: set[int] | None = None,
-    preserve_existing: bool = False,
 ) -> None:
     try:
         completion_event = (
             build_media_import_completed_event(task, transfer_results)
-            if incremental and transfer_results
+            if commit_mode.incremental and transfer_results
             else None
         )
-        batch_paths = {str(Path(result.destination_path)) for result in transfer_results}
-        known_replacement_paths = {
-            str(build_library_file_path(item.path, item.file_name))
-            for item in [*existing_library_files, *(replacement_files or [])]
-        }
-        replaced_video_paths = {
-            str(Path(result.destination_path))
-            for result in transfer_results
-            if file_name_looks_like_media_file(result.destination_path)
-            and str(Path(result.destination_path)) in known_replacement_paths
-        }
-        await library_service.cleanup_replaced_sidecars(replaced_video_paths, batch_paths)
         replaced_library_files = await library_service.replace_task_entries(
             task.id,
             task.context.directory_id,
@@ -306,11 +350,11 @@ async def commit_transfer_results(
             transfer_results,
             execution_context.season_number,
             replacement_files,
-            incremental=incremental,
-            preserve_existing=preserve_existing,
+            incremental=commit_mode.incremental,
+            preserve_existing=commit_mode.preserves_existing,
             imported_file_indices=(
                 sorted(handled_file_indices or {result.file_index for result in transfer_results})
-                if incremental and transfer_results
+                if commit_mode.incremental and transfer_results
                 else None
             ),
             completion_event=completion_event,
@@ -320,18 +364,18 @@ async def commit_transfer_results(
                 else None
             ),
         )
-        if incremental:
+        if commit_mode.incremental:
             task.context.imported_file_indices = sorted(
                 set(task.context.imported_file_indices)
                 | (handled_file_indices or {result.file_index for result in transfer_results})
             )
-        if complete:
+        if commit_mode.completes_task:
             if not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
                 raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})
         await cleanup_replaced_library_files(
             (
                 replaced_library_files
-                if incremental or preserve_existing
+                if commit_mode.incremental or commit_mode.preserves_existing
                 else (replaced_library_files or existing_library_files)
             ),
             transfer_results,

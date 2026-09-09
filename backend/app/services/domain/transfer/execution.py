@@ -39,6 +39,12 @@ class TransferExecutionContext(BaseModel):
     season_number: int | None = None
 
 
+class TransferExecutionReport(BaseModel):
+    planned_files: list[TransferFileResult]
+    materialized_files: list[TransferFileResult]
+    skipped_existing_files: list[TransferFileResult]
+
+
 def validate_transfer_task(task: TaskData) -> None:
     if not task.context:
         raise TransferException("backendErrors.transferTaskContextMissing", params={"task_id": task.id})
@@ -384,22 +390,28 @@ async def execute_transfer_plan(
     task: TaskData,
     execution_context: TransferExecutionContext,
     transfer_results: list[TransferFileResult],
-) -> list[TransferFileResult]:
+) -> TransferExecutionReport:
     await validate_transfer_upgrade_policy(task, transfer_results)
     materializer = transfer_materializer_registry.resolve(execution_context.transfer_mode)
     materialized_results: list[TransferFileResult] = []
+    skipped_existing_results: list[TransferFileResult] = []
     for transfer_result in transfer_results:
         source_path = Path(transfer_result.source_path)
         destination_path = Path(transfer_result.destination_path)
         try:
             if await should_skip_existing_task_materialization(task, transfer_result):
+                skipped_existing_results.append(transfer_result)
                 continue
             await asyncio.to_thread(materializer.materialize, source_path, destination_path)
             materialized_results.append(transfer_result)
         except (TransferException, OSError):
             raise
-    return materialized_results
+    return TransferExecutionReport(
+        planned_files=transfer_results,
+        materialized_files=materialized_results,
+        skipped_existing_files=skipped_existing_results,
+    )
 
 
-async def execute_transfer(task: TaskData, execution_context: TransferExecutionContext) -> list[TransferFileResult]:
+async def execute_transfer(task: TaskData, execution_context: TransferExecutionContext) -> TransferExecutionReport:
     return await execute_transfer_plan(task, execution_context, build_transfer_plan(task, execution_context))

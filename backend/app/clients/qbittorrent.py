@@ -325,8 +325,8 @@ class QBittorrentClient(DownloadClient):
             return DownloadInfoLookup(status=DownloadInfoLookupStatus.UNAVAILABLE)
 
     async def get_torrent_files(self, torrent_hash: str) -> Optional[list[DownloadFileInfo]]:
-        await self.authenticate()
         try:
+            await self.authenticate()
             files_raw = await self._call_with_reauth(
                 lambda client: asyncio.to_thread(self._qb_get_torrent_files, client, torrent_hash)
             )
@@ -340,7 +340,7 @@ class QBittorrentClient(DownloadClient):
                 )
                 for file_info in (QBFileInfo.model_validate(item) for item in files_raw)
             ]
-        except (qbittorrentapi.APIConnectionError, qbittorrentapi.APIError, ValueError, TypeError) as e:
+        except (qbittorrentapi.APIConnectionError, qbittorrentapi.APIError, OSError, ValueError, TypeError) as e:
             logger.error(f"Failed to get torrent files: {e}")
             return None
 

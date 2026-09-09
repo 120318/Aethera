@@ -176,6 +176,18 @@ async def test_stale_finished_state_cannot_publish_unfinished_files(setup_import
 
 
 @pytest.mark.asyncio
+async def test_downloader_file_list_failure_is_treated_as_waiting(setup_import):
+    env = setup_import
+    env.client.get_torrent_files.side_effect = OSError("downloader disconnected")
+
+    assert await find_ready_file_indices(env.task) == []
+    result = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+
+    assert result.transferred_files == []
+    assert env.task.status == TaskStatus.DOWNLOADING
+
+
+@pytest.mark.asyncio
 async def test_finished_incremental_import_ignores_missing_source_for_satisfied_index(setup_import):
     env = setup_import
     first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
@@ -478,6 +490,31 @@ async def test_replaced_early_file_restores_episode_group_from_context_attribute
 
     assert env.task.context.imported_file_indices == [2]
     assert await library_service.get_files_by_task(env.task.id) == []
+    assert await find_ready_file_indices(env.task) == []
+
+
+@pytest.mark.asyncio
+async def test_imported_single_episodes_satisfy_later_lower_quality_combined_file(setup_import):
+    env = setup_import
+    env.live[1].progress = 1.0
+    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2, 5])
+    env.task.metadata.files[2].attrs.episodes = [1, 2]
+    env.task.metadata.files[2].attrs.resolution = ResourceAttributes(resolution="720p").resolution
+    env.live[2].progress = 1.0
+
+    assert env.task.context.imported_file_indices == [2, 5]
+    assert await find_ready_file_indices(env.task) == []
+
+
+@pytest.mark.asyncio
+async def test_imported_combined_file_satisfies_later_equal_quality_single_episode(setup_import):
+    env = setup_import
+    env.task.metadata.files[0].attrs.episodes = [1, 2]
+    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    env.task.metadata.files[1].attrs.episodes = [1]
+    env.live[1].progress = 1.0
+
+    assert env.task.context.imported_file_indices == [2]
     assert await find_ready_file_indices(env.task) == []
 
 

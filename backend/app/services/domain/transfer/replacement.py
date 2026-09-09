@@ -97,7 +97,7 @@ class LibraryReplacementPolicy:
         self,
         task: TaskData,
         season: int | None,
-        imported_episode_groups: set[frozenset[int]],
+        imported_episode_numbers: set[int],
     ) -> set[int]:
         if task.media_id.media_type != MediaType.tv or season is None or not task.metadata:
             return set()
@@ -133,10 +133,10 @@ class LibraryReplacementPolicy:
                 continue
             if not file_name_looks_like_media_file(item.filename):
                 continue
-            episode_numbers = {int(value) for value in item.get_episodes() if int(value) > 0}
-            if not episode_numbers or frozenset(episode_numbers) not in imported_episode_groups:
-                continue
             incoming = with_context_resource_attrs(task, item)
+            episode_numbers = {int(value) for value in incoming.get_episodes() if int(value) > 0}
+            if not episode_numbers or not episode_numbers.issubset(imported_episode_numbers):
+                continue
             incoming_rank = self._rank(incoming.attrs or ResourceAttributes(), incoming.size or 0, quality_profile)
             if len(episode_numbers) > 1:
                 incoming_quality = incoming_rank[:2]

@@ -18,7 +18,7 @@ from app.schemas.domain.action import (
     ActionTrigger,
 )
 from app.schemas.domain.action_meta import DanmuGenerateQueuedActionMeta
-from app.schemas.domain.addon_events import DanmuGenerationOutcome, ImportedMediaFile, MediaImportCompletedEventMeta
+from app.schemas.domain.addon_events import DanmuGenerationOutcome, MediaImportCompletedEventMeta
 from app.schemas.domain.event import Event, EventActor, EventType
 from app.schemas.domain.library import LibraryFile, LibraryFileArtifact, LibraryFileArtifactStatus, LibraryFileArtifactType
 from app.schemas.domain.media import MediaFullInfo
@@ -28,7 +28,7 @@ from app.services.audit.workflow_event_emitters import emit_danmu_generate_event
 from app.services.config.settings_service import settings_service
 from app.services.application.workflows.danmu.backfill_policy import is_recently_watchable
 from app.services.application.workflows.danmu.duration_guard import danmu_duration_guard
-from app.services.application.workflows.danmu.event_summary import emit_generation_summary
+from app.services.application.workflows.danmu.event_summary import emit_generation_summary, resolve_primary_import_batch
 from app.services.application.workflows.danmu.source_resolver import danmu_source_resolver
 from app.services.application.workflows.danmu.sidecar_outputs import expected_sidecar_paths, remove_outputs, write_outputs
 from app.services.application.workflows.scoped_seasons import (
@@ -88,6 +88,9 @@ class DanmuApplicationService:
         if meta.media_id.media_type.value == "tv" and season_number is None:
             logger.warning("Danmu skipped: missing season media=%s", meta.media_id)
             return
+        import_batch = resolve_primary_import_batch(meta, library_files)
+        if not import_batch.imported_files:
+            return
         media = await danmu_source_resolver.media_with_fetchable_source(
             meta.media_id,
             season_number=season_number,
@@ -96,19 +99,15 @@ class DanmuApplicationService:
         if not media:
             logger.warning("Danmu skipped: media info unavailable media=%s", meta.media_id)
             return
-        library_files_by_path = {
-            str(build_library_file_path(library_file.path, library_file.file_name)): library_file
-            for library_file in library_files
-            if library_file.id
-        }
-        imported_files = meta.imported_files or [
-            ImportedMediaFile(destination_path=meta.file_path, episode_number=None)
-        ]
         outcomes: list[DanmuGenerationOutcome] = []
-        for imported_file in imported_files:
+        for imported_file in import_batch.imported_files:
             video_path = Path(imported_file.destination_path)
-            if not imported_file.destination_path:
-                continue
+            video_path_key = str(video_path)
+            library_file = (
+                import_batch.library_files_by_path[video_path_key]
+                if video_path_key in import_batch.library_files_by_path
+                else None
+            )
             outcomes.append(
                 await self._generate_for_video(
                     media,
@@ -117,7 +116,7 @@ class DanmuApplicationService:
                     trigger=ActionTrigger.event,
                     event=event,
                     config=config,
-                    library_file=library_files_by_path.get(str(video_path)),
+                    library_file=library_file,
                 )
             )
         emit_generation_summary(media, outcomes)

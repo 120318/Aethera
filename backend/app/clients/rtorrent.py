@@ -206,7 +206,7 @@ class RTorrentClient(DownloadClient):
                 )
                 for row in rows
             ]
-        except (httpx.HTTPError, xmlrpc_client.Error, ValueError, TypeError) as exc:
+        except (httpx.HTTPError, xmlrpc_client.Error, OSError, ValueError, TypeError) as exc:
             logger.error("Failed to get rTorrent files(%s): %s", torrent_hash, exc)
             return None
 

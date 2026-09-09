@@ -1,5 +1,7 @@
-from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
+
+from pydantic import BaseModel
 
 from app.schemas.domain.download import DownloadInfoLookupStatus, TaskData, TaskStatus
 from app.schemas.domain.library import LibraryFile
@@ -30,11 +32,15 @@ READABLE_TORRENT_STATES = {
 }
 
 
-@dataclass(frozen=True)
-class ReadyFileInspection:
+class ReadyFileDisposition(str, Enum):
+    WAIT = "wait"
+    REJECT = "reject"
+    SOURCE_FALLBACK = "source_fallback"
+
+
+class ReadyFileInspection(BaseModel):
     indices: list[int]
-    can_become_ready: bool
-    source_fallback_allowed: bool = False
+    disposition: ReadyFileDisposition
 
 
 def supports_early_import(task: TaskData) -> bool:
@@ -66,32 +72,30 @@ def present_file_indices(files: list[LibraryFile]) -> set[int]:
     return present
 
 
-def _imported_episode_groups(task: TaskData) -> set[frozenset[int]]:
-    groups: set[frozenset[int]] = set()
+def _imported_episode_numbers(task: TaskData) -> set[int]:
+    episodes: set[int] = set()
     if not task.metadata:
-        return groups
+        return episodes
     imported = set(task.context.imported_file_indices)
     for item in task.metadata.files:
         if item.index not in imported or not file_name_looks_like_media_file(item.filename):
             continue
         execution_item = with_context_resource_attrs(task, item)
-        group = frozenset(int(value) for value in execution_item.get_episodes() if int(value) > 0)
-        if group:
-            groups.add(group)
-    return groups
+        episodes.update(int(value) for value in execution_item.get_episodes() if int(value) > 0)
+    return episodes
 
 
 async def satisfied_file_indices(task: TaskData, existing_files: list[LibraryFile]) -> set[int]:
     satisfied = present_file_indices(existing_files)
-    imported_episode_groups = _imported_episode_groups(task)
-    if not imported_episode_groups:
+    imported_episode_numbers = _imported_episode_numbers(task)
+    if not imported_episode_numbers:
         return satisfied
     coverage = download_service.resolve_task_episode_coverage_detail(task)
     satisfied.update(
         await library_replacement_policy.satisfied_file_indices(
             task,
             coverage.season_number,
-            imported_episode_groups,
+            imported_episode_numbers,
         )
     )
     return satisfied
@@ -112,34 +116,40 @@ async def inspect_ready_files(
     known_satisfied_indices: set[int] | None = None,
 ) -> ReadyFileInspection:
     if task.status not in [*ACTIVE_IMPORT_STATUSES, TaskStatus.FINISHED] or not supports_early_import(task):
-        return ReadyFileInspection([], False)
+        return ReadyFileInspection(indices=[], disposition=ReadyFileDisposition.REJECT)
     client = download_service.task_service.resolve_task_client(task)
     if client is None:
-        return ReadyFileInspection([], True)
+        return ReadyFileInspection(indices=[], disposition=ReadyFileDisposition.WAIT)
     if torrent_status is not None:
         info = torrent_status
     else:
-        lookup = await client.lookup_torrent_info(task.torrent_hash)
+        try:
+            lookup = await client.lookup_torrent_info(task.torrent_hash)
+        except (OSError, RuntimeError, ValueError):
+            return ReadyFileInspection(indices=[], disposition=ReadyFileDisposition.WAIT)
         if lookup.status == DownloadInfoLookupStatus.MISSING:
-            return ReadyFileInspection([], False, True)
+            return ReadyFileInspection(indices=[], disposition=ReadyFileDisposition.SOURCE_FALLBACK)
         if lookup.status == DownloadInfoLookupStatus.UNAVAILABLE or lookup.info is None:
-            return ReadyFileInspection([], True)
+            return ReadyFileInspection(indices=[], disposition=ReadyFileDisposition.WAIT)
         info = lookup.info
     if not info.files_readable:
-        return ReadyFileInspection([], True)
+        return ReadyFileInspection(indices=[], disposition=ReadyFileDisposition.WAIT)
     if info.state.lower() not in READABLE_TORRENT_STATES:
-        can_become_ready = info.state.lower() in {
+        disposition = ReadyFileDisposition.WAIT if info.state.lower() in {
             "checkingdl", "checkingup", "checkingresumedata", "moving", "allocating", "checking",
-        }
-        return ReadyFileInspection([], can_become_ready)
+        } else ReadyFileDisposition.REJECT
+        return ReadyFileInspection(indices=[], disposition=disposition)
     source_base = await resolve_source_base_path(task)
     if Path(info.save_path).resolve() != source_base.resolve():
-        return ReadyFileInspection([], False)
-    live_files = await client.get_torrent_files(task.torrent_hash)
+        return ReadyFileInspection(indices=[], disposition=ReadyFileDisposition.REJECT)
+    try:
+        live_files = await client.get_torrent_files(task.torrent_hash)
+    except (OSError, RuntimeError, ValueError):
+        return ReadyFileInspection(indices=[], disposition=ReadyFileDisposition.WAIT)
     if live_files is None:
-        return ReadyFileInspection([], True)
+        return ReadyFileInspection(indices=[], disposition=ReadyFileDisposition.WAIT)
     if not live_files:
-        return ReadyFileInspection([], False)
+        return ReadyFileInspection(indices=[], disposition=ReadyFileDisposition.REJECT)
     live_by_index = {item.index: item for item in live_files}
     imported = (
         known_satisfied_indices
@@ -147,7 +157,11 @@ async def inspect_ready_files(
         else await satisfied_file_indices(task, existing_files)
     )
     ready: list[int] = []
-    can_become_ready = task.status in ACTIVE_IMPORT_STATUSES
+    disposition = (
+        ReadyFileDisposition.WAIT
+        if task.status in ACTIVE_IMPORT_STATUSES
+        else ReadyFileDisposition.REJECT
+    )
     for index, item in iter_selected_files(task.metadata.files, resolve_selected_indices(task)):
         if task.status in ACTIVE_IMPORT_STATUSES and not file_name_looks_like_media_file(item.filename):
             continue
@@ -155,7 +169,7 @@ async def inspect_ready_files(
         if index in imported or live is None or live.priority <= 0:
             continue
         if live.progress != 1.0:
-            can_become_ready = True
+            disposition = ReadyFileDisposition.WAIT
             continue
         if item.size <= 0 or live.size != item.size:
             continue
@@ -169,7 +183,7 @@ async def inspect_ready_files(
                 ready.append(index)
         except OSError:
             continue
-    return ReadyFileInspection(ready, can_become_ready)
+    return ReadyFileInspection(indices=ready, disposition=disposition)
 
 
 async def ready_file_indices(
