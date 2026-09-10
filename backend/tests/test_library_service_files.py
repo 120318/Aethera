@@ -135,7 +135,7 @@ def test_delete_replaced_files_preserves_directory_with_registered_auxiliary_fil
             created_at=1.0,
             resource_attributes=ResourceAttributes(seasons=[1], episodes=[1]),
         )
-    ])
+    ], set())
 
     assert not episode_file.exists()
     assert subtitle_file.exists()
@@ -218,3 +218,38 @@ async def test_replaced_sidecar_cleanup_preserves_registered_library_file(tmp_pa
     await service.cleanup_replaced_sidecars(snapshots, {str(video)})
 
     assert nfo.read_text() == "registered nfo"
+
+
+@pytest.mark.asyncio
+async def test_replaced_file_cleanup_preserves_registered_sidecar(tmp_path, monkeypatch):
+    video = tmp_path / "Show.S01E01.mkv"
+    nfo = video.with_suffix(".nfo")
+    danmu = video.with_suffix(".danmu.xml")
+    video.write_text("video")
+    nfo.write_text("registered nfo")
+    danmu.write_text("stale danmu")
+    cleanup = LibraryCleanup()
+    service = LibraryService(cleanup=cleanup)
+    video_record = LibraryFile(
+        id="video-file",
+        task_id="task-1",
+        directory_id="dir-1",
+        media_id=MediaID.parse("tmdb:tv:100088"),
+        path=str(tmp_path),
+        file_name=video.name,
+        created_at=1.0,
+    )
+    registered_nfo = video_record.model_copy(
+        update={"id": "nfo-file", "file_name": nfo.name},
+    )
+    monkeypatch.setattr(
+        service,
+        "find_file_by_path",
+        AsyncMock(side_effect=lambda path: registered_nfo if path == str(nfo) else None),
+    )
+
+    await service.cleanup_replaced_files([video_record], set())
+
+    assert not video.exists()
+    assert nfo.read_text() == "registered nfo"
+    assert not danmu.exists()

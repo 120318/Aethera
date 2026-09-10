@@ -383,7 +383,19 @@ class LibraryService:
             if str(full_path) not in preserved_paths:
                 removed_files.append(file)
         if removed_files:
-            await asyncio.to_thread(self._cleanup.delete_replaced_files, removed_files)
+            sidecar_paths = {
+                sidecar_path
+                for file in removed_files
+                for sidecar_path in self._cleanup.sidecar_paths(
+                    build_library_file_path(file.path, file.file_name)
+                )
+            }
+            registered_sidecars = await self._registered_paths(sidecar_paths)
+            await asyncio.to_thread(
+                self._cleanup.delete_replaced_files,
+                removed_files,
+                {Path(path) for path in preserved_paths} | registered_sidecars,
+            )
 
     async def snapshot_replaced_sidecars(
         self,
@@ -401,15 +413,26 @@ class LibraryService:
         snapshots: list[LibrarySidecarSnapshot],
         replaced_video_paths: set[str],
     ) -> None:
-        unregistered_snapshots = []
-        for snapshot in snapshots:
-            if await self.find_file_by_path(snapshot.sidecar_path) is None:
-                unregistered_snapshots.append(snapshot)
+        registered_paths = await self._registered_paths(
+            {Path(snapshot.sidecar_path) for snapshot in snapshots}
+        )
+        unregistered_snapshots = [
+            snapshot
+            for snapshot in snapshots
+            if Path(snapshot.sidecar_path) not in registered_paths
+        ]
         await asyncio.to_thread(
             self._cleanup.delete_unchanged_sidecar_files,
             unregistered_snapshots,
             {Path(path) for path in replaced_video_paths},
         )
+
+    async def _registered_paths(self, paths: set[Path]) -> set[Path]:
+        registered: set[Path] = set()
+        for path in paths:
+            if await self.find_file_by_path(str(path)) is not None:
+                registered.add(path)
+        return registered
 
     # Deletion
     async def delete_task_library_records(self, task_id: str) -> int:

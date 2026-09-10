@@ -287,9 +287,11 @@ event's imported files, not all files belonging to the task.
   the library transaction commits. Same-path replacement snapshots stale
   sidecars and deletes them after commit only when no consumer has rewritten
   them; sidecars materialized by the transfer batch or still referenced by the
-  current library registry are preserved. Import events contain primary video
-  files only. Danmu and media-server consumers share one current-import batch
-  resolver and accessibility gate before producing metadata. Registry absence
+  current library registry are preserved. Every replacement cleanup path checks
+  the current registry before deleting an adjacent sidecar. Import events contain
+  primary video files only. Danmu and media-server consumers share one
+  current-import batch resolver and accessibility gate before producing metadata.
+  Registry absence
   makes a queued target stale; a registered target whose storage is unavailable
   remains a retryable consumer failure.
 - Batch selection records discarded lower-quality indices separately from
