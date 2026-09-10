@@ -4,7 +4,8 @@ from app.schemas.domain.download import TaskData, TaskStatus
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media_types import MediaType
 from app.services.domain.download.coverage import resolve_task_episode_coverage_detail
-from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file
+from app.services.domain.library.service import library_service
+from app.utils.library_paths import file_name_looks_like_media_file
 
 DOWNLOAD_AUDIT_STATUSES = {
     TaskStatus.FINISHED,
@@ -51,7 +52,7 @@ def is_task_fully_replaced(task: TaskData, directory_files: list[LibraryFile]) -
         ):
             continue
         try:
-            if build_library_file_path(item.path, item.file_name).is_file():
+            if library_service.file_is_intact(item):
                 visible_replacements.append(item)
         except OSError:
             continue

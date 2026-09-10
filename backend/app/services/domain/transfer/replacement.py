@@ -107,9 +107,8 @@ class LibraryReplacementPolicy:
         for item in library_files:
             if not item.id or not file_name_looks_like_media_file(item.file_name):
                 continue
-            path = build_library_file_path(item.path, item.file_name)
             try:
-                if path.is_file():
+                if library_service.file_is_intact(item):
                     files_by_id[item.id] = item
             except OSError as exc:
                 raise TransferException(
@@ -225,7 +224,7 @@ class LibraryReplacementPolicy:
                     episode_quality[episode] = max(episode_quality.get(episode, quality), quality)
             for item in primary_library_files:
                 path = build_library_file_path(item.path, item.file_name)
-                if item.id in replaceable_file_ids or str(path) in incoming_paths or not path.is_file():
+                if item.id in replaceable_file_ids or str(path) in incoming_paths or not library_service.file_is_intact(item):
                     continue
                 quality = self._rank(item.resource_attributes, 0, quality_profile)[:2]
                 for episode in episodes:

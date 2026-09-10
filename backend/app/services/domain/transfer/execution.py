@@ -151,14 +151,20 @@ def build_source_path(task: TaskData, file_item: TorrentFileItem, source_base_pa
 
 
 def collect_present_library_files(library_files: list[LibraryFile]) -> list[LibraryFile]:
-    return [library_file for library_file in library_files if fs_provider.exists(build_library_file_path(library_file.path, library_file.file_name))]
+    try:
+        return [library_file for library_file in library_files if library_service.file_is_intact(library_file)]
+    except OSError as exc:
+        raise TransferException(
+            "backendErrors.transferFailed",
+            params={"reason": str(exc)},
+        ) from exc
 
 
 async def should_skip_existing_task_materialization(task: TaskData, transfer_result: TransferFileResult) -> bool:
     existing_file = await library_service.find_file_by_path(transfer_result.destination_path)
     if not existing_file or not is_idempotent_transfer_retry(task, existing_file, transfer_result):
         return False
-    return fs_provider.exists(build_library_file_path(existing_file.path, existing_file.file_name))
+    return library_service.file_is_intact(existing_file)
 
 
 def should_skip_retransfer(

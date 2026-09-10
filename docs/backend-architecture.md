@@ -271,11 +271,14 @@ event's imported files, not all files belonging to the task.
   idempotently skipped files. Registration, cleanup, events, and user-visible
   results consume the corresponding report fields instead of inferring execution
   from list lengths or paths.
+- A library file is satisfied for transfer re-entry only when its current size
+  matches the size recorded at registration; mere path existence is insufficient.
 - Incremental registration replaces only the incoming file indices and explicit
   quality-replacement conflicts. It preserves earlier batches and their episode
   records. Full completion imports remaining files and changes the task status;
   an empty final batch emits no additional import event. Every successful import
-  mode persists its handled file indices in the task ledger.
+  mode persists its handled file indices in the task ledger and writes its import
+  event plus consumer dispatches in the same library transaction.
 - Transfer commit modes are explicit: partial incremental, final incremental,
   full import, and idempotent repair. Filesystem sidecars are never deleted before
   the library transaction commits. Same-path replacement snapshots stale

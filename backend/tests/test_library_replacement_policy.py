@@ -109,6 +109,9 @@ class _LibraryServiceStub:
     async def get_episodes_by_media(self, media_id: MediaID) -> list[LibraryEpisode]:
         return [item for item in self.episodes if item.media_id == media_id]
 
+    def file_is_intact(self, _library_file: LibraryFile) -> bool:
+        return True
+
     def build_package_summaries(self, files: list[LibraryFile]):
         return self._package_service.build_package_summaries(files)
 

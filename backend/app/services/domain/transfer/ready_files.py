@@ -7,6 +7,7 @@ from app.schemas.domain.download import DownloadInfoLookupStatus, TaskData, Task
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
+from app.schemas.exception.exceptions import TransferException
 from app.services.domain.download import download_service
 from app.services.domain.library.service import library_service
 from app.services.domain.resource.filtering import is_original_disc_attrs
@@ -63,12 +64,14 @@ def present_file_indices(files: list[LibraryFile]) -> set[int]:
     for item in files:
         if item.file_index is None:
             continue
-        path = build_library_file_path(item.path, item.file_name)
         try:
-            if path.is_file():
+            if library_service.file_is_intact(item):
                 present.add(item.file_index)
-        except OSError:
-            continue
+        except OSError as exc:
+            raise TransferException(
+                "backendErrors.transferFailed",
+                params={"reason": str(exc)},
+            ) from exc
     return present
 
 

@@ -12,6 +12,12 @@ class LibraryLayoutWorker:
     def file_exists(self, library_file: LibraryFile) -> bool:
         return build_library_file_path(library_file.path, library_file.file_name).exists()
 
+    def file_is_intact(self, library_file: LibraryFile) -> bool:
+        if library_file.file_size is None or library_file.file_size < 0:
+            return False
+        path = build_library_file_path(library_file.path, library_file.file_name)
+        return path.is_file() and path.stat().st_size == library_file.file_size
+
     def is_primary_file(self, library_file: LibraryFile) -> bool:
         return file_name_looks_like_media_file((library_file.file_name or "").lower())
 

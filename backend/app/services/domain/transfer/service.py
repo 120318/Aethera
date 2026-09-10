@@ -310,15 +310,6 @@ def build_media_import_completed_event(
     )
 
 
-async def emit_media_import_completed(task: TaskData, transfer_results: list[TransferFileResult]) -> None:
-    try:
-        event = build_media_import_completed_event(task, transfer_results)
-        if event is not None:
-            event_service.persist_built_event(event)
-    except AppException as exc:
-        logger.warning("Failed to emit media import event for task %s: %s", task.id, exc)
-
-
 async def emit_media_import_failed(task: TaskData, error_key: str, error_params: dict[str, str] | None = None) -> None:
     try:
         media = task.context.media
@@ -379,7 +370,7 @@ async def commit_transfer_results(
         )
         completion_event = (
             build_media_import_completed_event(task, transfer_results)
-            if commit_mode.incremental and transfer_results
+            if transfer_results
             else None
         )
         replaced_library_files = await library_service.replace_task_entries(
@@ -431,8 +422,6 @@ async def commit_transfer_results(
             await media_service.refresh_profile_safely(task.media_id, execution_context.season_number)
         except AppException as exc:
             logger.warning("Failed to refresh profile after transfer for task %s: %s", task.id, exc)
-        if completion_event is None:
-            await emit_media_import_completed(task, transfer_results)
     except AppException as exc:
         raise TransferException("backendErrors.transferCommitFailed", params={"reason_key": exc.message_key})
 

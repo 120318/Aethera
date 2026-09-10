@@ -227,6 +227,9 @@ class LibraryService:
     def file_exists(self, library_file: LibraryFile) -> bool:
         return self._layout.file_exists(library_file)
 
+    def file_is_intact(self, library_file: LibraryFile) -> bool:
+        return self._layout.file_is_intact(library_file)
+
     def is_primary_file(self, library_file: LibraryFile) -> bool:
         return self._layout.is_primary_file(library_file)
 

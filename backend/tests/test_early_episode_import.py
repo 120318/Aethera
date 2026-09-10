@@ -203,6 +203,25 @@ async def test_finished_incremental_import_ignores_missing_source_for_satisfied_
 
 
 @pytest.mark.asyncio
+async def test_finished_incremental_import_repairs_truncated_registered_file(setup_import):
+    env = setup_import
+    first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    destination = Path(first.transferred_files[0].destination_path)
+    destination.unlink()
+    destination.write_bytes(b"x")
+    env.task.status = TaskStatus.FINISHED
+    env.info.state = "seeding"
+    for item in env.live:
+        item.progress = 1.0
+
+    result = await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert {item.file_index for item in result.transferred_files} == {2, 5, 9}
+    assert destination.read_bytes() == b"test"
+    assert env.task.status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
 async def test_finished_incremental_import_waits_for_resume_data_check(setup_import):
     env = setup_import
     await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])

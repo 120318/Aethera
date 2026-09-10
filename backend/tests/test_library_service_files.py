@@ -172,6 +172,29 @@ def test_replaced_sidecar_snapshot_preserves_concurrently_rewritten_file(tmp_pat
     assert danmu.read_text() == "new"
 
 
+def test_library_file_integrity_requires_recorded_size_match(tmp_path):
+    video = tmp_path / "Show.S01E01.mkv"
+    video.write_bytes(b"test")
+    library_file = LibraryFile(
+        id="video-file",
+        task_id="task-1",
+        directory_id="dir-1",
+        media_id=MediaID.parse("tmdb:tv:100088"),
+        path=str(tmp_path),
+        file_name=video.name,
+        file_size=4,
+        created_at=1.0,
+    )
+    service = LibraryService()
+
+    assert service.file_is_intact(library_file)
+    video.write_bytes(b"x")
+    assert not service.file_is_intact(library_file)
+
+    video.write_bytes(b"")
+    assert service.file_is_intact(library_file.model_copy(update={"file_size": 0}))
+
+
 @pytest.mark.asyncio
 async def test_replaced_sidecar_cleanup_preserves_registered_library_file(tmp_path, monkeypatch):
     video = tmp_path / "Show.S01E01.mkv"

@@ -131,6 +131,7 @@ async def test_perform_transfer_by_task_id_skips_when_library_is_complete_but_do
         AsyncMock(return_value=[_library_file()]),
     )
     monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.library_service.file_is_intact", lambda _: True)
 
     perform_mock = AsyncMock()
     monkeypatch.setattr(transfer_service, "_perform_transfer", perform_mock)
@@ -154,7 +155,6 @@ async def test_commit_transfer_results_refreshes_tv_profile_with_execution_seaso
     replace_mock = AsyncMock(return_value=[])
     update_state_mock = AsyncMock(return_value=True)
     refresh_mock = AsyncMock()
-    completed_event_mock = AsyncMock()
     monkeypatch.setattr(
         "app.services.domain.transfer.service.library_service.replace_task_entries",
         replace_mock,
@@ -167,11 +167,6 @@ async def test_commit_transfer_results_refreshes_tv_profile_with_execution_seaso
         "app.services.domain.transfer.service.media_service.refresh_profile_safely",
         refresh_mock,
     )
-    monkeypatch.setattr(
-        "app.services.domain.transfer.service.emit_media_import_completed",
-        completed_event_mock,
-    )
-
     await commit_transfer_results(
         task,
         [_transfer_file_result()],
@@ -182,6 +177,8 @@ async def test_commit_transfer_results_refreshes_tv_profile_with_execution_seaso
 
     refresh_mock.assert_awaited_once_with(task.media_id, 2)
     assert replace_mock.await_args.kwargs["imported_file_indices"] == [0]
+    assert replace_mock.await_args.kwargs["completion_event"] is not None
+    assert replace_mock.await_args.kwargs["dispatch_records"] is not None
     assert task.context.imported_file_indices == [0]
 
 
@@ -501,6 +498,7 @@ async def test_execute_transfer_skips_existing_same_task_file_materialization(mo
         season_number=1,
     )
     monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.library_service.file_is_intact", lambda _: True)
     monkeypatch.setattr("app.services.domain.transfer.execution.validate_transfer_upgrade_policy", AsyncMock())
     monkeypatch.setattr("app.services.domain.transfer.execution.library_service.find_file_by_path", AsyncMock(return_value=existing_file))
     monkeypatch.setattr("app.services.domain.transfer.execution.transfer_materializer_registry.resolve", lambda mode: RecordingMaterializer())
