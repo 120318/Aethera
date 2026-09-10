@@ -196,6 +196,21 @@ class DownloadService:
             error_params=error_params,
         )
 
+    async def record_task_error(
+        self,
+        task_id: str,
+        *,
+        error_key: str,
+        error_stage: TaskErrorStage,
+        error_params: dict[str, str] | None = None,
+    ) -> bool:
+        return await self.task_state.record_task_error(
+            task_id,
+            error_key=error_key,
+            error_stage=error_stage,
+            error_params=error_params,
+        )
+
     async def sync_active_downloads(self) -> BatchJobResult:
         finalized = await self.finalize_task_downloader_changes()
         result = await self.task_runtime.sync_active_downloads(self.get_tasks_by_statuses, self.update_task_state)

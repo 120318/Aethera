@@ -12,7 +12,7 @@ os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
 from app.services.application.commands.service import CommandConflictException
 from app.services.application.workflows.scheduled_transfer.service import scheduled_transfer_command_service
-from app.schemas.domain.download import TaskErrorStage, TaskStatus
+from app.schemas.domain.download import TaskErrorStage
 from app.schemas.exception.exceptions import TransferException
 
 
@@ -114,14 +114,14 @@ async def test_enqueue_finished_tasks_marks_transfer_precheck_exception(monkeypa
         ),
     )
     create_command_mock = AsyncMock()
-    update_task_state_mock = AsyncMock()
+    record_task_error_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(
         "app.services.application.workflows.scheduled_transfer.service.command_service.create_command",
         create_command_mock,
     )
     monkeypatch.setattr(
-        "app.services.application.workflows.scheduled_transfer.service.download_service.update_task_state",
-        update_task_state_mock,
+        "app.services.application.workflows.scheduled_transfer.service.download_service.record_task_error",
+        record_task_error_mock,
     )
 
     result = await scheduled_transfer_command_service.enqueue_finished_tasks()
@@ -130,9 +130,8 @@ async def test_enqueue_finished_tasks_marks_transfer_precheck_exception(monkeypa
     assert result.completed == 0
     assert result.errors == 1
     create_command_mock.assert_not_awaited()
-    update_task_state_mock.assert_awaited_once_with(
+    record_task_error_mock.assert_awaited_once_with(
         "task-1",
-        TaskStatus.FINISHED,
         error_key="backendErrors.transferSourceFileNotFound",
         error_params={"path": "/downloads/missing.mkv"},
         error_stage=TaskErrorStage.TRANSFER,

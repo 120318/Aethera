@@ -23,13 +23,14 @@ def _source_visibility_grace_elapsed(task: TaskData, now: datetime | None = None
 
 async def _mark_precheck_transfer_failed(task: TaskData, exc: TransferException) -> None:
     try:
-        await download_service.update_task_state(
+        updated = await download_service.record_task_error(
             task.id,
-            TaskStatus.FINISHED,
             error_key=exc.message_key,
             error_params={str(key): str(value) for key, value in exc.params.items()},
             error_stage=TaskErrorStage.TRANSFER,
         )
+        if not updated:
+            logger.error("Scheduled transfer precheck failure was not persisted for task %s", task.id)
     except DownloadException as update_exc:
         logger.error("Failed to mark scheduled transfer precheck failure for task %s: %s", task.id, update_exc)
 

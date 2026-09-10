@@ -10,7 +10,7 @@ pytestmark = [pytest.mark.drift, pytest.mark.health]
 os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
 from app.schemas.media_id import MediaID
-from app.schemas.domain.download import TaskContext, TaskData, TaskStatus
+from app.schemas.domain.download import TaskContext, TaskData, TaskErrorStage, TaskStatus
 from app.schemas.domain.library import LibraryTaskFileHealth
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
 from app.services.domain.download.task_runtime_service import TaskRuntimeService
@@ -20,6 +20,7 @@ from app.services.domain.download.state import TaskStateService
 class _FakeRepo:
     def __init__(self, task: TaskData | None) -> None:
         self.task = task
+        self.updated_fields = None
 
     async def find_by_id(self, task_id: str) -> TaskData | None:
         if self.task and self.task.id == task_id:
@@ -27,6 +28,7 @@ class _FakeRepo:
         return None
 
     async def update_fields(self, fields, cond: str) -> bool:
+        self.updated_fields = fields
         return True
 
     def cond_id(self, task_id: str) -> str:
@@ -85,6 +87,23 @@ async def test_confirmed_complete_paused_task_can_enter_finished_state():
     service = TaskStateService(_FakeRepo(task))
 
     assert await service.update_task_state(task.id, TaskStatus.FINISHED, progress=1.0)
+
+
+@pytest.mark.asyncio
+async def test_record_task_error_does_not_require_a_state_transition():
+    task = _task(status=TaskStatus.FINISHED)
+    repo = _FakeRepo(task)
+    service = TaskStateService(repo)
+
+    assert await service.record_task_error(
+        task.id,
+        error_key="backendErrors.transferFailed",
+        error_stage=TaskErrorStage.TRANSFER,
+        error_params={"reason": "storage offline"},
+    )
+    assert repo.updated_fields.status is None
+    assert repo.updated_fields.error_key == "backendErrors.transferFailed"
+    assert repo.updated_fields.error_stage == TaskErrorStage.TRANSFER
 
 
 @pytest.mark.asyncio

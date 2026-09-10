@@ -95,3 +95,23 @@ class TaskStateService:
             update_data.error_params = {}
             update_data.error_stage = None
         return await self._repo.update_fields(update_data, self._repo.cond_id(task_id))
+
+    async def record_task_error(
+        self,
+        task_id: str,
+        *,
+        error_key: str,
+        error_stage: TaskErrorStage,
+        error_params: dict[str, str] | None = None,
+    ) -> bool:
+        if not await self._repo.find_by_id(task_id):
+            return False
+        return await self._repo.update_fields(
+            TaskFieldPatch(
+                error_key=error_key,
+                error_params=error_params or {},
+                error_stage=error_stage,
+                updated_at=datetime.now(),
+            ),
+            self._repo.cond_id(task_id),
+        )

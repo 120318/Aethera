@@ -305,6 +305,9 @@ event's imported files, not all files belonging to the task.
   the task's media episodes.
 - Partial import failures belong to the transfer command. They do not promote a
   downloading task to finished, and retries recompute the unimported file set.
+- Pre-command failures update task error fields without manufacturing a state
+  transition; command execution failures keep using the normal transfer state
+  machine.
 - This uses existing tables and columns. Source files stay available to the
   downloader. Profile refresh and import-event consumers remain post-import work.
 
