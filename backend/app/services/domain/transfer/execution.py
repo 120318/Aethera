@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import stat
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -131,17 +132,29 @@ async def resolve_source_base_path(task: TaskData) -> Path:
 
 
 def source_file_is_intact(source_path: Path, file_item: TorrentFileItem) -> bool:
-    return bool(
-        file_item.size is not None
-        and file_item.size >= 0
-        and fs_provider.is_file(source_path)
-        and fs_provider.file_size(source_path) == file_item.size
+    if file_item.size is None or file_item.size < 0:
+        return False
+    try:
+        file_stat = fs_provider.file_stat(source_path)
+    except FileNotFoundError:
+        return False
+    return stat.S_ISREG(file_stat.st_mode) and file_stat.st_size == file_item.size
+
+
+def _source_storage_exception(task: TaskData, source_path: Path, exc: OSError) -> TransferException:
+    return TransferException(
+        "backendErrors.transferFailed",
+        params={"reason": f"Source file is temporarily inaccessible: {source_path}: {exc}"},
     )
 
 
 def generate_source_path(task: TaskData, file_item: TorrentFileItem, source_base_path: Path) -> Path:
     source_path = build_source_path(task, file_item, source_base_path)
-    if source_file_is_intact(source_path, file_item):
+    try:
+        intact = source_file_is_intact(source_path, file_item)
+    except OSError as exc:
+        raise _source_storage_exception(task, source_path, exc) from exc
+    if intact:
         return source_path
     raise TransferException(
         "backendErrors.transferSourceFileNotFound",
@@ -198,9 +211,12 @@ async def all_transfer_sources_available(task: TaskData) -> bool:
     found_any = False
     for _, file_item in iter_selected_files(task.metadata.files, resolve_selected_indices(task)):
         found_any = True
+        source_path = build_source_path(task, file_item, source_base_path)
         try:
-            generate_source_path(task, file_item, source_base_path)
-        except TransferException:
+            intact = source_file_is_intact(source_path, file_item)
+        except OSError as exc:
+            raise _source_storage_exception(task, source_path, exc) from exc
+        if not intact:
             return False
     return found_any
 
@@ -216,7 +232,11 @@ async def missing_transfer_source_paths(
         if file_indices is not None and file_item.index not in file_indices:
             continue
         source_path = build_source_path(task, file_item, source_base_path)
-        if not source_file_is_intact(source_path, file_item):
+        try:
+            intact = source_file_is_intact(source_path, file_item)
+        except OSError as exc:
+            raise _source_storage_exception(task, source_path, exc) from exc
+        if not intact:
             missing_paths.append(str(source_path))
     return missing_paths
 

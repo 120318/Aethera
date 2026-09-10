@@ -72,9 +72,9 @@ class FileSystemProvider:
         return Path(path).is_file()
 
     @staticmethod
-    def file_size(path: Union[str, Path]) -> int:
+    def file_stat(path: Union[str, Path]) -> os.stat_result:
         """Internal helper."""
-        return Path(path).stat().st_size
+        return Path(path).stat()
 
     @staticmethod
     def is_dir(path: Union[str, Path]) -> bool:

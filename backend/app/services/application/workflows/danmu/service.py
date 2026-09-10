@@ -31,6 +31,7 @@ from app.services.application.workflows.danmu.duration_guard import danmu_durati
 from app.services.application.workflows.danmu.event_summary import emit_generation_summary, resolve_primary_import_batch
 from app.services.application.workflows.danmu.source_resolver import danmu_source_resolver
 from app.services.application.workflows.danmu.sidecar_outputs import expected_sidecar_paths, remove_outputs, write_outputs
+from app.services.application.workflows.imported_media_batch import ensure_current_imported_media_accessible
 from app.services.application.workflows.scoped_seasons import (
     event_season_number,
     library_file_season_number,
@@ -91,6 +92,7 @@ class DanmuApplicationService:
         import_batch = resolve_primary_import_batch(meta, library_files)
         if not import_batch.imported_files:
             return
+        ensure_current_imported_media_accessible(import_batch)
         media = await danmu_source_resolver.media_with_fetchable_source(
             meta.media_id,
             season_number=season_number,

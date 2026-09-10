@@ -1,7 +1,10 @@
+import stat
+
 from app.schemas.domain.library import LibraryFile, LibraryMediaLayout, LibraryMediaLayoutEntry, LibraryTaskFileHealth
 from app.schemas.domain.media_types import MediaType
 from app.schemas.media_id import MediaID
 from app.services.domain.library.service_types import LibraryQueryProtocol
+from app.utils.fs_utils import fs_provider
 from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file
 
 
@@ -16,7 +19,11 @@ class LibraryLayoutWorker:
         if library_file.file_size is None or library_file.file_size < 0:
             return False
         path = build_library_file_path(library_file.path, library_file.file_name)
-        return path.is_file() and path.stat().st_size == library_file.file_size
+        try:
+            file_stat = fs_provider.file_stat(path)
+        except FileNotFoundError:
+            return False
+        return stat.S_ISREG(file_stat.st_mode) and file_stat.st_size == library_file.file_size
 
     def is_primary_file(self, library_file: LibraryFile) -> bool:
         return file_name_looks_like_media_file((library_file.file_name or "").lower())

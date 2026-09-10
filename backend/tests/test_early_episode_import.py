@@ -305,14 +305,15 @@ async def test_finished_incremental_import_converts_library_stat_error(setup_imp
     first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
     env.task.status = TaskStatus.FINISHED
     library_path = Path(first.transferred_files[0].destination_path)
-    original_is_file = Path.is_file
+    original_stat = Path.stat
 
     def fail_library_stat(path):
-        if path == library_path:
+        resolved_path = Path(path)
+        if resolved_path == library_path:
             raise OSError("library unavailable")
-        return original_is_file(path)
+        return original_stat(resolved_path)
 
-    monkeypatch.setattr(Path, "is_file", fail_library_stat)
+    monkeypatch.setattr("app.services.domain.library.layout.fs_provider.file_stat", fail_library_stat)
 
     with pytest.raises(TransferException, match="backendErrors.transferFailed") as exc_info:
         await transfer_service.perform_transfer_by_task_id(env.task.id)

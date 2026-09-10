@@ -288,10 +288,10 @@ event's imported files, not all files belonging to the task.
   sidecars and deletes them after commit only when no consumer has rewritten
   them; sidecars materialized by the transfer batch or still referenced by the
   current library registry are preserved. Import events contain primary video
-  files only, and consumers defensively reject auxiliary or stale paths against
-  current library state before producing metadata. Registry absence makes a
-  queued target stale; a registered target whose storage is unavailable remains
-  a retryable consumer failure.
+  files only. Danmu and media-server consumers share one current-import batch
+  resolver and accessibility gate before producing metadata. Registry absence
+  makes a queued target stale; a registered target whose storage is unavailable
+  remains a retryable consumer failure.
 - Batch selection records discarded lower-quality indices separately from
   idempotently skipped winners. A repair-mode commit preserves the skipped files
   while explicitly removing existing records for discarded indices.

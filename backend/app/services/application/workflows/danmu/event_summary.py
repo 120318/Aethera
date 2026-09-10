@@ -1,41 +1,22 @@
 from pathlib import Path
 
-from pydantic import BaseModel
-
 from app.schemas.domain.action import ActionStatus
-from app.schemas.domain.addon_events import DanmuGenerationOutcome, ImportedMediaFile, MediaImportCompletedEventMeta
+from app.schemas.domain.addon_events import DanmuGenerationOutcome, MediaImportCompletedEventMeta
 from app.schemas.domain.event import EventActor, EventType
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media import MediaFullInfo
 from app.services.audit.workflow_event_emitters import emit_danmu_generate_event
-from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file
-
-
-class DanmuImportBatch(BaseModel):
-    imported_files: list[ImportedMediaFile]
-    library_files_by_path: dict[str, LibraryFile]
+from app.services.application.workflows.imported_media_batch import (
+    CurrentImportedMediaBatch,
+    resolve_current_imported_media_batch,
+)
 
 
 def resolve_primary_import_batch(
     meta: MediaImportCompletedEventMeta,
     library_files: list[LibraryFile],
-) -> DanmuImportBatch:
-    library_files_by_path = {
-        str(build_library_file_path(item.path, item.file_name)): item
-        for item in library_files
-        if item.id
-    }
-    event_files = meta.imported_files or [
-        ImportedMediaFile(destination_path=meta.file_path, episode_number=None)
-    ]
-    return DanmuImportBatch(
-        imported_files=[
-            item for item in event_files
-            if item.destination_path in library_files_by_path
-            and file_name_looks_like_media_file(library_files_by_path[item.destination_path].file_name)
-        ],
-        library_files_by_path=library_files_by_path,
-    )
+) -> CurrentImportedMediaBatch:
+    return resolve_current_imported_media_batch(meta, library_files)
 
 
 def emit_generation_summary(

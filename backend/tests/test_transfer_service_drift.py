@@ -25,7 +25,7 @@ from app.services.domain.transfer.service import (
     build_media_import_completed_event,
     commit_transfer_results,
 )
-from app.services.domain.transfer.execution import TransferExecutionContext, build_transfer_execution_context, build_transfer_plan, execute_transfer, generate_source_path, missing_transfer_source_paths
+from app.services.domain.transfer.execution import TransferExecutionContext, all_transfer_sources_available, build_transfer_execution_context, build_transfer_plan, execute_transfer, generate_source_path, missing_transfer_source_paths
 
 
 def _task(status: TaskStatus = TaskStatus.COMPLETED) -> TaskData:
@@ -101,6 +101,42 @@ async def test_missing_transfer_source_paths_checks_requested_indices_only(monke
     missing_paths = await missing_transfer_source_paths(task, {1})
 
     assert missing_paths == []
+
+
+@pytest.mark.asyncio
+async def test_source_availability_converts_storage_probe_failure(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+
+    def raise_storage_error(path, item):
+        raise OSError("storage offline")
+
+    monkeypatch.setattr(
+        "app.services.domain.transfer.execution.source_file_is_intact",
+        raise_storage_error,
+    )
+
+    with pytest.raises(TransferException, match="backendErrors.transferFailed") as exc_info:
+        await all_transfer_sources_available(task)
+
+    assert "storage offline" in exc_info.value.params["reason"]
+
+
+@pytest.mark.asyncio
+async def test_missing_source_diagnosis_converts_storage_probe_failure(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+
+    def raise_storage_error(path, item):
+        raise OSError("storage offline")
+
+    monkeypatch.setattr(
+        "app.services.domain.transfer.execution.source_file_is_intact",
+        raise_storage_error,
+    )
+
+    with pytest.raises(TransferException, match="backendErrors.transferFailed") as exc_info:
+        await missing_transfer_source_paths(task)
+
+    assert "storage offline" in exc_info.value.params["reason"]
 
 
 def _transfer_file_result() -> TransferFileResult:
