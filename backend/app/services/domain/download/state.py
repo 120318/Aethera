@@ -19,7 +19,7 @@ class TaskStateService:
             "ANY": [TaskStatus.VOID.value],
             TaskStatus.PENDING.value: [TaskStatus.DOWNLOADING.value, TaskStatus.MIGRATING.value],
             TaskStatus.DOWNLOADING.value: [TaskStatus.FINISHED.value, TaskStatus.PAUSED.value, TaskStatus.ERROR.value, TaskStatus.DOWNLOADING.value, TaskStatus.MIGRATING.value],
-            TaskStatus.PAUSED.value: [TaskStatus.DOWNLOADING.value, TaskStatus.MIGRATING.value],
+            TaskStatus.PAUSED.value: [TaskStatus.DOWNLOADING.value, TaskStatus.FINISHED.value, TaskStatus.MIGRATING.value],
             TaskStatus.FINISHED.value: [TaskStatus.TRANSFERRING.value, TaskStatus.MIGRATING.value],
             TaskStatus.TRANSFERRING.value: [TaskStatus.COMPLETED.value, TaskStatus.ERROR.value, TaskStatus.FINISHED.value],
             TaskStatus.MIGRATING.value: [

@@ -14,6 +14,7 @@ from app.schemas.domain.download import TaskContext, TaskData, TaskStatus
 from app.schemas.domain.library import LibraryTaskFileHealth
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
 from app.services.domain.download.task_runtime_service import TaskRuntimeService
+from app.services.domain.download.state import TaskStateService
 
 
 class _FakeRepo:
@@ -76,6 +77,14 @@ def _task(
         created_at=datetime.now(),
         updated_at=updated_at or datetime.now(),
     )
+
+
+@pytest.mark.asyncio
+async def test_confirmed_complete_paused_task_can_enter_finished_state():
+    task = _task(status=TaskStatus.PAUSED)
+    service = TaskStateService(_FakeRepo(task))
+
+    assert await service.update_task_state(task.id, TaskStatus.FINISHED, progress=1.0)
 
 
 @pytest.mark.asyncio

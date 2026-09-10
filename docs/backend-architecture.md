@@ -260,6 +260,8 @@ event's imported files, not all files belonging to the task.
 - Completed files of ordinary TV torrents can be hardlinked or copied while the
   task remains downloading or paused. Checking/moving torrents, mismatched paths,
   unavailable files and original-disc packages cannot be imported early.
+- A paused task whose downloader subsequently confirms completion transitions to
+  finished so the final import can materialize remaining auxiliary files.
 - A source file is transferable only when it is a regular file whose actual size
   matches torrent metadata. This same predicate governs normal transfer, early
   readiness, terminal source fallback, and missing-source diagnosis.
