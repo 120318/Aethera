@@ -260,6 +260,9 @@ event's imported files, not all files belonging to the task.
 - Completed files of ordinary TV torrents can be hardlinked or copied while the
   task remains downloading or paused. Checking/moving torrents, mismatched paths,
   unavailable files and original-disc packages cannot be imported early.
+- A source file is transferable only when it is a regular file whose actual size
+  matches torrent metadata. This same predicate governs normal transfer, early
+  readiness, terminal source fallback, and missing-source diagnosis.
 - Readiness has one explicit disposition: wait, reject, or confirmed source
   fallback. Download-client lookup failures normalize to wait and never escape as
   protocol exceptions or authorize importing preallocated files.

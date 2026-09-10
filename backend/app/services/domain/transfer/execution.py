@@ -130,9 +130,18 @@ async def resolve_source_base_path(task: TaskData) -> Path:
     return build_download_path(download_target.download_path)
 
 
+def source_file_is_intact(source_path: Path, file_item: TorrentFileItem) -> bool:
+    return bool(
+        file_item.size is not None
+        and file_item.size >= 0
+        and fs_provider.is_file(source_path)
+        and fs_provider.file_size(source_path) == file_item.size
+    )
+
+
 def generate_source_path(task: TaskData, file_item: TorrentFileItem, source_base_path: Path) -> Path:
     source_path = build_source_path(task, file_item, source_base_path)
-    if fs_provider.exists(source_path):
+    if source_file_is_intact(source_path, file_item):
         return source_path
     raise TransferException(
         "backendErrors.transferSourceFileNotFound",
@@ -190,9 +199,7 @@ async def all_transfer_sources_available(task: TaskData) -> bool:
     for _, file_item in iter_selected_files(task.metadata.files, resolve_selected_indices(task)):
         found_any = True
         try:
-            source_path = generate_source_path(task, file_item, source_base_path)
-            if not fs_provider.exists(source_path):
-                return False
+            generate_source_path(task, file_item, source_base_path)
         except TransferException:
             return False
     return found_any
@@ -209,7 +216,7 @@ async def missing_transfer_source_paths(
         if file_indices is not None and file_item.index not in file_indices:
             continue
         source_path = build_source_path(task, file_item, source_base_path)
-        if not fs_provider.exists(source_path):
+        if not source_file_is_intact(source_path, file_item):
             missing_paths.append(str(source_path))
     return missing_paths
 

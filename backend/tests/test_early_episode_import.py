@@ -266,6 +266,24 @@ async def test_finished_incremental_import_uses_visible_sources_when_torrent_is_
 
 
 @pytest.mark.asyncio
+async def test_finished_incremental_import_rejects_truncated_source_fallback(setup_import):
+    env = setup_import
+    await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    env.task.status = TaskStatus.FINISHED
+    env.client.lookup_torrent_info.return_value = SimpleNamespace(
+        status=DownloadInfoLookupStatus.MISSING,
+        info=None,
+    )
+    (Path(env.task.save_path) / env.task.metadata.files[1].filename).write_bytes(b"x")
+
+    with pytest.raises(TransferException, match="backendErrors.transferSourceFileNotFound"):
+        await transfer_service.perform_transfer_by_task_id(env.task.id)
+
+    assert env.task.status == TaskStatus.FINISHED
+    assert env.state_update.await_args.kwargs["error_stage"] == TaskErrorStage.TRANSFER
+
+
+@pytest.mark.asyncio
 async def test_finished_incremental_import_waits_when_downloader_is_unavailable(setup_import):
     env = setup_import
     await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])

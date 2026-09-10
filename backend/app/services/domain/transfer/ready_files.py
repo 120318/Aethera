@@ -18,6 +18,7 @@ from .execution import (
     iter_selected_files,
     resolve_selected_indices,
     resolve_source_base_path,
+    source_file_is_intact,
     with_context_resource_attrs,
 )
 from .replacement import library_replacement_policy
@@ -182,7 +183,7 @@ async def inspect_ready_files(
         if _torrent_relative_path(task, live.name) != _torrent_relative_path(task, item.filename):
             continue
         try:
-            if source.is_file() and source.stat().st_size == item.size:
+            if source_file_is_intact(source, item):
                 ready.append(index)
         except OSError:
             continue
