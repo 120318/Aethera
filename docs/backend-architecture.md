@@ -275,7 +275,7 @@ event's imported files, not all files belonging to the task.
   quality-replacement conflicts. It preserves earlier batches and their episode
   records. Full completion imports remaining files and changes the task status;
   an empty final batch emits no additional import event. Every successful import
-  mode persists its handled primary file indices in the task ledger.
+  mode persists its handled file indices in the task ledger.
 - Transfer commit modes are explicit: partial incremental, final incremental,
   full import, and idempotent repair. Filesystem sidecars are never deleted before
   the library transaction commits. Same-path replacement snapshots stale
