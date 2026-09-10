@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from app.schemas.config import DirectoryConfig
-from app.schemas.domain.download import TaskData, TaskStatus
+from app.schemas.domain.download import TaskData
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.torrent import TorrentFileItem
 from app.schemas.domain.torrent_status import TorrentState
@@ -20,17 +20,10 @@ from app.schemas.runtime.directory_integrity import (
 from app.services.domain.directory_integrity.models import DirectoryIntegritySnapshot, DownloaderTorrentIndex, MediaDisplayIndex, TrackerMessageIndex
 from app.services.domain.directory_integrity.size_summary import build_directory_size_index
 from app.services.domain.directory_integrity.summary import build_directory_integrity_summary
-from app.services.domain.directory_integrity.task_replacement import task_library_relationship_is_satisfied
+from app.services.domain.directory_integrity.task_replacement import DOWNLOAD_AUDIT_STATUSES, task_library_relationship_is_satisfied
 from app.utils.library_paths import build_download_path, build_library_file_path, path_looks_like_media_file
 
 logger = logging.getLogger("app.services.directory_integrity.scanner")
-DOWNLOAD_AUDIT_STATUSES = {
-    TaskStatus.FINISHED,
-    TaskStatus.COMPLETED,
-    TaskStatus.PARTIAL_MISSING,
-    TaskStatus.SEEDING_ABSENT,
-    TaskStatus.FILE_MISSING,
-}
 UNMANAGED_LIBRARY_FILE_GRACE_SECONDS = 600
 MISSING_LIBRARY_FILE_GRACE_SECONDS = 600
 TASK_MISSING_LIBRARY_FILE_GRACE_SECONDS = 600
@@ -141,13 +134,16 @@ class DirectoryIntegrityScanner:
                     repair_action="remove_library_record",
                 )
             )
-        items.extend(self._scan_library_task_relationships(directory, directory_files, tasks, root, media_display, scanned_at))
+        items.extend(self._scan_library_task_relationships(
+            directory, directory_files, library_files, tasks, root, media_display, scanned_at,
+        ))
         return items
 
     def _scan_library_task_relationships(
         self,
         directory: DirectoryConfig,
         directory_files: list[LibraryFile],
+        all_library_files: list[LibraryFile],
         tasks: list[TaskData],
         root: Path,
         media_display: MediaDisplayIndex,
@@ -161,7 +157,7 @@ class DirectoryIntegrityScanner:
         task_ids = {task.id for task in tasks}
         items: list[DirectoryIntegrityItem] = []
         for task in tasks:
-            if task_library_relationship_is_satisfied(task, directory.id, DOWNLOAD_AUDIT_STATUSES, files_by_task_id, directory_files):
+            if task_library_relationship_is_satisfied(task, directory.id, files_by_task_id, all_library_files):
                 continue
             task_completed_at = self._datetime_to_timestamp(task.updated_at)
             if task_completed_at and scanned_at - task_completed_at < TASK_MISSING_LIBRARY_FILE_GRACE_SECONDS:

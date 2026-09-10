@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import pytest
 
 from app.schemas.domain.library import LibraryFile
@@ -168,3 +170,28 @@ def test_replaced_sidecar_snapshot_preserves_concurrently_rewritten_file(tmp_pat
     cleanup.delete_unchanged_sidecar_files(snapshots, {video})
 
     assert danmu.read_text() == "new"
+
+
+@pytest.mark.asyncio
+async def test_replaced_sidecar_cleanup_preserves_registered_library_file(tmp_path, monkeypatch):
+    video = tmp_path / "Show.S01E01.mkv"
+    nfo = video.with_suffix(".nfo")
+    video.write_text("video")
+    nfo.write_text("registered nfo")
+    cleanup = LibraryCleanup()
+    snapshots = cleanup.snapshot_sidecar_files({video}, set())
+    service = LibraryService(cleanup=cleanup)
+    registered_nfo = LibraryFile(
+        id="nfo-file",
+        task_id="task-1",
+        directory_id="dir-1",
+        media_id=MediaID.parse("tmdb:tv:100088"),
+        path=str(tmp_path),
+        file_name=nfo.name,
+        created_at=1.0,
+    )
+    monkeypatch.setattr(service, "find_file_by_path", AsyncMock(return_value=registered_nfo))
+
+    await service.cleanup_replaced_sidecars(snapshots, {str(video)})
+
+    assert nfo.read_text() == "registered nfo"

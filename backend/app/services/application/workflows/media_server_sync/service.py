@@ -67,9 +67,13 @@ class MediaServerSyncService:
 
     async def handle_import_completed(self, event: Event) -> None:
         context = MediaImportCompletedEventMeta.model_validate(json.loads(event.meta) if event.meta else {})
+        library_files = await library_service.get_files_by_task(context.task_id)
+        imported_results = media_server_sync_target.resolve_current_import_targets(context, library_files)
+        if context.imported_files and not imported_results:
+            logger.info("Skipping stale media import event: event=%s task=%s", event.id, context.task_id)
+            return
         season_number = event_season_number(event, context.media_id)
         if context.media_id.media_type.value == "tv" and season_number is None:
-            library_files = await library_service.get_files_by_task(context.task_id)
             season_number = library_files_season_number(library_files)
         if context.media_id.media_type.value == "tv" and season_number is None:
             logger.warning("Missing season for media import event: %s", context.media_id)
@@ -81,16 +85,11 @@ class MediaServerSyncService:
 
         layout = await library_service.get_media_layout(context.media_id)
         sync_input = media_server_sync_target.build_input(media_info, layout)
-        imported_results = [
-            MediaServerSyncTargetFile(
-                destination_path=item.destination_path,
-                episode_number=item.episode_number,
-                episode_numbers=item.episode_numbers,
-            )
-            for item in context.imported_files
-        ]
-
-        file_path = context.file_path or (sync_input.anchor_file if sync_input else "")
+        file_path = (
+            imported_results[0].destination_path
+            if imported_results
+            else context.file_path or (sync_input.anchor_file if sync_input else "")
+        )
         transfer_results = imported_results or (sync_input.transfer_results if sync_input else [])
         media_root_dir = media_server_sync_target.resolve_media_root_dir_from_targets(
             media_info,

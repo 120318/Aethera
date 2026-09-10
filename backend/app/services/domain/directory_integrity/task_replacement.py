@@ -6,17 +6,24 @@ from app.schemas.domain.media_types import MediaType
 from app.services.domain.download.coverage import resolve_task_episode_coverage_detail
 from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file
 
+DOWNLOAD_AUDIT_STATUSES = {
+    TaskStatus.FINISHED,
+    TaskStatus.COMPLETED,
+    TaskStatus.PARTIAL_MISSING,
+    TaskStatus.SEEDING_ABSENT,
+    TaskStatus.FILE_MISSING,
+}
+
 
 def task_library_relationship_is_satisfied(
     task: TaskData,
     directory_id: str,
-    audit_statuses: set[TaskStatus],
     files_by_task_id: dict[str, list[LibraryFile]],
     directory_files: list[LibraryFile],
 ) -> bool:
     return bool(
         task.context.directory_id != directory_id
-        or task.status not in audit_statuses
+        or task.status not in DOWNLOAD_AUDIT_STATUSES
         or task.id in files_by_task_id
         or is_task_fully_replaced(task, directory_files)
     )

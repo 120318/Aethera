@@ -398,9 +398,13 @@ class LibraryService:
         snapshots: list[LibrarySidecarSnapshot],
         replaced_video_paths: set[str],
     ) -> None:
+        unregistered_snapshots = []
+        for snapshot in snapshots:
+            if await self.find_file_by_path(snapshot.sidecar_path) is None:
+                unregistered_snapshots.append(snapshot)
         await asyncio.to_thread(
             self._cleanup.delete_unchanged_sidecar_files,
-            snapshots,
+            unregistered_snapshots,
             {Path(path) for path in replaced_video_paths},
         )
 

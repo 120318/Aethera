@@ -2,15 +2,42 @@ import os
 import re
 from pathlib import Path
 
-from app.schemas.domain.library import LibraryMediaLayout
+from app.schemas.domain.addon_events import MediaImportCompletedEventMeta
+from app.schemas.domain.library import LibraryFile, LibraryMediaLayout
 from app.schemas.domain.library_layout import LibraryLayoutTargetFile
 from app.schemas.domain.media import MediaFullInfo
 from app.schemas.domain.media_server_sync import MediaServerSyncInput, MediaServerSyncTargetFile
 from app.schemas.domain.media_types import MediaType
 from app.services.domain.library.media_root_policy import library_media_root_policy
+from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file
 
 
 class MediaServerSyncTargetService:
+    def resolve_current_import_targets(
+        self,
+        meta: MediaImportCompletedEventMeta,
+        library_files: list[LibraryFile],
+    ) -> list[MediaServerSyncTargetFile]:
+        current_paths: set[str] = set()
+        for item in library_files:
+            if not file_name_looks_like_media_file(item.file_name or ""):
+                continue
+            path = build_library_file_path(item.path, item.file_name)
+            try:
+                if path.is_file():
+                    current_paths.add(str(path))
+            except OSError:
+                continue
+        return [
+            MediaServerSyncTargetFile(
+                destination_path=item.destination_path,
+                episode_number=item.episode_number,
+                episode_numbers=item.episode_numbers,
+            )
+            for item in meta.imported_files
+            if item.destination_path in current_paths
+        ]
+
     def build_input(self, media: MediaFullInfo, layout: LibraryMediaLayout) -> MediaServerSyncInput | None:
         decision = library_media_root_policy.build_from_library_layout(media, layout)
         if decision is None:

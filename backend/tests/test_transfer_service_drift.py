@@ -21,6 +21,7 @@ from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
 from app.services.domain.transfer import transfer_service
 from app.services.domain.transfer.service import (
     TransferCommitMode,
+    _include_discarded_batch_files,
     build_media_import_completed_event,
     commit_transfer_results,
 )
@@ -302,6 +303,20 @@ def test_media_import_event_contains_primary_video_files_only():
     meta = MediaImportCompletedEventMeta.model_validate_json(event.meta)
     assert [item.destination_path for item in meta.imported_files] == [video.destination_path]
     assert build_media_import_completed_event(task, [subtitle]) is None
+
+
+def test_idempotent_repair_explicitly_replaces_existing_batch_losers():
+    winner = _library_file().model_copy(update={"id": "winner", "file_index": 1})
+    loser = _library_file().model_copy(update={"id": "loser", "file_index": 2})
+    external_replacement = _library_file().model_copy(update={"id": "external", "file_index": 3})
+
+    replacements = _include_discarded_batch_files(
+        [external_replacement],
+        [winner, loser],
+        {2},
+    )
+
+    assert {item.id for item in replacements} == {"external", "loser"}
 
 
 @pytest.mark.asyncio

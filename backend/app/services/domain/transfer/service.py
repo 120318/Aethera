@@ -198,15 +198,25 @@ class TransferService:
             execution_context = await execution.build_transfer_execution_context(task)
             full_transfer_plan = execution.build_transfer_plan(task, execution_context)
             transfer_plan = library_replacement_policy.select_batch_winners(full_transfer_plan)
+            discarded_file_indices = {
+                result.file_index for result in full_transfer_plan
+            } - {
+                result.file_index for result in transfer_plan
+            }
             execution_report = await execution.execute_transfer_plan(task, execution_context, transfer_plan)
             transfer_results = execution_report.materialized_files
             replacement_plan = await library_replacement_policy.build_plan(task, transfer_results, execution_context.season_number)
+            explicit_replacement_files = _include_discarded_batch_files(
+                replacement_plan.replace_files,
+                existing_library_files,
+                discarded_file_indices,
+            )
             await commit_transfer_results(
                 task,
                 transfer_results,
                 existing_library_files,
                 execution_context,
-                replacement_plan.replace_files,
+                explicit_replacement_files,
                 commit_mode=(
                     TransferCommitMode.IDEMPOTENT_REPAIR
                     if execution_report.skipped_existing_files
@@ -230,6 +240,18 @@ class TransferService:
     async def _lock_task_status(self, task: TaskData) -> None:
         if not await download_service.update_task_state(task.id, TaskStatus.TRANSFERRING):
             raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})
+
+
+def _include_discarded_batch_files(
+    replacement_files: list[LibraryFile],
+    existing_library_files: list[LibraryFile],
+    discarded_file_indices: set[int],
+) -> list[LibraryFile]:
+    files_by_id = {item.id: item for item in replacement_files if item.id}
+    for item in existing_library_files:
+        if item.id and item.file_index in discarded_file_indices:
+            files_by_id[item.id] = item
+    return list(files_by_id.values())
 
 
 async def cleanup_replaced_library_files(

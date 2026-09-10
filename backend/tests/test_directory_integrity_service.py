@@ -578,11 +578,15 @@ async def test_directory_integrity_recognizes_fully_replaced_task_coverage(
     visible_episodes,
     expected_issue_count,
 ):
-    library_root = tmp_path / "library"
-    download_root = tmp_path / "download"
+    library_root = tmp_path / "library-a"
+    replacement_root = tmp_path / "library-b"
+    download_root = tmp_path / "download-a"
+    replacement_download_root = tmp_path / "download-b"
     library_root.mkdir()
+    replacement_root.mkdir()
     download_root.mkdir()
-    replacement_path = library_root / "replacement.mkv"
+    replacement_download_root.mkdir()
+    replacement_path = replacement_root / "replacement.mkv"
     replacement_path.write_text("replacement")
     media_id = MediaID.parse("tmdb:tv:1")
     task = _task(download_root)
@@ -594,9 +598,9 @@ async def test_directory_integrity_recognizes_fully_replaced_task_coverage(
     replacement = LibraryFile(
         id="replacement-file",
         task_id="replacement-task",
-        directory_id="dir-1",
+        directory_id="dir-2",
         media_id=media_id,
-        path=str(library_root),
+        path=str(replacement_root),
         file_name=replacement_path.name,
         file_size=replacement_path.stat().st_size,
         file_index=0,
@@ -604,11 +608,21 @@ async def test_directory_integrity_recognizes_fully_replaced_task_coverage(
         resource_attributes=ResourceAttributes(seasons=[1], episodes=visible_episodes),
     )
     directory = DirectoryConfig(id="dir-1", name="TV", path=str(library_root), download_path=str(download_root))
+    replacement_directory = DirectoryConfig(
+        id="dir-2",
+        name="TV 2",
+        path=str(replacement_root),
+        download_path=str(replacement_download_root),
+    )
     service = DirectoryIntegrityService()
     service.library_repo = AsyncListRepo([replacement])
     service.task_repo = AsyncListRepo([task])
 
-    monkeypatch.setattr(integrity_module.settings_service, "list_directories", lambda: [directory])
+    monkeypatch.setattr(
+        integrity_module.settings_service,
+        "list_directories",
+        lambda: [directory, replacement_directory],
+    )
     monkeypatch.setattr(integrity_module, "LATEST_RESULT_PATH", tmp_path / "latest.json")
 
     result = await service.scan()
