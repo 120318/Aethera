@@ -5,11 +5,41 @@ from collections.abc import Awaitable, Callable
 
 from app.schemas.domain.download import TaskData, TaskEpisodeCoverage, TaskEpisodeCoverageSource, TaskStatus
 from app.schemas.domain.media_types import MediaType
+from app.schemas.domain.torrent import TorrentFileItem
 from app.schemas.media_id import MediaID
 from app.services.domain.resource.quality import RESOURCE_FORM_BLURAY_DISC, RESOURCE_FORM_DVD_DISC
 
 
 logger = logging.getLogger("app.services.download")
+
+
+def with_context_resource_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFileItem:
+    context_attrs = task.context.parsed_attributes if task.context and task.context.parsed_attributes else None
+    if not context_attrs:
+        return file_item
+    if file_item.attrs is None:
+        return file_item.model_copy(update={"attrs": context_attrs})
+    attrs = file_item.attrs
+    context_data = context_attrs.model_dump(mode="python")
+    attrs_data = attrs.model_dump(mode="python")
+    updates = {}
+    for field in ("groups", "sources", "versions", "seasons", "episodes", "platforms"):
+        context_value = context_data[field]
+        if context_value and not attrs_data[field]:
+            updates[field] = list(context_value)
+    for field in (
+        "desc", "resource_form", "resource_form_evidence", "package_layout",
+        "disc_number", "disc_total", "resolution", "video_codec", "audio_codec",
+        "hdr_type", "audio_channels", "color_depth", "content_type", "language",
+        "subtitle", "tmdb_id", "imdb_id", "year", "release_year", "release_date",
+        "first_air_date", "runtime", "episode_title",
+    ):
+        context_value = context_data[field]
+        if context_value and not attrs_data[field]:
+            updates[field] = context_value
+    if not updates:
+        return file_item
+    return file_item.model_copy(update={"attrs": attrs.model_copy(update=updates)})
 
 
 def _positive_int(value) -> int | None:
@@ -62,10 +92,10 @@ def resolve_task_episode_coverage_detail(task: TaskData) -> TaskEpisodeCoverage:
     file_seasons: set[int] = set()
     file_episodes: set[int] = set()
     if task.metadata and task.metadata.files:
-        for index, f in enumerate(task.metadata.files):
-            if selected_indices is not None and index not in selected_indices:
+        for f in task.metadata.files:
+            if selected_indices is not None and f.index not in selected_indices:
                 continue
-            attrs = f.attrs
+            attrs = with_context_resource_attrs(task, f).attrs
             if not attrs:
                 continue
             season_val = attrs.seasons[0] if attrs.seasons else None

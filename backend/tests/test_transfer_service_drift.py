@@ -177,9 +177,12 @@ async def test_commit_transfer_results_refreshes_tv_profile_with_execution_seaso
         [_transfer_file_result()],
         [],
         context,
+        handled_file_indices={0},
     )
 
     refresh_mock.assert_awaited_once_with(task.media_id, 2)
+    assert replace_mock.await_args.kwargs["imported_file_indices"] == [0]
+    assert task.context.imported_file_indices == [0]
 
 
 @pytest.mark.asyncio

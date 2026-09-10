@@ -264,8 +264,9 @@ event's imported files, not all files belonging to the task.
   fallback. Download-client lookup failures normalize to wait and never escape as
   protocol exceptions or authorize importing preallocated files.
 - File attributes are normalized with the task parse context before any episode
-  decision. Same-batch and historical deduplication both use per-episode coverage
-  and quality; exact episode-group equality is not a business boundary.
+  decision, including integrity audits. Same-batch and historical deduplication
+  both use per-episode coverage and quality; exact episode-group equality is not
+  a business boundary.
 - Materialization returns a report that separates planned, written, and
   idempotently skipped files. Registration, cleanup, events, and user-visible
   results consume the corresponding report fields instead of inferring execution
@@ -273,7 +274,8 @@ event's imported files, not all files belonging to the task.
 - Incremental registration replaces only the incoming file indices and explicit
   quality-replacement conflicts. It preserves earlier batches and their episode
   records. Full completion imports remaining files and changes the task status;
-  an empty final batch emits no additional import event.
+  an empty final batch emits no additional import event. Every successful import
+  mode persists its handled primary file indices in the task ledger.
 - Transfer commit modes are explicit: partial incremental, final incremental,
   full import, and idempotent repair. Filesystem sidecars are never deleted before
   the library transaction commits. Same-path replacement snapshots stale
@@ -281,7 +283,9 @@ event's imported files, not all files belonging to the task.
   them; sidecars materialized by the transfer batch or still referenced by the
   current library registry are preserved. Import events contain primary video
   files only, and consumers defensively reject auxiliary or stale paths against
-  current library state before producing metadata.
+  current library state before producing metadata. Registry absence makes a
+  queued target stale; a registered target whose storage is unavailable remains
+  a retryable consumer failure.
 - Batch selection records discarded lower-quality indices separately from
   idempotently skipped winners. A repair-mode commit preserves the skipped files
   while explicitly removing existing records for discarded indices.

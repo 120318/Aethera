@@ -23,11 +23,7 @@ class MediaServerSyncTargetService:
             if not file_name_looks_like_media_file(item.file_name or ""):
                 continue
             path = build_library_file_path(item.path, item.file_name)
-            try:
-                if path.is_file():
-                    current_paths.add(str(path))
-            except OSError:
-                continue
+            current_paths.add(str(path))
         return [
             MediaServerSyncTargetFile(
                 destination_path=item.destination_path,
@@ -37,6 +33,17 @@ class MediaServerSyncTargetService:
             for item in meta.imported_files
             if item.destination_path in current_paths
         ]
+
+    @staticmethod
+    def ensure_import_targets_accessible(targets: list[MediaServerSyncTargetFile]) -> None:
+        for item in targets:
+            path = Path(item.destination_path)
+            try:
+                accessible = path.is_file()
+            except OSError as exc:
+                raise OSError(f"Imported library file is temporarily inaccessible: {path}") from exc
+            if not accessible:
+                raise FileNotFoundError(f"Imported library file is temporarily inaccessible: {path}")
 
     def build_input(self, media: MediaFullInfo, layout: LibraryMediaLayout) -> MediaServerSyncInput | None:
         decision = library_media_root_policy.build_from_library_layout(media, layout)

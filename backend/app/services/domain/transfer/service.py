@@ -360,6 +360,13 @@ async def commit_transfer_results(
     handled_file_indices: set[int] | None = None,
 ) -> None:
     try:
+        ledger_indices = (
+            set(handled_file_indices)
+            if handled_file_indices is not None
+            else {result.file_index for result in transfer_results}
+            if commit_mode.incremental and transfer_results
+            else None
+        )
         batch_paths = {str(Path(result.destination_path)) for result in transfer_results}
         incoming_video_paths = {
             str(Path(result.destination_path))
@@ -384,11 +391,7 @@ async def commit_transfer_results(
             replacement_files,
             incremental=commit_mode.incremental,
             preserve_existing=commit_mode.preserves_existing,
-            imported_file_indices=(
-                sorted(handled_file_indices or {result.file_index for result in transfer_results})
-                if commit_mode.incremental and transfer_results
-                else None
-            ),
+            imported_file_indices=sorted(ledger_indices) if ledger_indices is not None else None,
             completion_event=completion_event,
             dispatch_records=(
                 event_service.build_dispatch_records(completion_event)
@@ -396,10 +399,10 @@ async def commit_transfer_results(
                 else None
             ),
         )
-        if commit_mode.incremental:
+        if ledger_indices is not None:
             task.context.imported_file_indices = sorted(
                 set(task.context.imported_file_indices)
-                | (handled_file_indices or {result.file_index for result in transfer_results})
+                | ledger_indices
             )
         replaced_video_paths = {
             str(build_library_file_path(item.path, item.file_name))

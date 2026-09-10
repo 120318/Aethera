@@ -72,6 +72,7 @@ class MediaServerSyncService:
         if context.imported_files and not imported_results:
             logger.info("Skipping stale media import event: event=%s task=%s", event.id, context.task_id)
             return
+        media_server_sync_target.ensure_import_targets_accessible(imported_results)
         season_number = event_season_number(event, context.media_id)
         if context.media_id.media_type.value == "tv" and season_number is None:
             season_number = library_files_season_number(library_files)
