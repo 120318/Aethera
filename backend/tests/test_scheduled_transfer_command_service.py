@@ -12,7 +12,7 @@ os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
 from app.services.application.commands.service import CommandConflictException
 from app.services.application.workflows.scheduled_transfer.service import scheduled_transfer_command_service
-from app.schemas.domain.download import TaskErrorStage
+from app.schemas.domain.download import TaskErrorStage, TaskStatus
 from app.schemas.exception.exceptions import TransferException
 
 
@@ -135,4 +135,5 @@ async def test_enqueue_finished_tasks_marks_transfer_precheck_exception(monkeypa
         error_key="backendErrors.transferSourceFileNotFound",
         error_params={"path": "/downloads/missing.mkv"},
         error_stage=TaskErrorStage.TRANSFER,
+        expected_status=TaskStatus.FINISHED,
     )

@@ -31,6 +31,12 @@ class _FakeRepo:
         self.updated_fields = fields
         return True
 
+    async def update_fields_if_status(self, fields, task_id: str, expected_status: TaskStatus) -> bool:
+        if not self.task or self.task.id != task_id or self.task.status != expected_status:
+            return False
+        self.updated_fields = fields
+        return True
+
     def cond_id(self, task_id: str) -> str:
         return task_id
 
@@ -99,11 +105,27 @@ async def test_record_task_error_does_not_require_a_state_transition():
         task.id,
         error_key="backendErrors.transferFailed",
         error_stage=TaskErrorStage.TRANSFER,
+        expected_status=TaskStatus.FINISHED,
         error_params={"reason": "storage offline"},
     )
     assert repo.updated_fields.status is None
     assert repo.updated_fields.error_key == "backendErrors.transferFailed"
     assert repo.updated_fields.error_stage == TaskErrorStage.TRANSFER
+
+
+@pytest.mark.asyncio
+async def test_record_task_error_rejects_a_stale_expected_status():
+    task = _task(status=TaskStatus.COMPLETED)
+    repo = _FakeRepo(task)
+    service = TaskStateService(repo)
+
+    assert not await service.record_task_error(
+        task.id,
+        error_key="backendErrors.transferFailed",
+        error_stage=TaskErrorStage.TRANSFER,
+        expected_status=TaskStatus.FINISHED,
+    )
+    assert repo.updated_fields is None
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,7 @@ async def _mark_precheck_transfer_failed(task: TaskData, exc: TransferException)
             error_key=exc.message_key,
             error_params={str(key): str(value) for key, value in exc.params.items()},
             error_stage=TaskErrorStage.TRANSFER,
+            expected_status=TaskStatus.FINISHED,
         )
         if not updated:
             logger.error("Scheduled transfer precheck failure was not persisted for task %s", task.id)

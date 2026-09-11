@@ -202,12 +202,14 @@ class DownloadService:
         *,
         error_key: str,
         error_stage: TaskErrorStage,
+        expected_status: TaskStatus,
         error_params: dict[str, str] | None = None,
     ) -> bool:
         return await self.task_state.record_task_error(
             task_id,
             error_key=error_key,
             error_stage=error_stage,
+            expected_status=expected_status,
             error_params=error_params,
         )
 

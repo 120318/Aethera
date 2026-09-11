@@ -181,13 +181,34 @@ class TaskRepository:
 
     async def update_fields(self, fields: TaskFieldPatch, cond: str) -> bool:
         task_id = cond
-        values = fields.model_dump(mode="json", exclude_unset=True)
-        if "error_params" in values:
-            values["error_params_json"] = values.pop("error_params")
+        values = self._field_values(fields)
         with SessionLocal() as session:
             result = session.execute(update(TaskORM).where(TaskORM.id == task_id).values(**values))
             session.commit()
             return bool(result.rowcount)
+
+    async def update_fields_if_status(
+        self,
+        fields: TaskFieldPatch,
+        task_id: str,
+        expected_status: TaskStatus,
+    ) -> bool:
+        values = self._field_values(fields)
+        with SessionLocal() as session:
+            result = session.execute(
+                update(TaskORM)
+                .where(TaskORM.id == task_id, TaskORM.status == expected_status.value)
+                .values(**values)
+            )
+            session.commit()
+            return bool(result.rowcount)
+
+    @staticmethod
+    def _field_values(fields: TaskFieldPatch) -> dict[str, object]:
+        values = fields.model_dump(mode="json", exclude_unset=True)
+        if "error_params" in values:
+            values["error_params_json"] = values.pop("error_params")
+        return values
 
     async def delete_by_id(self, task_id: str) -> bool:
         with SessionLocal() as session:

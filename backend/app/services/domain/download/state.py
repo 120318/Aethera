@@ -102,16 +102,16 @@ class TaskStateService:
         *,
         error_key: str,
         error_stage: TaskErrorStage,
+        expected_status: TaskStatus,
         error_params: dict[str, str] | None = None,
     ) -> bool:
-        if not await self._repo.find_by_id(task_id):
-            return False
-        return await self._repo.update_fields(
+        return await self._repo.update_fields_if_status(
             TaskFieldPatch(
                 error_key=error_key,
                 error_params=error_params or {},
                 error_stage=error_stage,
                 updated_at=datetime.now(),
             ),
-            self._repo.cond_id(task_id),
+            task_id,
+            expected_status,
         )
