@@ -27,6 +27,11 @@ class LibraryReplacementPolicy:
         for result in videos:
             path = normalize_path_separators(result.destination_path)
             current = winner_by_path.get(path)
+            if current is not None and self._episode_set(current) != self._episode_set(result):
+                raise TransferException(
+                    "backendErrors.transferEpisodePathConflict",
+                    params={"path": path},
+                )
             if current is None or self._batch_rank(result, quality_profile) > self._batch_rank(current, quality_profile):
                 winner_by_path[path] = result
 
@@ -71,6 +76,10 @@ class LibraryReplacementPolicy:
             result for result in transfer_results
             if not file_name_looks_like_media_file(result.file_item.filename) or result.file_index in winner_indices
         ]
+
+    @staticmethod
+    def _episode_set(result: TransferFileResult) -> frozenset[int]:
+        return frozenset(result.episode_numbers or ([result.episode_number] if result.episode_number else []))
 
     async def build_plan(
         self,

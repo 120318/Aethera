@@ -6,6 +6,7 @@ from app.schemas.domain.download import TaskContext, TaskData, TaskStatus, Trans
 from app.schemas.domain.quality_profile import QualityProfile
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
+from app.schemas.exception.exceptions import TransferException
 from app.schemas.media_id import MediaID
 from app.schemas.domain.library import LibraryEpisode, LibraryFile
 from app.services.domain.library.service import LibraryService
@@ -142,6 +143,29 @@ def test_batch_winners_keep_combined_file_with_exclusive_episode():
     ])
 
     assert [result.file_index for result in winners] == [0, 1]
+
+
+def test_batch_winners_reject_different_episodes_with_same_destination_path():
+    episode_one = _batch_result(0, [1], "1080p")
+    episode_two = _batch_result(1, [2], "2160p").model_copy(
+        update={"destination_path": episode_one.destination_path},
+    )
+
+    with pytest.raises(TransferException, match="backendErrors.transferEpisodePathConflict") as exc_info:
+        library_replacement_policy.select_batch_winners([episode_one, episode_two])
+
+    assert exc_info.value.params == {"path": episode_one.destination_path}
+
+
+def test_batch_winners_allow_equivalent_episodes_with_same_destination_path():
+    lower = _batch_result(0, [1], "1080p")
+    higher = _batch_result(1, [1], "2160p").model_copy(
+        update={"destination_path": lower.destination_path},
+    )
+
+    winners = library_replacement_policy.select_batch_winners([lower, higher])
+
+    assert [result.file_index for result in winners] == [1]
 
 
 @pytest.mark.asyncio

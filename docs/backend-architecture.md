@@ -281,7 +281,8 @@ event's imported files, not all files belonging to the task.
 - Incremental registration replaces only the incoming file indices and explicit
   quality-replacement conflicts. It preserves earlier batches and their episode
   records. Full completion imports remaining files and changes the task status;
-  an empty final batch emits no additional import event. Every successful import
+  an empty final batch emits no additional import event, but still records indices
+  satisfied by existing higher-quality episode coverage. Every successful import
   mode persists its handled file indices in the task ledger and writes its import
   event plus consumer dispatches in the same library transaction.
 - Transfer commit modes are explicit: partial incremental, final incremental,
@@ -298,7 +299,9 @@ event's imported files, not all files belonging to the task.
   remains a retryable consumer failure.
 - Batch selection records discarded lower-quality indices separately from
   idempotently skipped winners. A repair-mode commit preserves the skipped files
-  while explicitly removing existing records for discarded indices.
+  while explicitly removing existing records for discarded indices. Candidates
+  for different episode sets may never share a destination path; a conflicting
+  naming template rejects the whole batch instead of silently dropping an episode.
 - Directory integrity treats a completed task whose owned files were removed by
   quality replacement as satisfied only when its imported-file ledger is
   complete and visible replacement files anywhere in the library still cover

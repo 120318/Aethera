@@ -126,6 +126,7 @@ class TransferService:
                     if missing_sources or inspection.disposition == ReadyFileDisposition.SOURCE_FALLBACK:
                         return await self._perform_incremental_transfer(
                             task, existing_files, remaining, TransferCommitMode.FINAL_INCREMENTAL,
+                            handled_file_indices=selected,
                         )
                     if inspection.disposition == ReadyFileDisposition.WAIT:
                         return TransferResult(transferred_files=[])
@@ -135,6 +136,7 @@ class TransferService:
                 )
         return await self._perform_incremental_transfer(
             task, existing_files, remaining, TransferCommitMode.FINAL_INCREMENTAL,
+            handled_file_indices=selected,
         )
 
     async def _reject_terminal_file_validation(self, task: TaskData) -> None:
@@ -150,13 +152,30 @@ class TransferService:
         existing_files: list[LibraryFile],
         indices: set[int],
         commit_mode: TransferCommitMode,
+        *,
+        handled_file_indices: set[int] | None = None,
     ) -> TransferResult:
         try:
             if commit_mode.completes_task:
                 await self._lock_task_status(task)
             if not indices:
-                if commit_mode.completes_task and not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
-                    raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})
+                if commit_mode.completes_task:
+                    ledger_indices = handled_file_indices if handled_file_indices is not None else indices
+                    season_number = download_service.resolve_task_episode_coverage_detail(task).season_number
+                    await library_service.replace_task_entries(
+                        task.id,
+                        task.context.directory_id,
+                        task.media_id,
+                        [],
+                        season_number,
+                        incremental=True,
+                        imported_file_indices=sorted(ledger_indices),
+                    )
+                    task.context.imported_file_indices = sorted(
+                        set(task.context.imported_file_indices) | ledger_indices
+                    )
+                    if not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
+                        raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})
                 return TransferResult(transferred_files=[])
             context = await execution.build_transfer_execution_context(task)
             context.selected_indices = indices
@@ -174,7 +193,11 @@ class TransferService:
             await commit_transfer_results(
                 task, results, existing_files, context, replacement_plan.replace_files,
                 commit_mode=commit_mode,
-                handled_file_indices=indices,
+                handled_file_indices=(
+                    handled_file_indices
+                    if handled_file_indices is not None
+                    else indices
+                ),
             )
             return TransferResult(transferred_files=results)
         except AppException as exc:

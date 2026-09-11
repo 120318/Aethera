@@ -319,6 +319,7 @@ export default {
     transferMediaSnapshotMissing: 'Import event is missing media snapshot: {task_id}',
     transferCommitFailed: 'Failed to commit transfer result: {reason}',
     transferFailed: 'Transfer failed: {reason}',
+    transferEpisodePathConflict: 'Different episodes resolve to the same destination path: {path}. Fix the file naming template',
     transferFileNamingTemplateMissing: 'File naming template is missing',
     transferFileNameRenderFailed: 'Failed to render file name: {filename}',
     transferDirectoryNamingTemplateMissing: 'Directory naming template is missing',

@@ -14,7 +14,7 @@ from app.schemas.exception.exceptions import DownloadException, TransferExceptio
 from app.schemas.config import Template, TransferMode
 from app.schemas.media_id import MediaID
 from app.schemas.domain.addon_events import MediaImportCompletedEventMeta
-from app.schemas.domain.download import TaskContext, TaskData, TaskStatus, TransferFileResult
+from app.schemas.domain.download import TaskContext, TaskData, TaskStatus, TransferFileResult, TransferResult
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
@@ -214,6 +214,55 @@ async def test_commit_transfer_results_refreshes_tv_profile_with_execution_seaso
     assert replace_mock.await_args.kwargs["imported_file_indices"] == [0]
     assert replace_mock.await_args.kwargs["completion_event"] is not None
     assert replace_mock.await_args.kwargs["dispatch_records"] is not None
+    assert task.context.imported_file_indices == [0]
+
+
+@pytest.mark.asyncio
+async def test_final_incremental_transfer_forwards_all_coverage_satisfied_indices(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+    task.metadata.files.append(
+        TorrentFileItem(
+            index=1,
+            filename="Test.Show.S01E02.2024.1080p.WEB-DL.mkv",
+            size=100,
+        )
+    )
+    perform_mock = AsyncMock(return_value=TransferResult(transferred_files=[]))
+    monkeypatch.setattr(transfer_service, "_perform_incremental_transfer", perform_mock)
+
+    await transfer_service._finish_incremental_transfer(task, [], {0, 1})
+
+    perform_mock.assert_awaited_once_with(
+        task,
+        [],
+        set(),
+        TransferCommitMode.FINAL_INCREMENTAL,
+        handled_file_indices={0, 1},
+    )
+
+
+@pytest.mark.asyncio
+async def test_empty_final_incremental_transfer_persists_satisfied_ledger(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+    replace_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.replace_task_entries",
+        replace_mock,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.download_service.update_task_state",
+        AsyncMock(return_value=True),
+    )
+
+    await transfer_service._perform_incremental_transfer(
+        task,
+        [],
+        set(),
+        TransferCommitMode.FINAL_INCREMENTAL,
+        handled_file_indices={0},
+    )
+
+    assert replace_mock.await_args.kwargs["imported_file_indices"] == [0]
     assert task.context.imported_file_indices == [0]
 
 

@@ -319,6 +319,7 @@ export default {
     transferMediaSnapshotMissing: '导入事件缺少媒体快照：{task_id}',
     transferCommitFailed: '提交转移结果失败：{reason}',
     transferFailed: '转移失败：{reason}',
+    transferEpisodePathConflict: '不同剧集被命名为同一目标路径：{path}，请修正文件命名模板',
     transferFileNamingTemplateMissing: '缺少文件命名模板',
     transferFileNameRenderFailed: '文件名渲染失败：{filename}',
     transferDirectoryNamingTemplateMissing: '缺少目录命名模板',
