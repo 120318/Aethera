@@ -13,7 +13,7 @@ from app.services.domain.resource.filtering import compute_preference_score_from
 from app.services.domain.resource.quality import quality_sort_key
 from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file, normalize_path_separators
 
-from .episode_coverage import episode_group_dominates
+from .episode_coverage import episode_coverage_satisfies, episode_group_dominates
 from .execution import with_context_resource_attrs
 
 
@@ -238,15 +238,19 @@ class LibraryReplacementPolicy:
                     "backendErrors.transferFailed",
                     params={"reason": str(exc)},
                 ) from exc
-        episode_ranks: dict[int, list[tuple[int, tuple[int, ...], int]]] = {}
         quality_profile = self._quality_profile()
+        episode_sets_by_file_id: dict[str, set[int]] = {}
         for episode in episodes:
-            if episode.season != season or episode.file_id not in files_by_id:
-                continue
-            library_file = files_by_id[episode.file_id]
-            episode_ranks.setdefault(int(episode.episode), []).append(
-                self._rank(library_file.resource_attributes, library_file.file_size or 0, quality_profile)
+            if episode.season == season and episode.file_id in files_by_id:
+                episode_sets_by_file_id.setdefault(episode.file_id, set()).add(int(episode.episode))
+        library_coverage = [
+            (
+                frozenset(item.resource_attributes.episodes or [])
+                | frozenset(episode_sets_by_file_id.get(item.id or "", set())),
+                self._rank(item.resource_attributes, item.file_size or 0, quality_profile),
             )
+            for item in files_by_id.values()
+        ]
 
         selected = set(task.context.selected_files) if task.context and task.context.selected_files else None
         satisfied: set[int] = set()
@@ -260,18 +264,12 @@ class LibraryReplacementPolicy:
             if not episode_numbers or not episode_numbers.issubset(imported_episode_numbers):
                 continue
             incoming_rank = self._rank(incoming.attrs or ResourceAttributes(), incoming.size or 0, quality_profile)
-            if len(episode_numbers) > 1:
-                incoming_quality = incoming_rank[:2]
-                is_satisfied = all(
-                    number in episode_ranks
-                    and max(rank[:2] for rank in episode_ranks[number]) >= incoming_quality
-                    for number in episode_numbers
-                )
-            else:
-                is_satisfied = all(
-                    number in episode_ranks and max(episode_ranks[number]) >= incoming_rank
-                    for number in episode_numbers
-                )
+            incoming_episode_set = frozenset(episode_numbers)
+            is_satisfied = episode_coverage_satisfies(
+                library_coverage,
+                incoming_rank,
+                incoming_episode_set,
+            )
             if is_satisfied:
                 satisfied.add(item.index)
         return satisfied

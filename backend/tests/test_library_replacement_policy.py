@@ -355,6 +355,66 @@ async def test_split_library_files_dominate_lower_quality_combined_candidate(mon
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("existing_resolution", "expected"), [("2160p", {0}), ("1080p", set())])
+async def test_satisfied_indices_use_episode_group_dominance(monkeypatch, existing_resolution, expected):
+    media_id = MediaID.parse("tmdb:tv:1")
+    existing = _library_file(
+        "combined",
+        media_id=media_id,
+        file_name=f"Test.S01E01E02.{existing_resolution}.mkv",
+        attrs=ResourceAttributes(resolution=existing_resolution, seasons=[1], episodes=[1, 2]),
+    )
+    stub = _LibraryServiceStub(
+        [existing],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="combined", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="combined", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+    task = _task(media_id, season=1)
+    task.metadata.files = [_batch_result(0, [1], "1080p").file_item]
+
+    satisfied = await library_replacement_policy.satisfied_file_indices(
+        task,
+        season=1,
+        imported_episode_numbers={1, 2},
+    )
+
+    assert satisfied == expected
+
+
+@pytest.mark.asyncio
+async def test_satisfied_indices_keep_size_tiebreak_for_exact_episode_group(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    existing = _library_file(
+        "combined",
+        media_id=media_id,
+        file_name="Test.S01E01E02.1080p.mkv",
+        size=3000,
+        attrs=ResourceAttributes(resolution="1080p", seasons=[1], episodes=[1, 2]),
+    )
+    stub = _LibraryServiceStub(
+        [existing],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="combined", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="combined", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+    task = _task(media_id, season=1)
+    task.metadata.files = [_batch_result(0, [1, 2], "1080p").file_item]
+
+    satisfied = await library_replacement_policy.satisfied_file_indices(
+        task,
+        season=1,
+        imported_episode_numbers={1, 2},
+    )
+
+    assert satisfied == {0}
+
+
+@pytest.mark.asyncio
 async def test_subtitle_does_not_replace_existing_episode_video(monkeypatch):
     media_id = MediaID.parse("tmdb:tv:1")
     old_video = _library_file(

@@ -561,7 +561,7 @@ async def test_imported_single_episodes_satisfy_later_lower_quality_combined_fil
 
 
 @pytest.mark.asyncio
-async def test_imported_combined_file_satisfies_later_equal_quality_single_episode(setup_import):
+async def test_imported_combined_file_allows_later_equal_quality_single_episode_split(setup_import):
     env = setup_import
     env.task.metadata.files[0].attrs.episodes = [1, 2]
     await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
@@ -569,7 +569,7 @@ async def test_imported_combined_file_satisfies_later_equal_quality_single_episo
     env.live[1].progress = 1.0
 
     assert env.task.context.imported_file_indices == [2]
-    assert await find_ready_file_indices(env.task) == []
+    assert await find_ready_file_indices(env.task) == [5]
 
 
 @pytest.mark.asyncio
