@@ -76,6 +76,7 @@ class TaskContext(BaseModel):
     # Internal note.
     directory_id: str
     selected_files: list[int] = []
+    imported_file_indices: list[int] = Field(default_factory=list)
 
     # Internal note.
     search_result: ResourceSearchResult | None = None
@@ -145,6 +146,7 @@ class DownloadInfo(BaseModel):
     size: int
     progress: float
     state: str
+    files_readable: bool = True
     save_path: str
     added_on: datetime
     completion_on: datetime | None = None
@@ -163,6 +165,17 @@ class TransferResult(BaseModel):
     error_key: str | None = None
     error_params: dict[str, str] = Field(default_factory=dict)
     files: list[DownloadFileInfo] | None = None
+
+
+class DownloadInfoLookupStatus(str, Enum):
+    FOUND = "found"
+    MISSING = "missing"
+    UNAVAILABLE = "unavailable"
+
+
+class DownloadInfoLookup(BaseModel):
+    status: DownloadInfoLookupStatus
+    info: DownloadInfo | None = None
 
 
 class BatchJobResult(BaseModel):

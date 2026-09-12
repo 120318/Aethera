@@ -6,6 +6,7 @@ from app.schemas.domain.download import TaskContext, TaskData, TaskStatus, Trans
 from app.schemas.domain.quality_profile import QualityProfile
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
+from app.schemas.exception.exceptions import TransferException
 from app.schemas.media_id import MediaID
 from app.schemas.domain.library import LibraryEpisode, LibraryFile
 from app.services.domain.library.service import LibraryService
@@ -79,6 +80,24 @@ def _transfer_result(
     )
 
 
+def _batch_result(index: int, episodes: list[int], resolution: str) -> TransferFileResult:
+    episode_suffix = "E" + "E".join(f"{episode:02d}" for episode in episodes)
+    filename = f"Test.S01{episode_suffix}.{resolution}.mkv"
+    return TransferFileResult(
+        source_path=f"/downloads/{filename}",
+        destination_path=f"/library/{filename}",
+        file_index=index,
+        episode_number=episodes[0],
+        episode_numbers=episodes,
+        file_item=TorrentFileItem(
+            index=index,
+            filename=filename,
+            size=2000,
+            attrs=ResourceAttributes(seasons=[1], episodes=episodes, resolution=resolution),
+        ),
+    )
+
+
 class _LibraryServiceStub:
     def __init__(self, files: list[LibraryFile], episodes: list[LibraryEpisode] | None = None) -> None:
         self.files = files
@@ -91,6 +110,9 @@ class _LibraryServiceStub:
     async def get_episodes_by_media(self, media_id: MediaID) -> list[LibraryEpisode]:
         return [item for item in self.episodes if item.media_id == media_id]
 
+    def file_is_intact(self, _library_file: LibraryFile) -> bool:
+        return True
+
     def build_package_summaries(self, files: list[LibraryFile]):
         return self._package_service.build_package_summaries(files)
 
@@ -101,6 +123,49 @@ class _LibraryServiceStub:
 @pytest.fixture(autouse=True)
 def _quality_profile(monkeypatch):
     monkeypatch.setattr(library_replacement_policy, "_quality_profile", lambda: QualityProfile(name="Default"))
+
+
+@pytest.mark.parametrize("single_resolution", ["720p", "2160p"])
+def test_batch_winners_drop_combined_file_covered_by_equal_or_better_single_episodes(single_resolution):
+    winners = library_replacement_policy.select_batch_winners([
+        _batch_result(0, [1, 2], "720p"),
+        _batch_result(1, [1], single_resolution),
+        _batch_result(2, [2], single_resolution),
+    ])
+
+    assert [result.file_index for result in winners] == [1, 2]
+
+
+def test_batch_winners_keep_combined_file_with_exclusive_episode():
+    winners = library_replacement_policy.select_batch_winners([
+        _batch_result(0, [1, 2], "720p"),
+        _batch_result(1, [1], "2160p"),
+    ])
+
+    assert [result.file_index for result in winners] == [0, 1]
+
+
+def test_batch_winners_reject_different_episodes_with_same_destination_path():
+    episode_one = _batch_result(0, [1], "1080p")
+    episode_two = _batch_result(1, [2], "2160p").model_copy(
+        update={"destination_path": episode_one.destination_path},
+    )
+
+    with pytest.raises(TransferException, match="backendErrors.transferEpisodePathConflict") as exc_info:
+        library_replacement_policy.select_batch_winners([episode_one, episode_two])
+
+    assert exc_info.value.params == {"path": episode_one.destination_path}
+
+
+def test_batch_winners_allow_equivalent_episodes_with_same_destination_path():
+    lower = _batch_result(0, [1], "1080p")
+    higher = _batch_result(1, [1], "2160p").model_copy(
+        update={"destination_path": lower.destination_path},
+    )
+
+    winners = library_replacement_policy.select_batch_winners([lower, higher])
+
+    assert [result.file_index for result in winners] == [1]
 
 
 @pytest.mark.asyncio
@@ -131,6 +196,248 @@ async def test_video_file_replaces_only_same_episode_video_files(monkeypatch):
     )
 
     assert [item.id for item in plan.replace_files] == ["old-video"]
+
+
+@pytest.mark.asyncio
+async def test_combined_video_replaces_only_lower_quality_single_episode_candidates(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    episode_one = _library_file(
+        "episode-1",
+        media_id=media_id,
+        file_name="Test.S01E01.720p.mkv",
+        attrs=ResourceAttributes(resolution="720p", seasons=[1], episodes=[1]),
+    )
+    episode_two = _library_file(
+        "episode-2",
+        media_id=media_id,
+        file_name="Test.S01E02.2160p.mkv",
+        attrs=ResourceAttributes(resolution="2160p", seasons=[1], episodes=[2]),
+    )
+    stub = _LibraryServiceStub(
+        [episode_one, episode_two],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="episode-1", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="episode-2", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+
+    plan = await library_replacement_policy.build_plan(
+        _task(media_id, season=1),
+        [_batch_result(0, [1, 2], "1080p")],
+        season=1,
+    )
+
+    assert [item.id for item in plan.replace_files] == ["episode-1"]
+
+
+@pytest.mark.asyncio
+async def test_same_episode_group_drops_smaller_equal_quality_combined_file(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    existing = _library_file(
+        "combined",
+        media_id=media_id,
+        file_name="Test.S01E01E02.1080p.mkv",
+        size=3000,
+        attrs=ResourceAttributes(resolution="1080p", seasons=[1], episodes=[1, 2]),
+    )
+    stub = _LibraryServiceStub(
+        [existing],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="combined", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="combined", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+
+    incoming = _batch_result(0, [1, 2], "1080p").model_copy(
+        update={"destination_path": "/library/different-name.mkv"},
+    )
+
+    selected = await library_replacement_policy.select_library_winners(
+        _task(media_id, season=1),
+        [incoming],
+        season=1,
+    )
+
+    assert selected == []
+
+
+@pytest.mark.asyncio
+async def test_library_combined_file_dominates_lower_quality_single_episode(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    existing = _library_file(
+        "combined",
+        media_id=media_id,
+        file_name="Test.S01E01E02.2160p.mkv",
+        size=3000,
+        attrs=ResourceAttributes(resolution="2160p", seasons=[1], episodes=[1, 2]),
+    )
+    stub = _LibraryServiceStub(
+        [existing],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="combined", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="combined", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+    incoming = _batch_result(0, [1], "1080p").model_copy(
+        update={"destination_path": "/library/different-name.mkv"},
+    )
+
+    selected = await library_replacement_policy.select_library_winners(
+        _task(media_id, season=1),
+        [incoming],
+        season=1,
+    )
+
+    assert selected == []
+
+
+@pytest.mark.asyncio
+async def test_combined_library_file_drops_only_lower_quality_split_member(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    existing = _library_file(
+        "combined",
+        media_id=media_id,
+        file_name="Test.S01E01E02.720p.mkv",
+        attrs=ResourceAttributes(resolution="720p", seasons=[1], episodes=[1, 2]),
+    )
+    stub = _LibraryServiceStub(
+        [existing],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="combined", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="combined", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+
+    selected = await library_replacement_policy.select_library_winners(
+        _task(media_id, season=1),
+        [_batch_result(0, [1], "480p"), _batch_result(1, [2], "720p")],
+        season=1,
+    )
+
+    assert [result.file_index for result in selected] == [1]
+
+
+@pytest.mark.asyncio
+async def test_split_library_files_dominate_lower_quality_combined_candidate(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    episode_one = _library_file(
+        "episode-1",
+        media_id=media_id,
+        file_name="Test.S01E01.2160p.mkv",
+        attrs=ResourceAttributes(resolution="2160p", seasons=[1], episodes=[1]),
+    )
+    episode_two = _library_file(
+        "episode-2",
+        media_id=media_id,
+        file_name="Test.S01E02.2160p.mkv",
+        attrs=ResourceAttributes(resolution="2160p", seasons=[1], episodes=[2]),
+    )
+    stub = _LibraryServiceStub(
+        [episode_one, episode_two],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="episode-1", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="episode-2", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+
+    selected = await library_replacement_policy.select_library_winners(
+        _task(media_id, season=1),
+        [_batch_result(0, [1, 2], "1080p")],
+        season=1,
+    )
+
+    assert selected == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("existing_resolution", "expected"), [("2160p", {0}), ("1080p", set())])
+async def test_satisfied_indices_use_episode_group_dominance(monkeypatch, existing_resolution, expected):
+    media_id = MediaID.parse("tmdb:tv:1")
+    existing = _library_file(
+        "combined",
+        media_id=media_id,
+        file_name=f"Test.S01E01E02.{existing_resolution}.mkv",
+        attrs=ResourceAttributes(resolution=existing_resolution, seasons=[1], episodes=[1, 2]),
+    )
+    stub = _LibraryServiceStub(
+        [existing],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="combined", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="combined", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+    task = _task(media_id, season=1)
+    task.metadata.files = [_batch_result(0, [1], "1080p").file_item]
+
+    satisfied = await library_replacement_policy.satisfied_file_indices(
+        task,
+        season=1,
+        imported_episode_numbers={1, 2},
+    )
+
+    assert satisfied == expected
+
+
+@pytest.mark.asyncio
+async def test_satisfied_indices_keep_size_tiebreak_for_exact_episode_group(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    existing = _library_file(
+        "combined",
+        media_id=media_id,
+        file_name="Test.S01E01E02.1080p.mkv",
+        size=3000,
+        attrs=ResourceAttributes(resolution="1080p", seasons=[1], episodes=[1, 2]),
+    )
+    stub = _LibraryServiceStub(
+        [existing],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="combined", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="combined", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+    task = _task(media_id, season=1)
+    task.metadata.files = [_batch_result(0, [1, 2], "1080p").file_item]
+
+    satisfied = await library_replacement_policy.satisfied_file_indices(
+        task,
+        season=1,
+        imported_episode_numbers={1, 2},
+    )
+
+    assert satisfied == {0}
+
+
+@pytest.mark.asyncio
+async def test_subtitle_does_not_replace_existing_episode_video(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    old_video = _library_file(
+        "old-video",
+        media_id=media_id,
+        attrs=ResourceAttributes(resolution="720p", resource_form="Video File", seasons=[1], episodes=[1]),
+    )
+    stub = _LibraryServiceStub(
+        [old_video],
+        [LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="old-video", created_at=0.0)],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+
+    plan = await library_replacement_policy.build_plan(
+        _task(media_id, season=1),
+        [_transfer_result(
+            filename="Test.S01E01.2160p.srt",
+            attrs=ResourceAttributes(resolution="2160p", seasons=[1], episodes=[1]),
+        )],
+        season=1,
+    )
+
+    assert plan.replace_files == []
 
 
 @pytest.mark.asyncio

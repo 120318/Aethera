@@ -298,10 +298,17 @@ class DownloadTaskService:
         if not task_ids:
             return {}
         task_map = await self.get_tasks_by_ids(task_ids)
+        return await self.get_torrent_status_by_tasks(list(task_map.values()))
+
+    async def get_torrent_status_by_tasks(self, tasks: list[TaskData]) -> Mapping[str, TorrentStatus]:
         downloader_hashes: dict[str, list[str]] = {}
-        for task in task_map.values():
+        task_ids_by_torrent: dict[tuple[str, str], list[str]] = {}
+        for task in tasks:
             if task.downloader_id and task.torrent_hash:
                 downloader_hashes.setdefault(task.downloader_id, []).append(task.torrent_hash)
+                task_ids_by_torrent.setdefault(
+                    (task.downloader_id, task.torrent_hash.lower()), [],
+                ).append(task.id)
 
         result: dict[str, TorrentStatus] = {}
         for did, hashes in downloader_hashes.items():
@@ -311,7 +318,6 @@ class DownloadTaskService:
             except (DownloadException, qbittorrentapi.APIError, RuntimeError, ValueError):
                 continue
             for status in statuses:
-                for task_id, task in task_map.items():
-                    if task.downloader_id == did and task.torrent_hash.lower() == status.hash.lower():
-                        result[task_id] = status
+                for task_id in task_ids_by_torrent.get((did, status.hash.lower()), []):
+                    result[task_id] = status
         return result

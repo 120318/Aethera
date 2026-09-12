@@ -1195,6 +1195,97 @@ class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
         generate_mock.assert_awaited_once()
         self.assertEqual(library_file, generate_mock.await_args.kwargs["library_file"])
 
+    async def test_import_event_registered_storage_failure_remains_retryable(self):
+        service = DanmuApplicationService()
+        config = AddonsConfig.model_validate({"danmu": {"enabled": True, "directory_ids": ["dir-1"]}}).danmu
+        media_id = MediaID.parse("tmdb:movie:1")
+        video_path = Path("/library/Movie.mkv")
+        library_file = LibraryFile(
+            id="file-1",
+            task_id="task-1",
+            directory_id="dir-1",
+            media_id=media_id,
+            path=str(video_path.parent),
+            file_name=video_path.name,
+            file_size=1,
+            created_at=1,
+        )
+        event = Event(
+            type=EventType.MEDIA_IMPORT_COMPLETED,
+            meta=MediaImportCompletedEventMeta(
+                task_id="task-1",
+                directory_id="dir-1",
+                media_id=media_id,
+                file_path=str(video_path),
+                imported_files=[ImportedMediaFile(destination_path=str(video_path), episode_number=None)],
+            ).model_dump_json(),
+        )
+
+        with (
+            patch.object(service, "config", return_value=config),
+            patch.object(service, "_generate_for_video", new=AsyncMock()) as generate_mock,
+            patch(
+                "app.services.application.workflows.danmu.service.danmu_source_resolver.media_with_fetchable_source",
+                new=AsyncMock(),
+            ) as media_mock,
+            patch(
+                "app.services.domain.library.service.library_service.get_files_by_task",
+                new=AsyncMock(return_value=[library_file]),
+            ),
+            patch(
+                "app.services.application.workflows.imported_media_batch.fs_provider.file_stat",
+                side_effect=OSError("storage offline"),
+            ),
+        ):
+            with self.assertRaisesRegex(OSError, "temporarily inaccessible"):
+                await service.handle_event(event)
+
+        generate_mock.assert_not_awaited()
+        media_mock.assert_not_awaited()
+
+    async def test_import_event_ignores_auxiliary_library_files(self):
+        service = DanmuApplicationService()
+        config = AddonsConfig.model_validate({"danmu": {"enabled": True, "directory_ids": ["dir-1"]}}).danmu
+        media_id = MediaID.parse("tmdb:movie:1")
+        subtitle_path = Path("/library/Movie.srt")
+        library_file = LibraryFile(
+            id="file-1",
+            task_id="task-1",
+            directory_id="dir-1",
+            media_id=media_id,
+            path=str(subtitle_path.parent),
+            file_name=subtitle_path.name,
+            file_size=1,
+            created_at=1,
+        )
+        event = Event(
+            type=EventType.MEDIA_IMPORT_COMPLETED,
+            meta=MediaImportCompletedEventMeta(
+                task_id="task-1",
+                directory_id="dir-1",
+                media_id=media_id,
+                file_path=str(subtitle_path),
+                imported_files=[ImportedMediaFile(destination_path=str(subtitle_path), episode_number=None)],
+            ).model_dump_json(),
+        )
+
+        with (
+            patch.object(service, "config", return_value=config),
+            patch.object(service, "_generate_for_video", new=AsyncMock()) as generate_mock,
+            patch(
+                "app.services.application.workflows.danmu.service.danmu_source_resolver.media_with_fetchable_source",
+                new=AsyncMock(),
+            ) as media_mock,
+            patch(
+                "app.services.domain.library.service.library_service.get_files_by_task",
+                new=AsyncMock(return_value=[library_file]),
+            ),
+        ):
+            await service.handle_event(event)
+
+        generate_mock.assert_not_awaited()
+        media_mock.assert_not_awaited()
+
     async def test_backfill_policy_generates_when_recent_configured_sidecar_missing(self):
         service = DanmuApplicationService()
         config = AddonsConfig.model_validate({"danmu": {"output_xml": True, "output_ass": True}}).danmu

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import stat
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -16,6 +17,7 @@ from app.schemas.exception.base import AppException
 from app.schemas.exception.exceptions import TransferException
 from app.services.domain.directory import directory_service
 from app.services.domain.download import download_service
+from app.services.domain.download.coverage import with_context_resource_attrs
 from app.services.domain.library.service import library_service
 from app.services.domain.library.target_path_policy import library_target_path_policy
 from app.utils.fs_utils import fs_provider
@@ -37,6 +39,12 @@ class TransferExecutionContext(BaseModel):
     year: int | None = None
     selected_indices: set[int] | None = None
     season_number: int | None = None
+
+
+class TransferExecutionReport(BaseModel):
+    planned_files: list[TransferFileResult]
+    materialized_files: list[TransferFileResult]
+    skipped_existing_files: list[TransferFileResult]
 
 
 def validate_transfer_task(task: TaskData) -> None:
@@ -123,9 +131,30 @@ async def resolve_source_base_path(task: TaskData) -> Path:
     return build_download_path(download_target.download_path)
 
 
+def source_file_is_intact(source_path: Path, file_item: TorrentFileItem) -> bool:
+    if file_item.size is None or file_item.size < 0:
+        return False
+    try:
+        file_stat = fs_provider.file_stat(source_path)
+    except FileNotFoundError:
+        return False
+    return stat.S_ISREG(file_stat.st_mode) and file_stat.st_size == file_item.size
+
+
+def _source_storage_exception(task: TaskData, source_path: Path, exc: OSError) -> TransferException:
+    return TransferException(
+        "backendErrors.transferFailed",
+        params={"reason": f"Source file is temporarily inaccessible: {source_path}: {exc}"},
+    )
+
+
 def generate_source_path(task: TaskData, file_item: TorrentFileItem, source_base_path: Path) -> Path:
     source_path = build_source_path(task, file_item, source_base_path)
-    if fs_provider.exists(source_path):
+    try:
+        intact = source_file_is_intact(source_path, file_item)
+    except OSError as exc:
+        raise _source_storage_exception(task, source_path, exc) from exc
+    if intact:
         return source_path
     raise TransferException(
         "backendErrors.transferSourceFileNotFound",
@@ -144,14 +173,20 @@ def build_source_path(task: TaskData, file_item: TorrentFileItem, source_base_pa
 
 
 def collect_present_library_files(library_files: list[LibraryFile]) -> list[LibraryFile]:
-    return [library_file for library_file in library_files if fs_provider.exists(build_library_file_path(library_file.path, library_file.file_name))]
+    try:
+        return [library_file for library_file in library_files if library_service.file_is_intact(library_file)]
+    except OSError as exc:
+        raise TransferException(
+            "backendErrors.transferFailed",
+            params={"reason": str(exc)},
+        ) from exc
 
 
 async def should_skip_existing_task_materialization(task: TaskData, transfer_result: TransferFileResult) -> bool:
     existing_file = await library_service.find_file_by_path(transfer_result.destination_path)
     if not existing_file or not is_idempotent_transfer_retry(task, existing_file, transfer_result):
         return False
-    return fs_provider.exists(build_library_file_path(existing_file.path, existing_file.file_name))
+    return library_service.file_is_intact(existing_file)
 
 
 def should_skip_retransfer(
@@ -174,24 +209,34 @@ async def all_transfer_sources_available(task: TaskData) -> bool:
 
     source_base_path = await resolve_source_base_path(task)
     found_any = False
-    for _, file_item in iter_selected_files(task.metadata.files, task.context.selected_files if task.context else None):
+    for _, file_item in iter_selected_files(task.metadata.files, resolve_selected_indices(task)):
         found_any = True
+        source_path = build_source_path(task, file_item, source_base_path)
         try:
-            source_path = generate_source_path(task, file_item, source_base_path)
-            if not fs_provider.exists(source_path):
-                return False
-        except TransferException:
+            intact = source_file_is_intact(source_path, file_item)
+        except OSError as exc:
+            raise _source_storage_exception(task, source_path, exc) from exc
+        if not intact:
             return False
     return found_any
 
 
-async def missing_transfer_source_paths(task: TaskData) -> list[str]:
+async def missing_transfer_source_paths(
+    task: TaskData,
+    file_indices: set[int] | None = None,
+) -> list[str]:
     validate_transfer_task(task)
     source_base_path = await resolve_source_base_path(task)
     missing_paths: list[str] = []
-    for _, file_item in iter_selected_files(task.metadata.files, task.context.selected_files if task.context else None):
+    for _, file_item in iter_selected_files(task.metadata.files, resolve_selected_indices(task)):
+        if file_indices is not None and file_item.index not in file_indices:
+            continue
         source_path = build_source_path(task, file_item, source_base_path)
-        if not fs_provider.exists(source_path):
+        try:
+            intact = source_file_is_intact(source_path, file_item)
+        except OSError as exc:
+            raise _source_storage_exception(task, source_path, exc) from exc
+        if not intact:
             missing_paths.append(str(source_path))
     return missing_paths
 
@@ -210,9 +255,10 @@ async def validate_transfer_reentry(task: TaskData, existing_library_files: list
 
 
 def iter_selected_files(files: list[TorrentFileItem], selected_indices):
-    selected = set(selected_indices) if selected_indices else None
-    for index, file_item in enumerate(files):
-        if selected and index not in selected:
+    selected = set(selected_indices) if selected_indices is not None else None
+    for file_item in files:
+        index = file_item.index
+        if selected is not None and index not in selected:
             continue
         yield index, file_item
 
@@ -223,55 +269,8 @@ def _is_original_disc_package(task: TaskData) -> bool:
 
 def _with_package_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFileItem:
     if not task.metadata or not task.metadata.attrs:
-        return _with_context_resource_attrs(task, file_item)
-    return _with_context_resource_attrs(task, file_item.model_copy(update={"attrs": task.metadata.attrs}))
-
-
-def _with_context_resource_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFileItem:
-    context_attrs = task.context.parsed_attributes if task.context and task.context.parsed_attributes else None
-    if not context_attrs:
-        return file_item
-    if file_item.attrs is None:
-        return file_item.model_copy(update={"attrs": context_attrs})
-    attrs = file_item.attrs
-    context_data = context_attrs.model_dump(mode="python")
-    attrs_data = attrs.model_dump(mode="python")
-    updates = {}
-    for field in ("groups", "sources", "versions", "seasons", "episodes", "platforms"):
-        context_value = context_data[field]
-        if context_value and not attrs_data[field]:
-            updates[field] = list(context_value)
-    for field in (
-        "desc",
-        "resource_form",
-        "resource_form_evidence",
-        "package_layout",
-        "disc_number",
-        "disc_total",
-        "resolution",
-        "video_codec",
-        "audio_codec",
-        "hdr_type",
-        "audio_channels",
-        "color_depth",
-        "content_type",
-        "language",
-        "subtitle",
-        "tmdb_id",
-        "imdb_id",
-        "year",
-        "release_year",
-        "release_date",
-        "first_air_date",
-        "runtime",
-        "episode_title",
-    ):
-        context_value = context_data[field]
-        if context_value and not attrs_data[field]:
-            updates[field] = context_value
-    if not updates:
-        return file_item
-    return file_item.model_copy(update={"attrs": attrs.model_copy(update=updates)})
+        return with_context_resource_attrs(task, file_item)
+    return with_context_resource_attrs(task, file_item.model_copy(update={"attrs": task.metadata.attrs}))
 
 
 def _common_torrent_root(files: list[TorrentFileItem]) -> str | None:
@@ -350,7 +349,7 @@ def build_transfer_plan(task: TaskData, execution_context: TransferExecutionCont
         return _build_disc_package_transfer_plan(task, execution_context)
     transfer_results: list[TransferFileResult] = []
     for index, original_file_item in iter_selected_files(task.metadata.files, execution_context.selected_indices):
-        file_item = _with_context_resource_attrs(task, original_file_item)
+        file_item = with_context_resource_attrs(task, original_file_item)
         source_path = generate_source_path(task, file_item, execution_context.source_base_path)
         destination_path = library_target_path_policy.build_destination_path(
             destination_base_path=execution_context.destination_base_path,
@@ -374,17 +373,32 @@ def build_transfer_plan(task: TaskData, execution_context: TransferExecutionCont
     return transfer_results
 
 
-async def execute_transfer(task: TaskData, execution_context: TransferExecutionContext) -> list[TransferFileResult]:
-    transfer_results = build_transfer_plan(task, execution_context)
+async def execute_transfer_plan(
+    task: TaskData,
+    execution_context: TransferExecutionContext,
+    transfer_results: list[TransferFileResult],
+) -> TransferExecutionReport:
     await validate_transfer_upgrade_policy(task, transfer_results)
     materializer = transfer_materializer_registry.resolve(execution_context.transfer_mode)
+    materialized_results: list[TransferFileResult] = []
+    skipped_existing_results: list[TransferFileResult] = []
     for transfer_result in transfer_results:
         source_path = Path(transfer_result.source_path)
         destination_path = Path(transfer_result.destination_path)
         try:
             if await should_skip_existing_task_materialization(task, transfer_result):
+                skipped_existing_results.append(transfer_result)
                 continue
             await asyncio.to_thread(materializer.materialize, source_path, destination_path)
+            materialized_results.append(transfer_result)
         except (TransferException, OSError):
             raise
-    return transfer_results
+    return TransferExecutionReport(
+        planned_files=transfer_results,
+        materialized_files=materialized_results,
+        skipped_existing_files=skipped_existing_results,
+    )
+
+
+async def execute_transfer(task: TaskData, execution_context: TransferExecutionContext) -> TransferExecutionReport:
+    return await execute_transfer_plan(task, execution_context, build_transfer_plan(task, execution_context))

@@ -19,7 +19,7 @@ class TaskStateService:
             "ANY": [TaskStatus.VOID.value],
             TaskStatus.PENDING.value: [TaskStatus.DOWNLOADING.value, TaskStatus.MIGRATING.value],
             TaskStatus.DOWNLOADING.value: [TaskStatus.FINISHED.value, TaskStatus.PAUSED.value, TaskStatus.ERROR.value, TaskStatus.DOWNLOADING.value, TaskStatus.MIGRATING.value],
-            TaskStatus.PAUSED.value: [TaskStatus.DOWNLOADING.value, TaskStatus.MIGRATING.value],
+            TaskStatus.PAUSED.value: [TaskStatus.DOWNLOADING.value, TaskStatus.FINISHED.value, TaskStatus.MIGRATING.value],
             TaskStatus.FINISHED.value: [TaskStatus.TRANSFERRING.value, TaskStatus.MIGRATING.value],
             TaskStatus.TRANSFERRING.value: [TaskStatus.COMPLETED.value, TaskStatus.ERROR.value, TaskStatus.FINISHED.value],
             TaskStatus.MIGRATING.value: [
@@ -95,3 +95,23 @@ class TaskStateService:
             update_data.error_params = {}
             update_data.error_stage = None
         return await self._repo.update_fields(update_data, self._repo.cond_id(task_id))
+
+    async def record_task_error(
+        self,
+        task_id: str,
+        *,
+        error_key: str,
+        error_stage: TaskErrorStage,
+        expected_status: TaskStatus,
+        error_params: dict[str, str] | None = None,
+    ) -> bool:
+        return await self._repo.update_fields_if_status(
+            TaskFieldPatch(
+                error_key=error_key,
+                error_params=error_params or {},
+                error_stage=error_stage,
+                updated_at=datetime.now(),
+            ),
+            task_id,
+            expected_status,
+        )

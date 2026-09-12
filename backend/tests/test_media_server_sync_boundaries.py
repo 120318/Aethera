@@ -1,11 +1,13 @@
 import time
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.schemas.config import JellyfinConfig, MediaServerSyncConfig
+from app.schemas.domain.addon_events import ImportedMediaFile, MediaImportCompletedEventMeta
 from app.schemas.domain.library import LibraryFile, LibraryFileArtifactStatus, LibraryMediaLayout, LibraryMediaLayoutEntry
-from app.schemas.domain.event import EventType
+from app.schemas.domain.event import Event, EventType
 from app.schemas.domain.media import EpisodeInfo, MediaFullInfo, SeasonDetails
 from app.schemas.domain.media_context import MediaCapabilities
 from app.schemas.domain.media_server_sync import MediaServerSyncDetectNeeds, MediaServerSyncState
@@ -17,6 +19,7 @@ from app.services.application.workflows.media_server_sync.artifacts import media
 from app.services.application.workflows.media_server_sync.needs import media_server_sync_needs
 from app.services.application.workflows.media_server_sync.service import MediaServerSyncService
 from app.services.application.workflows.media_server_sync.season_runner import MediaServerSyncSeasonRunner
+from app.services.application.workflows.media_server_sync.target import media_server_sync_target
 from app.services.audit.workflow_event_emitters import emit_media_server_sync_events
 from app.services.domain.library.sidecar_files import library_sidecar_files
 from app.services.integration.tmdb.images import to_tmdb_image_url
@@ -67,6 +70,65 @@ def test_library_sidecar_files_are_generic_file_operations(tmp_path: Path):
     assert library_sidecar_files.path_exists(target)
     assert library_sidecar_files.missing_paths([target]) == []
     assert target.read_text(encoding="utf-8") == "hello"
+
+
+def test_media_import_targets_ignore_paths_no_longer_present_in_library(tmp_path: Path):
+    current = tmp_path / "Show.S01E02.mkv"
+    media_id = MediaID.parse("tmdb:tv:2")
+    meta = MediaImportCompletedEventMeta(
+        task_id="task-1",
+        directory_id="dir-1",
+        media_id=media_id,
+        file_path=str(tmp_path / "Show.S01E01.mkv"),
+        imported_files=[
+            ImportedMediaFile(destination_path=str(tmp_path / "Show.S01E01.mkv"), episode_number=1),
+            ImportedMediaFile(destination_path=str(current), episode_number=2),
+        ],
+    )
+    library_files = [LibraryFile(
+        id="file-2",
+        task_id="task-1",
+        directory_id="dir-1",
+        media_id=media_id,
+        path=str(tmp_path),
+        file_name=current.name,
+        created_at=1.0,
+    )]
+
+    targets = media_server_sync_target.resolve_current_import_targets(meta, library_files)
+
+    assert [item.destination_path for item in targets] == [str(current)]
+
+
+@pytest.mark.asyncio
+async def test_registered_import_target_storage_failure_remains_retryable(tmp_path: Path, monkeypatch):
+    current = tmp_path / "Show.S01E02.mkv"
+    media_id = MediaID.parse("tmdb:tv:2")
+    meta = MediaImportCompletedEventMeta(
+        task_id="task-1",
+        directory_id="dir-1",
+        media_id=media_id,
+        file_path=str(current),
+        imported_files=[ImportedMediaFile(destination_path=str(current), episode_number=2)],
+    )
+    library_file = LibraryFile(
+        id="file-2",
+        task_id="task-1",
+        directory_id="dir-1",
+        media_id=media_id,
+        path=str(tmp_path),
+        file_name=current.name,
+        created_at=1.0,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_server_sync.service.library_service.get_files_by_task",
+        AsyncMock(return_value=[library_file]),
+    )
+
+    with pytest.raises(FileNotFoundError, match="temporarily inaccessible"):
+        await MediaServerSyncService().handle_import_completed(
+            Event(type=EventType.MEDIA_IMPORT_COMPLETED, task_id="task-1", meta=meta.model_dump_json()),
+        )
 
 
 def _movie_nfo_text(title: str = "Movie", plot: str = "") -> str:

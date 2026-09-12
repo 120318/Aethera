@@ -6,7 +6,12 @@ from app.clients.base import BaseClient
 from app.schemas.config import DownloaderConfig
 from pydantic import BaseModel
 from app.schemas.integration.common import ClientOperationResult
-from app.schemas.domain.download import DownloadFileInfo, DownloadInfo
+from app.schemas.domain.download import (
+    DownloadFileInfo,
+    DownloadInfo,
+    DownloadInfoLookup,
+    DownloadInfoLookupStatus,
+)
 from app.schemas.domain.torrent_status import TorrentStatus
 
 
@@ -70,6 +75,13 @@ class DownloadClient(BaseClient, ABC):
 
         """
         raise NotImplementedError()
+
+    async def lookup_torrent_info(self, torrent_hash: str) -> DownloadInfoLookup:
+        info = await self.get_torrent_info(torrent_hash)
+        return DownloadInfoLookup(
+            status=DownloadInfoLookupStatus.FOUND if info is not None else DownloadInfoLookupStatus.UNAVAILABLE,
+            info=info,
+        )
 
     @abstractmethod
     async def get_torrent_files(self, torrent_hash: str) -> list[DownloadFileInfo] | None:

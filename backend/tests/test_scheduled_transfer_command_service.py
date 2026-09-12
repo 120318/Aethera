@@ -16,6 +16,14 @@ from app.schemas.domain.download import TaskErrorStage, TaskStatus
 from app.schemas.exception.exceptions import TransferException
 
 
+@pytest.fixture(autouse=True)
+def _default_to_full_import_precheck(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.supports_early_import",
+        lambda _task: False,
+    )
+
+
 @pytest.mark.asyncio
 async def test_enqueue_finished_tasks_counts_conflicts_as_skips_and_runtime_failures_as_errors(monkeypatch):
     tasks = [
@@ -114,14 +122,14 @@ async def test_enqueue_finished_tasks_marks_transfer_precheck_exception(monkeypa
         ),
     )
     create_command_mock = AsyncMock()
-    update_task_state_mock = AsyncMock()
+    record_task_error_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(
         "app.services.application.workflows.scheduled_transfer.service.command_service.create_command",
         create_command_mock,
     )
     monkeypatch.setattr(
-        "app.services.application.workflows.scheduled_transfer.service.download_service.update_task_state",
-        update_task_state_mock,
+        "app.services.application.workflows.scheduled_transfer.service.download_service.record_task_error",
+        record_task_error_mock,
     )
 
     result = await scheduled_transfer_command_service.enqueue_finished_tasks()
@@ -130,10 +138,49 @@ async def test_enqueue_finished_tasks_marks_transfer_precheck_exception(monkeypa
     assert result.completed == 0
     assert result.errors == 1
     create_command_mock.assert_not_awaited()
-    update_task_state_mock.assert_awaited_once_with(
+    record_task_error_mock.assert_awaited_once_with(
         "task-1",
-        TaskStatus.FINISHED,
         error_key="backendErrors.transferSourceFileNotFound",
         error_params={"path": "/downloads/missing.mkv"},
         error_stage=TaskErrorStage.TRANSFER,
+        expected_status=TaskStatus.FINISHED,
     )
+
+
+@pytest.mark.asyncio
+async def test_enqueue_finished_tasks_prechecks_only_pending_incremental_indices(monkeypatch):
+    task = SimpleNamespace(id="task-1", updated_at=datetime.now() - timedelta(minutes=10))
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.download_service.get_tasks",
+        AsyncMock(return_value=[task]),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.supports_early_import",
+        lambda _task: True,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.library_service.get_files_by_task",
+        AsyncMock(return_value=[SimpleNamespace(file_index=0)]),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.satisfied_file_indices",
+        AsyncMock(return_value={0}),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.remaining_selected_file_indices",
+        lambda _task, satisfied: {1} if satisfied == {0} else set(),
+    )
+    precheck = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.missing_transfer_source_paths",
+        precheck,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.scheduled_transfer.service.command_service.create_command",
+        AsyncMock(return_value=object()),
+    )
+
+    result = await scheduled_transfer_command_service.enqueue_finished_tasks()
+
+    assert result.completed == 1
+    precheck.assert_awaited_once_with(task, {1})

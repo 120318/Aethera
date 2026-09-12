@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 from app.db.repositories.library_episode_repository import LibraryEpisodeRepository
@@ -10,6 +11,7 @@ from app.db.repositories.library_replace_repository import LibraryReplaceReposit
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.addon_events import LibraryFileMissingEventMeta
 from app.schemas.domain.download import TaskData, TransferFileResult
+from app.schemas.domain.event import Event
 from app.schemas.domain.event import EventActor, EventEntityRef, EventLevel, EventSource, MediaEventCreate
 from app.schemas.domain.library import (
     LibraryFileArtifact,
@@ -17,12 +19,14 @@ from app.schemas.domain.library import (
     LibraryFileArtifactType,
     LibraryEpisode,
     LibraryFile,
+    LibrarySidecarSnapshot,
     LibraryMediaLayout,
     LibraryPackageSummary,
     LibraryTaskFileHealth,
 )
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.resource_attributes import ResourceAttributes
+from app.schemas.persistence.event_dispatch import EventDispatchRecord
 from app.schemas.media_id import MediaID
 from app.services.audit.event_service import event_service
 from app.services.domain.library.cleanup import LibraryCleanup
@@ -223,6 +227,9 @@ class LibraryService:
     def file_exists(self, library_file: LibraryFile) -> bool:
         return self._layout.file_exists(library_file)
 
+    def file_is_intact(self, library_file: LibraryFile) -> bool:
+        return self._layout.file_is_intact(library_file)
+
     def is_primary_file(self, library_file: LibraryFile) -> bool:
         return self._layout.is_primary_file(library_file)
 
@@ -348,6 +355,12 @@ class LibraryService:
         transfer_results: list[TransferFileResult],
         season: int | None = None,
         replacement_files: list[LibraryFile] | None = None,
+        *,
+        incremental: bool = False,
+        preserve_existing: bool = False,
+        imported_file_indices: list[int] | None = None,
+        completion_event: Event | None = None,
+        dispatch_records: list[EventDispatchRecord] | None = None,
     ) -> list[LibraryFile]:
         return await self._registration.replace_task_entries(
             task_id,
@@ -356,7 +369,70 @@ class LibraryService:
             transfer_results,
             season,
             replacement_files,
+            incremental=incremental,
+            preserve_existing=preserve_existing,
+            imported_file_indices=imported_file_indices,
+            completion_event=completion_event,
+            dispatch_records=dispatch_records,
         )
+
+    async def cleanup_replaced_files(self, files: list[LibraryFile], preserved_paths: set[str]) -> None:
+        removed_files: list[LibraryFile] = []
+        for file in files:
+            full_path = build_library_file_path(file.path, file.file_name)
+            if str(full_path) not in preserved_paths:
+                removed_files.append(file)
+        if removed_files:
+            sidecar_paths = {
+                sidecar_path
+                for file in removed_files
+                for sidecar_path in self._cleanup.sidecar_paths(
+                    build_library_file_path(file.path, file.file_name)
+                )
+            }
+            registered_sidecars = await self._registered_paths(sidecar_paths)
+            await asyncio.to_thread(
+                self._cleanup.delete_replaced_files,
+                removed_files,
+                {Path(path) for path in preserved_paths} | registered_sidecars,
+            )
+
+    async def snapshot_replaced_sidecars(
+        self,
+        incoming_video_paths: set[str],
+        batch_paths: set[str],
+    ) -> list[LibrarySidecarSnapshot]:
+        return await asyncio.to_thread(
+            self._cleanup.snapshot_sidecar_files,
+            {Path(path) for path in incoming_video_paths},
+            {Path(path) for path in batch_paths},
+        )
+
+    async def cleanup_replaced_sidecars(
+        self,
+        snapshots: list[LibrarySidecarSnapshot],
+        replaced_video_paths: set[str],
+    ) -> None:
+        registered_paths = await self._registered_paths(
+            {Path(snapshot.sidecar_path) for snapshot in snapshots}
+        )
+        unregistered_snapshots = [
+            snapshot
+            for snapshot in snapshots
+            if Path(snapshot.sidecar_path) not in registered_paths
+        ]
+        await asyncio.to_thread(
+            self._cleanup.delete_unchanged_sidecar_files,
+            unregistered_snapshots,
+            {Path(path) for path in replaced_video_paths},
+        )
+
+    async def _registered_paths(self, paths: set[Path]) -> set[Path]:
+        registered: set[Path] = set()
+        for path in paths:
+            if await self.find_file_by_path(str(path)) is not None:
+                registered.add(path)
+        return registered
 
     # Deletion
     async def delete_task_library_records(self, task_id: str) -> int:

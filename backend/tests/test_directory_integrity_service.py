@@ -8,8 +8,10 @@ from app.schemas.config import DirectoryConfig
 from app.schemas.domain.download import TaskContext, TaskData, TaskStatus
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media import MediaExecutionSnapshot
+from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
+from app.schemas.exception.exceptions import DirectoryIntegrityStorageUnavailableException
 from app.schemas.media_id import MediaID
 from app.schemas.runtime.directory_integrity import (
     DirectoryIntegrityIssueType,
@@ -18,6 +20,10 @@ from app.schemas.runtime.directory_integrity import (
 )
 from app.services.application.workflows.directory_integrity import service as integrity_module
 from app.services.application.workflows.directory_integrity.service import DirectoryIntegrityService
+from app.services.domain.directory_integrity.task_replacement import (
+    is_task_fully_replaced,
+    task_library_relationship_is_satisfied,
+)
 
 
 pytestmark = [pytest.mark.health]
@@ -564,6 +570,158 @@ async def test_directory_integrity_scan_reports_task_without_library_file(tmp_pa
     assert result.items[0].task_completed_at is not None
     assert result.items[0].repair_action == "retry_transfer"
     assert result.summary.tasks_missing_library_files == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("visible_episodes", "expected_issue_count"),
+    [([1, 2], 0), ([1], 1)],
+)
+async def test_directory_integrity_recognizes_fully_replaced_task_coverage(
+    tmp_path,
+    monkeypatch,
+    visible_episodes,
+    expected_issue_count,
+):
+    library_root = tmp_path / "library-a"
+    replacement_root = tmp_path / "library-b"
+    download_root = tmp_path / "download-a"
+    replacement_download_root = tmp_path / "download-b"
+    library_root.mkdir()
+    replacement_root.mkdir()
+    download_root.mkdir()
+    replacement_download_root.mkdir()
+    replacement_path = replacement_root / "replacement.mkv"
+    replacement_path.write_text("replacement")
+    media_id = MediaID.parse("tmdb:tv:1")
+    task = _task(download_root)
+    task.media_id = media_id
+    task.context.media = task.context.media.model_copy(update={"media_id": media_id, "season_number": 1})
+    task.context.imported_file_indices = [0, 1]
+    task.metadata.files[0].attrs = ResourceAttributes(seasons=[1], episodes=[1])
+    task.metadata.files[1].attrs = ResourceAttributes(seasons=[1], episodes=[2])
+    replacement = LibraryFile(
+        id="replacement-file",
+        task_id="replacement-task",
+        directory_id="dir-2",
+        media_id=media_id,
+        path=str(replacement_root),
+        file_name=replacement_path.name,
+        file_size=replacement_path.stat().st_size,
+        file_index=0,
+        created_at=1.0,
+        resource_attributes=ResourceAttributes(seasons=[1], episodes=visible_episodes),
+    )
+    directory = DirectoryConfig(id="dir-1", name="TV", path=str(library_root), download_path=str(download_root))
+    replacement_directory = DirectoryConfig(
+        id="dir-2",
+        name="TV 2",
+        path=str(replacement_root),
+        download_path=str(replacement_download_root),
+    )
+    service = DirectoryIntegrityService()
+    service.library_repo = AsyncListRepo([replacement])
+    service.task_repo = AsyncListRepo([task])
+
+    monkeypatch.setattr(
+        integrity_module.settings_service,
+        "list_directories",
+        lambda: [directory, replacement_directory],
+    )
+    monkeypatch.setattr(integrity_module, "LATEST_RESULT_PATH", tmp_path / "latest.json")
+
+    result = await service.scan()
+
+    issues = [item for item in result.items if item.issue_type == DirectoryIntegrityIssueType.task_missing_library_file]
+    assert len(issues) == expected_issue_count
+
+
+def test_replaced_task_coverage_uses_selected_file_execution_attributes(tmp_path):
+    replacement_path = tmp_path / "replacement.mkv"
+    replacement_path.write_text("replacement")
+    media_id = MediaID.parse("tmdb:tv:1")
+    task = _task(tmp_path)
+    task.media_id = media_id
+    task.context.media = task.context.media.model_copy(update={"media_id": media_id, "season_number": 1})
+    task.context.selected_files = [7]
+    task.context.imported_file_indices = [7]
+    task.context.parsed_attributes = ResourceAttributes(seasons=[1], episodes=[5])
+    task.metadata.files[0].index = 7
+    task.metadata.files[0].attrs = None
+    replacement = LibraryFile(
+        id="replacement-file",
+        task_id="replacement-task",
+        directory_id="dir-2",
+        media_id=media_id,
+        path=str(tmp_path),
+        file_name=replacement_path.name,
+        file_size=replacement_path.stat().st_size,
+        file_index=0,
+        created_at=1.0,
+        resource_attributes=ResourceAttributes(seasons=[1], episodes=[5]),
+    )
+
+    assert is_task_fully_replaced(task, [replacement])
+
+
+def test_replaced_task_coverage_propagates_replacement_storage_failure(tmp_path, monkeypatch):
+    replacement_path = tmp_path / "replacement.mkv"
+    replacement_path.write_text("replacement")
+    task = _task(tmp_path)
+    task.context.imported_file_indices = [0, 1]
+    replacement = LibraryFile(
+        id="replacement-file",
+        task_id="replacement-task",
+        directory_id="dir-2",
+        media_id=task.media_id,
+        path=str(tmp_path),
+        file_name=replacement_path.name,
+        file_size=replacement_path.stat().st_size,
+        file_index=0,
+        created_at=1.0,
+    )
+
+    def raise_storage_failure(_file):
+        raise OSError("replacement NAS offline")
+
+    monkeypatch.setattr(
+        "app.services.domain.directory_integrity.task_replacement.library_service.file_is_intact",
+        raise_storage_failure,
+    )
+
+    with pytest.raises(DirectoryIntegrityStorageUnavailableException, match="backendErrors.directoryIntegrityStorageUnavailable"):
+        is_task_fully_replaced(task, [replacement])
+
+
+@pytest.mark.parametrize(
+    ("file_name", "path_suffix", "attrs", "expected"),
+    [
+        ("episode.mkv", "", ResourceAttributes(), True),
+        ("episode.nfo", "", ResourceAttributes(), False),
+        ("episode.srt", "", ResourceAttributes(), False),
+        ("index.bdmv", "Movie/BDMV", ResourceAttributes(package_layout="BDMV"), True),
+    ],
+)
+def test_task_relationship_short_circuit_requires_primary_library_resource(
+    tmp_path,
+    file_name,
+    path_suffix,
+    attrs,
+    expected,
+):
+    task = _task(tmp_path)
+    task.context.imported_file_indices = [0, 1]
+    owned = _library_file("owned", tmp_path / path_suffix, file_name)
+    owned.resource_attributes = attrs
+
+    satisfied = task_library_relationship_is_satisfied(
+        task,
+        "dir-1",
+        {task.id: [owned]},
+        [owned],
+    )
+
+    assert satisfied is expected
 
 
 @pytest.mark.asyncio

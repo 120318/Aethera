@@ -244,6 +244,91 @@ Rules:
 - External system protocols live in `integration`.
 - Parsers, filters, caches, naming helpers, and other supporting capabilities live in their explicit support package.
 
+#### Incremental episode import
+
+The import chain is scheduler -> task transfer command -> task operation lock ->
+downloader file readiness -> materialization -> incremental library registration ->
+one import event for the batch. Media-server metadata and danmu consumers use the
+event's imported files, not all files belonging to the task.
+
+- The task already owns its media snapshot, selection and torrent metadata. File
+  readiness comes from the downloader; registered `task_id` / `file_index` records
+  and visible library files provide the deduplication state.
+- A transfer command may carry `file_indices` in its existing JSON payload. A
+  missing subset requests the normal full import; an empty subset means no work.
+  Execution rechecks readiness and selection under the existing task lock.
+- Completed files of ordinary TV torrents can be hardlinked or copied while the
+  task remains downloading or paused. Checking/moving torrents, mismatched paths,
+  unavailable files and original-disc packages cannot be imported early.
+- A paused task whose downloader subsequently confirms completion transitions to
+  finished so the final import can materialize remaining auxiliary files.
+- A source file is transferable only when it is a regular file whose actual size
+  matches torrent metadata. This same predicate governs normal transfer, early
+  readiness, terminal source fallback, and missing-source diagnosis.
+- Readiness has one explicit disposition: wait, reject, or confirmed source
+  fallback. Download-client lookup failures normalize to wait and never escape as
+  protocol exceptions or authorize importing preallocated files. Each downloader
+  adapter uses the same file-readability mapping for batch and detail status
+  projections, including metadata, allocation, and move stages.
+- File attributes are normalized with the task parse context before any episode
+  decision, including integrity audits. Same-batch and historical deduplication
+  both use per-episode coverage and quality; exact episode-group equality is not
+  a business boundary.
+- Materialization returns a report that separates planned, written, and
+  idempotently skipped files. Registration, cleanup, events, and user-visible
+  results consume the corresponding report fields instead of inferring execution
+  from list lengths or paths.
+- A library file is satisfied for transfer re-entry only when its current size
+  matches the size recorded at registration; mere path existence is insufficient.
+- Incremental registration replaces only the incoming file indices and explicit
+  quality-replacement conflicts. It preserves earlier batches and their episode
+  records. Full completion imports remaining files and changes the task status;
+  an empty final batch emits no additional import event, but still records indices
+  satisfied by existing higher-quality episode coverage. Every successful import
+  mode persists its handled file indices in the task ledger and writes its import
+  event plus consumer dispatches in the same library transaction.
+- Transfer commit modes are explicit: partial incremental, final incremental,
+  full import, and idempotent repair. Filesystem sidecars are never deleted before
+  the library transaction commits. Same-path replacement snapshots stale
+  sidecars and deletes them after commit only when no consumer has rewritten
+  them; sidecars materialized by the transfer batch or still referenced by the
+  current library registry are preserved. Every replacement cleanup path checks
+  the current registry before deleting an adjacent sidecar. Import events contain
+  primary video files only. Danmu and media-server consumers share one
+  current-import batch resolver and accessibility gate before producing metadata.
+  Registry absence
+  makes a queued target stale; a registered target whose storage is unavailable
+  remains a retryable consumer failure.
+- Batch selection records discarded lower-quality indices separately from
+  idempotently skipped winners. A repair-mode commit preserves the skipped files
+  while explicitly removing existing records for discarded indices. Candidates
+  for different episode sets may never share a destination path, within one batch
+  or across earlier incremental registrations; a conflicting naming template
+  rejects the whole batch before materialization instead of silently dropping an
+  episode. A candidate with the same episode set as an intact registered file
+  must win the full quality-and-size rank before it can be materialized. Dominated
+  candidates are recorded as handled coverage without creating duplicate episode
+  mappings at different paths. Different episode groupings use the same per-episode
+  dominance rule as batch selection: higher quality wins regardless of grouping,
+  while equal quality wins only from a narrower episode set. Consequently, a higher
+  quality combined file suppresses a lower quality single episode, but an equal
+  quality combined file does not block progressive split-file replacement. Split
+  files can satisfy a combined candidate without comparing aggregate size.
+- Directory integrity treats a completed task whose owned files were removed by
+  quality replacement as satisfied only when its imported-file ledger is
+  complete and visible replacement files anywhere in the library still cover
+  the task's media episodes. Owned sidecars alone do not satisfy the task-to-library
+  relationship; video files and original-disc package resources do. Storage failures
+  while checking cross-directory replacements abort the audit as a domain failure;
+  they never become negative coverage evidence or executable repair items.
+- Partial import failures belong to the transfer command. They do not promote a
+  downloading task to finished, and retries recompute the unimported file set.
+- Pre-command failures update task error fields without manufacturing a state
+  transition and only while the task still has the scheduler's expected status;
+  command execution failures keep using the normal transfer state machine.
+- This uses existing tables and columns. Source files stay available to the
+  downloader. Profile refresh and import-event consumers remain post-import work.
+
 ### Concurrency Control
 
 - Lock semantics are defined by the domain.

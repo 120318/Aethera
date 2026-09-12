@@ -6,7 +6,16 @@ from app.schemas.domain.command import CommandCreateRequest, CommandInitiator, C
 from app.schemas.domain.download import BatchJobResult, TaskData, TaskErrorStage, TaskStatus
 from app.services.application.commands.service import CommandConflictException, command_service
 from app.services.domain.download import download_service
+from app.services.domain.library.service import library_service
 from app.services.domain.transfer.execution import missing_transfer_source_paths
+from app.services.domain.transfer.ready_files import (
+    ACTIVE_IMPORT_STATUSES,
+    find_ready_file_indices,
+    remaining_selected_file_indices,
+    satisfied_file_indices,
+    supports_early_import,
+)
+from app.services.platform.domain_lock_service import domain_lock_service
 
 logger = logging.getLogger("app.services.scheduled_transfer_command")
 
@@ -21,18 +30,49 @@ def _source_visibility_grace_elapsed(task: TaskData, now: datetime | None = None
 
 async def _mark_precheck_transfer_failed(task: TaskData, exc: TransferException) -> None:
     try:
-        await download_service.update_task_state(
+        updated = await download_service.record_task_error(
             task.id,
-            TaskStatus.FINISHED,
             error_key=exc.message_key,
             error_params={str(key): str(value) for key, value in exc.params.items()},
             error_stage=TaskErrorStage.TRANSFER,
+            expected_status=TaskStatus.FINISHED,
         )
+        if not updated:
+            logger.error("Scheduled transfer precheck failure was not persisted for task %s", task.id)
     except DownloadException as update_exc:
         logger.error("Failed to mark scheduled transfer precheck failure for task %s: %s", task.id, update_exc)
 
 
 class ScheduledTransferCommandService:
+    async def enqueue_ready_files(self) -> BatchJobResult:
+        tasks = await download_service.get_tasks(status=ACTIVE_IMPORT_STATUSES)
+        result = BatchJobResult(processed=len(tasks))
+        status_by_task = await download_service.get_torrent_status_by_tasks(tasks)
+        for task in tasks:
+            try:
+                if await domain_lock_service.is_task_op_locked(task.id):
+                    continue
+                torrent_status = status_by_task[task.id] if task.id in status_by_task else None
+                if torrent_status is None:
+                    continue
+                indices = await find_ready_file_indices(task, torrent_status)
+                if not indices:
+                    continue
+                await command_service.create_command(
+                    CommandCreateRequest(
+                        type=CommandType.TASK_TRANSFER,
+                        initiator=CommandInitiator.SCHEDULER,
+                        payload=TaskTransferCommandRequestPayload(task_id=task.id, file_indices=indices),
+                    )
+                )
+                result.completed += 1
+            except CommandConflictException:
+                continue
+            except (DownloadException, TransferException, RuntimeError, ValueError, OSError) as exc:
+                logger.warning("Failed to schedule completed files: task=%s error=%s", task.id, exc)
+                result.errors += 1
+        return result
+
     async def enqueue_finished_tasks(self) -> BatchJobResult:
         finished_tasks = await download_service.get_tasks(status=[TaskStatus.FINISHED])
         if not finished_tasks:
@@ -45,7 +85,12 @@ class ScheduledTransferCommandService:
         for task in finished_tasks:
             processed += 1
             try:
-                missing_sources = await missing_transfer_source_paths(task)
+                pending_indices = None
+                if supports_early_import(task):
+                    existing_files = await library_service.get_files_by_task(task.id)
+                    satisfied = await satisfied_file_indices(task, existing_files)
+                    pending_indices = remaining_selected_file_indices(task, satisfied)
+                missing_sources = await missing_transfer_source_paths(task, pending_indices)
                 if missing_sources:
                     if not _source_visibility_grace_elapsed(task):
                         logger.info(

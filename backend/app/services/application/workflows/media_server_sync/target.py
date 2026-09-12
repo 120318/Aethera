@@ -2,15 +2,45 @@ import os
 import re
 from pathlib import Path
 
-from app.schemas.domain.library import LibraryMediaLayout
+from app.schemas.domain.addon_events import MediaImportCompletedEventMeta
+from app.schemas.domain.library import LibraryFile, LibraryMediaLayout
 from app.schemas.domain.library_layout import LibraryLayoutTargetFile
 from app.schemas.domain.media import MediaFullInfo
 from app.schemas.domain.media_server_sync import MediaServerSyncInput, MediaServerSyncTargetFile
 from app.schemas.domain.media_types import MediaType
 from app.services.domain.library.media_root_policy import library_media_root_policy
+from app.services.application.workflows.imported_media_batch import (
+    CurrentImportedMediaBatch,
+    ensure_imported_media_paths_accessible,
+    resolve_current_imported_media_batch,
+)
+from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file
 
 
 class MediaServerSyncTargetService:
+    def resolve_current_import_targets(
+        self,
+        meta: MediaImportCompletedEventMeta,
+        library_files: list[LibraryFile],
+    ) -> list[MediaServerSyncTargetFile]:
+        batch = resolve_current_imported_media_batch(meta, library_files)
+        return self.build_current_import_targets(batch)
+
+    @staticmethod
+    def build_current_import_targets(batch: CurrentImportedMediaBatch) -> list[MediaServerSyncTargetFile]:
+        return [
+            MediaServerSyncTargetFile(
+                destination_path=item.destination_path,
+                episode_number=item.episode_number,
+                episode_numbers=item.episode_numbers,
+            )
+            for item in batch.imported_files
+        ]
+
+    @staticmethod
+    def ensure_import_targets_accessible(targets: list[MediaServerSyncTargetFile]) -> None:
+        ensure_imported_media_paths_accessible(item.destination_path for item in targets)
+
     def build_input(self, media: MediaFullInfo, layout: LibraryMediaLayout) -> MediaServerSyncInput | None:
         decision = library_media_root_policy.build_from_library_layout(media, layout)
         if decision is None:

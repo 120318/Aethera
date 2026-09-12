@@ -13,7 +13,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from app.schemas.config import DownloaderConfig
-from app.schemas.domain.download import DownloadFileInfo, DownloadInfo
+from app.schemas.domain.download import DownloadFileInfo, DownloadInfo, DownloadInfoLookup, DownloadInfoLookupStatus
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
 from app.schemas.integration.common import ClientOperationResult
 from app.services.integration.download.client import DownloadClient, DownloadClientCapabilities
@@ -39,6 +39,7 @@ class RTorrentTorrentRow(BaseModel):
     is_active: int = 0
     load_date: int = 0
     completed_bytes: int = 0
+    hashing: int = 0
 
 
 class RTorrentFileRow(BaseModel):
@@ -161,32 +162,35 @@ class RTorrentClient(DownloadClient):
             return []
 
     async def get_torrent_info(self, torrent_hash: str) -> DownloadInfo | None:
-        rows = await self.get_torrents([torrent_hash])
-        if not rows:
-            return None
-        status = rows[0]
-        files = await self.get_torrent_files(torrent_hash)
-        added_on = status.added_on or datetime.fromtimestamp(0)
-        content_path = self._map_remote_to_local_path(status.save_path or "")
+        return (await self.lookup_torrent_info(torrent_hash)).info
+
+    async def lookup_torrent_info(self, torrent_hash: str) -> DownloadInfoLookup:
         try:
-            row = next(item for item in await self._load_torrent_rows() if item.hash.lower() == torrent_hash.lower())
-            content_path = self._map_remote_to_local_path(row.base_path or row.directory)
-        except (StopIteration, httpx.HTTPError, xmlrpc_client.Error, ValueError, TypeError):
-            pass
-        return DownloadInfo(
+            row = next(
+                (item for item in await self._load_torrent_rows() if item.hash.lower() == torrent_hash.lower()),
+                None,
+            )
+            if row is None:
+                return DownloadInfoLookup(status=DownloadInfoLookupStatus.MISSING)
+            status = self._to_status(row)
+            files = await self.get_torrent_files(torrent_hash)
+        except (httpx.HTTPError, xmlrpc_client.Error, ValueError, TypeError) as exc:
+            logger.error("Failed to look up rTorrent torrent(%s): %s", torrent_hash, exc)
+            return DownloadInfoLookup(status=DownloadInfoLookupStatus.UNAVAILABLE)
+        return DownloadInfoLookup(status=DownloadInfoLookupStatus.FOUND, info=DownloadInfo(
             hash=status.hash,
             name=status.name,
             size=status.size,
             progress=status.progress,
             state=status.state.value,
             save_path=status.save_path or "",
-            content_path=content_path,
-            added_on=added_on,
+            content_path=self._map_remote_to_local_path(row.base_path or row.directory),
+            added_on=status.added_on or datetime.fromtimestamp(0),
             completion_on=status.completion_on,
             category=None,
             tags=[],
             files=files,
-        )
+        ))
 
     async def get_torrent_files(self, torrent_hash: str) -> list[DownloadFileInfo] | None:
         try:
@@ -202,7 +206,7 @@ class RTorrentClient(DownloadClient):
                 )
                 for row in rows
             ]
-        except (httpx.HTTPError, xmlrpc_client.Error, ValueError, TypeError) as exc:
+        except (httpx.HTTPError, xmlrpc_client.Error, OSError, ValueError, TypeError) as exc:
             logger.error("Failed to get rTorrent files(%s): %s", torrent_hash, exc)
             return None
 
@@ -297,6 +301,7 @@ class RTorrentClient(DownloadClient):
                 "d.is_active=",
                 "d.load_date=",
                 "d.completed_bytes=",
+                "d.hashing=",
             ),
         )
         return [self._to_torrent_row(item) for item in self._rows(raw)]
@@ -350,6 +355,7 @@ class RTorrentClient(DownloadClient):
             is_active=self._to_int(values[11]) if len(values) > 11 else 0,
             load_date=self._to_int(values[12]) if len(values) > 12 else 0,
             completed_bytes=self._to_int(values[13]) if len(values) > 13 else 0,
+            hashing=self._to_int(values[14]) if len(values) > 14 else -1,
         )
 
     def _to_file_row(self, index: int, item: object) -> RTorrentFileRow:
@@ -376,7 +382,7 @@ class RTorrentClient(DownloadClient):
         progress = self._torrent_progress(row)
         save_path = self._map_remote_to_local_path(row.directory) if row.directory else row.directory
         added_on = datetime.fromtimestamp(row.load_date) if row.load_date > 0 else None
-        completion_on = datetime.now() if progress >= 0.999 and row.complete else None
+        completion_on = datetime.now() if progress >= 0.999 and row.complete and row.hashing == 0 else None
         return TorrentStatus(
             hash=row.hash,
             name=row.name,
@@ -398,6 +404,10 @@ class RTorrentClient(DownloadClient):
         )
 
     def _torrent_state(self, row: RTorrentTorrentRow) -> TorrentState:
+        if row.hashing < 0:
+            return TorrentState.UNKNOWN
+        if row.hashing:
+            return TorrentState.CHECKING
         if not row.is_active and not row.state:
             return TorrentState.PAUSED
         if row.complete:

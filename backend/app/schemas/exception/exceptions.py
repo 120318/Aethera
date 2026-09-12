@@ -56,6 +56,15 @@ class DirectoryValidationException(AppException):
         super().__init__(code=10004, message_key=message_key, params=params)
 
 
+class DirectoryIntegrityStorageUnavailableException(AppException):
+    def __init__(self, reason: str):
+        super().__init__(
+            code=10025,
+            message_key="backendErrors.directoryIntegrityStorageUnavailable",
+            params={"reason": reason},
+        )
+
+
 class ServiceTypeException(AppException):
     def __init__(self, service_type: str, supported_types: list[str] | None = None):
         super().__init__(

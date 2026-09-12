@@ -94,6 +94,7 @@ class TaskScheduler:
             result = await scheduled_transfer_command_service.enqueue_finished_tasks()
             if result.processed > 0:
                 logger.debug("Ingest worker completed: %s", result)
+            await scheduled_transfer_command_service.enqueue_ready_files()
         except (AppException, RuntimeError, ValueError, OSError) as e:
             logger.exception("Ingest worker failed: %s", e)
 

@@ -1,10 +1,22 @@
 from pathlib import Path
 
 from app.schemas.domain.action import ActionStatus
-from app.schemas.domain.addon_events import DanmuGenerationOutcome
+from app.schemas.domain.addon_events import DanmuGenerationOutcome, MediaImportCompletedEventMeta
 from app.schemas.domain.event import EventActor, EventType
+from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media import MediaFullInfo
 from app.services.audit.workflow_event_emitters import emit_danmu_generate_event
+from app.services.application.workflows.imported_media_batch import (
+    CurrentImportedMediaBatch,
+    resolve_current_imported_media_batch,
+)
+
+
+def resolve_primary_import_batch(
+    meta: MediaImportCompletedEventMeta,
+    library_files: list[LibraryFile],
+) -> CurrentImportedMediaBatch:
+    return resolve_current_imported_media_batch(meta, library_files)
 
 
 def emit_generation_summary(

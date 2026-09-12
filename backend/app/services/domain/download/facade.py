@@ -175,6 +175,9 @@ class DownloadService:
     async def get_torrent_status_by_task_ids(self, task_ids: list[str]) -> Mapping[str, TorrentStatus]:
         return await self.task_service.get_torrent_status_by_task_ids(task_ids)
 
+    async def get_torrent_status_by_tasks(self, tasks: list[TaskData]) -> Mapping[str, TorrentStatus]:
+        return await self.task_service.get_torrent_status_by_tasks(tasks)
+
     async def update_task_state(
         self,
         task_id: str,
@@ -190,6 +193,23 @@ class DownloadService:
             error_key=error_key,
             progress=progress,
             error_stage=error_stage,
+            error_params=error_params,
+        )
+
+    async def record_task_error(
+        self,
+        task_id: str,
+        *,
+        error_key: str,
+        error_stage: TaskErrorStage,
+        expected_status: TaskStatus,
+        error_params: dict[str, str] | None = None,
+    ) -> bool:
+        return await self.task_state.record_task_error(
+            task_id,
+            error_key=error_key,
+            error_stage=error_stage,
+            expected_status=expected_status,
             error_params=error_params,
         )
 

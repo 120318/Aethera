@@ -13,13 +13,19 @@ os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 from app.schemas.exception.exceptions import DownloadException, TransferException
 from app.schemas.config import Template, TransferMode
 from app.schemas.media_id import MediaID
-from app.schemas.domain.download import TaskContext, TaskData, TaskStatus, TransferFileResult
+from app.schemas.domain.addon_events import MediaImportCompletedEventMeta
+from app.schemas.domain.download import TaskContext, TaskData, TaskStatus, TransferFileResult, TransferResult
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
 from app.services.domain.transfer import transfer_service
-from app.services.domain.transfer.service import commit_transfer_results
-from app.services.domain.transfer.execution import TransferExecutionContext, build_transfer_execution_context, build_transfer_plan, execute_transfer, generate_source_path, missing_transfer_source_paths
+from app.services.domain.transfer.service import (
+    TransferCommitMode,
+    _include_discarded_batch_files,
+    build_media_import_completed_event,
+    commit_transfer_results,
+)
+from app.services.domain.transfer.execution import TransferExecutionContext, all_transfer_sources_available, build_transfer_execution_context, build_transfer_plan, execute_transfer, generate_source_path, missing_transfer_source_paths
 
 
 def _task(status: TaskStatus = TaskStatus.COMPLETED) -> TaskData:
@@ -70,11 +76,67 @@ def _library_file(file_id: str = "file-1") -> LibraryFile:
 @pytest.mark.asyncio
 async def test_missing_transfer_source_paths_reports_selected_files_not_visible(monkeypatch):
     task = _task(status=TaskStatus.FINISHED)
-    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: False)
+    monkeypatch.setattr("app.services.domain.transfer.execution.source_file_is_intact", lambda path, item: False)
 
     missing_paths = await missing_transfer_source_paths(task)
 
     assert missing_paths == ["/data/download/downloads/show/Test.Show.S01.2024.1080p.WEB-DL/Test.Show.S01E01.2024.1080p.WEB-DL.mkv"]
+
+
+@pytest.mark.asyncio
+async def test_missing_transfer_source_paths_checks_requested_indices_only(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+    task.metadata.files.append(
+        TorrentFileItem(
+            index=1,
+            filename="Test.Show.S01E02.2024.1080p.WEB-DL.mkv",
+            size=100,
+        )
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.execution.source_file_is_intact",
+        lambda path, item: "S01E02" in str(path),
+    )
+
+    missing_paths = await missing_transfer_source_paths(task, {1})
+
+    assert missing_paths == []
+
+
+@pytest.mark.asyncio
+async def test_source_availability_converts_storage_probe_failure(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+
+    def raise_storage_error(path, item):
+        raise OSError("storage offline")
+
+    monkeypatch.setattr(
+        "app.services.domain.transfer.execution.source_file_is_intact",
+        raise_storage_error,
+    )
+
+    with pytest.raises(TransferException, match="backendErrors.transferFailed") as exc_info:
+        await all_transfer_sources_available(task)
+
+    assert "storage offline" in exc_info.value.params["reason"]
+
+
+@pytest.mark.asyncio
+async def test_missing_source_diagnosis_converts_storage_probe_failure(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+
+    def raise_storage_error(path, item):
+        raise OSError("storage offline")
+
+    monkeypatch.setattr(
+        "app.services.domain.transfer.execution.source_file_is_intact",
+        raise_storage_error,
+    )
+
+    with pytest.raises(TransferException, match="backendErrors.transferFailed") as exc_info:
+        await missing_transfer_source_paths(task)
+
+    assert "storage offline" in exc_info.value.params["reason"]
 
 
 def _transfer_file_result() -> TransferFileResult:
@@ -104,7 +166,7 @@ async def test_perform_transfer_by_task_id_skips_when_library_is_complete_but_do
         "app.services.domain.transfer.service.library_service.get_files_by_task",
         AsyncMock(return_value=[_library_file()]),
     )
-    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.library_service.file_is_intact", lambda _: True)
 
     perform_mock = AsyncMock()
     monkeypatch.setattr(transfer_service, "_perform_transfer", perform_mock)
@@ -128,7 +190,6 @@ async def test_commit_transfer_results_refreshes_tv_profile_with_execution_seaso
     replace_mock = AsyncMock(return_value=[])
     update_state_mock = AsyncMock(return_value=True)
     refresh_mock = AsyncMock()
-    completed_event_mock = AsyncMock()
     monkeypatch.setattr(
         "app.services.domain.transfer.service.library_service.replace_task_entries",
         replace_mock,
@@ -141,19 +202,205 @@ async def test_commit_transfer_results_refreshes_tv_profile_with_execution_seaso
         "app.services.domain.transfer.service.media_service.refresh_profile_safely",
         refresh_mock,
     )
-    monkeypatch.setattr(
-        "app.services.domain.transfer.service.emit_media_import_completed",
-        completed_event_mock,
-    )
-
     await commit_transfer_results(
         task,
         [_transfer_file_result()],
         [],
         context,
+        handled_file_indices={0},
     )
 
     refresh_mock.assert_awaited_once_with(task.media_id, 2)
+    assert replace_mock.await_args.kwargs["imported_file_indices"] == [0]
+    assert replace_mock.await_args.kwargs["completion_event"] is not None
+    assert replace_mock.await_args.kwargs["dispatch_records"] is not None
+    assert task.context.imported_file_indices == [0]
+
+
+@pytest.mark.asyncio
+async def test_final_incremental_transfer_forwards_all_coverage_satisfied_indices(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+    task.metadata.files.append(
+        TorrentFileItem(
+            index=1,
+            filename="Test.Show.S01E02.2024.1080p.WEB-DL.mkv",
+            size=100,
+        )
+    )
+    perform_mock = AsyncMock(return_value=TransferResult(transferred_files=[]))
+    monkeypatch.setattr(transfer_service, "_perform_incremental_transfer", perform_mock)
+
+    await transfer_service._finish_incremental_transfer(task, [], {0, 1})
+
+    perform_mock.assert_awaited_once_with(
+        task,
+        [],
+        set(),
+        TransferCommitMode.FINAL_INCREMENTAL,
+        handled_file_indices={0, 1},
+    )
+
+
+@pytest.mark.asyncio
+async def test_empty_final_incremental_transfer_persists_satisfied_ledger(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+    replace_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.replace_task_entries",
+        replace_mock,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.download_service.update_task_state",
+        AsyncMock(return_value=True),
+    )
+
+    await transfer_service._perform_incremental_transfer(
+        task,
+        [],
+        set(),
+        TransferCommitMode.FINAL_INCREMENTAL,
+        handled_file_indices={0},
+    )
+
+    assert replace_mock.await_args.kwargs["imported_file_indices"] == [0]
+    assert task.context.imported_file_indices == [0]
+
+
+@pytest.mark.asyncio
+async def test_idempotent_commit_does_not_clean_preserved_existing_files(monkeypatch):
+    task = _task(status=TaskStatus.TRANSFERRING)
+    context = TransferExecutionContext(
+        source_base_path=Path("/downloads"),
+        destination_base_path=Path("/library"),
+        title="Test Show",
+        year=2024,
+        season_number=1,
+    )
+    cleanup_mock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.replace_task_entries",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.cleanup_replaced_files",
+        cleanup_mock,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.download_service.update_task_state",
+        AsyncMock(return_value=True),
+    )
+
+    await commit_transfer_results(
+        task,
+        [],
+        [_library_file()],
+        context,
+        commit_mode=TransferCommitMode.IDEMPOTENT_REPAIR,
+    )
+
+    cleanup_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_incremental_commit_does_not_delete_sidecars_before_database_commit(tmp_path, monkeypatch):
+    task = _task(status=TaskStatus.DOWNLOADING)
+    context = TransferExecutionContext(
+        source_base_path=tmp_path / "downloads",
+        destination_base_path=tmp_path / "library",
+        title="Test Show",
+        year=2024,
+        season_number=1,
+    )
+    result = _transfer_file_result().model_copy(
+        update={"destination_path": str(tmp_path / "library" / "Test.Show.S01E01.mkv")},
+    )
+    nfo_result = _transfer_file_result().model_copy(
+        update={
+            "destination_path": str(Path(result.destination_path).with_suffix(".nfo")),
+            "file_index": 1,
+            "file_item": TorrentFileItem(index=1, filename="Test.Show.S01E01.nfo", size=5),
+            "episode_number": None,
+            "episode_numbers": [],
+        },
+    )
+    sidecar = Path(result.destination_path).with_suffix(".danmu.xml")
+    nfo_path = Path(nfo_result.destination_path)
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("old")
+    nfo_path.write_text("batch")
+    replaced_file = _library_file().model_copy(
+        update={"path": str(Path(result.destination_path).parent), "file_name": Path(result.destination_path).name},
+    )
+    order = []
+
+    async def replace_entries(*_args, **_kwargs):
+        order.append("replace")
+        assert sidecar.read_text() == "old"
+        assert nfo_path.read_text() == "batch"
+        sidecar.write_text("new")
+        return [replaced_file]
+
+    async def cleanup_files(*_args, **_kwargs):
+        order.append("files")
+        assert sidecar.read_text() == "new"
+
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.replace_task_entries",
+        replace_entries,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.cleanup_replaced_files",
+        cleanup_files,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.media_service.refresh_profile_safely",
+        AsyncMock(),
+    )
+
+    await commit_transfer_results(
+        task,
+        [result, nfo_result],
+        [replaced_file],
+        context,
+        commit_mode=TransferCommitMode.PARTIAL_INCREMENTAL,
+    )
+
+    assert order == ["replace", "files"]
+    assert sidecar.read_text() == "new"
+    assert nfo_path.read_text() == "batch"
+
+
+def test_media_import_event_contains_primary_video_files_only():
+    task = _task(status=TaskStatus.TRANSFERRING)
+    video = _transfer_file_result()
+    subtitle = video.model_copy(update={
+        "destination_path": "/library/TV/Test Show/Test.Show.S01E01.srt",
+        "file_index": 1,
+        "file_item": TorrentFileItem(index=1, filename="Test.Show.S01E01.srt", size=10),
+        "episode_number": None,
+        "episode_numbers": [],
+    })
+
+    event = build_media_import_completed_event(task, [video, subtitle])
+
+    assert event is not None
+    meta = MediaImportCompletedEventMeta.model_validate_json(event.meta)
+    assert [item.destination_path for item in meta.imported_files] == [video.destination_path]
+    assert build_media_import_completed_event(task, [subtitle]) is None
+
+
+def test_idempotent_repair_explicitly_replaces_existing_batch_losers():
+    winner = _library_file().model_copy(update={"id": "winner", "file_index": 1})
+    loser = _library_file().model_copy(update={"id": "loser", "file_index": 2})
+    external_replacement = _library_file().model_copy(update={"id": "external", "file_index": 3})
+
+    replacements = _include_discarded_batch_files(
+        [external_replacement],
+        [winner, loser],
+        {2},
+    )
+
+    assert {item.id for item in replacements} == {"external", "loser"}
 
 
 @pytest.mark.asyncio
@@ -168,10 +415,34 @@ async def test_perform_transfer_by_task_id_rejects_when_library_record_exists_bu
         "app.services.domain.transfer.service.library_service.get_files_by_task",
         AsyncMock(return_value=[_library_file()]),
     )
-    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: False)
 
     with pytest.raises(TransferException, match="backendErrors.transferSourceFilesMissing"):
         await transfer_service.perform_transfer_by_task_id(task.id)
+
+
+@pytest.mark.asyncio
+async def test_full_transfer_converts_filesystem_error_to_domain_error(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.download_service.find_task_by_id",
+        AsyncMock(return_value=task),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.get_files_by_task",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(transfer_service, "_lock_task_status", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.domain.transfer.execution.build_transfer_execution_context",
+        AsyncMock(side_effect=OSError("permission denied")),
+    )
+    monkeypatch.setattr("app.services.domain.transfer.service.emit_media_import_failed", AsyncMock())
+    monkeypatch.setattr("app.services.domain.transfer.service.handle_transfer_error", AsyncMock())
+
+    with pytest.raises(TransferException, match="backendErrors.transferFailed") as exc_info:
+        await transfer_service.perform_transfer_by_task_id(task.id)
+
+    assert exc_info.value.params == {"reason": "permission denied"}
 
 
 @pytest.mark.asyncio
@@ -204,8 +475,8 @@ def test_generate_source_path_prefers_rooted_directory_for_directory_single_file
     rooted_path = "/downloads/Show.S01.2026.2160p.WEB-DL/Show.S01E01.2026.2160p.WEB-DL.mkv"
 
     monkeypatch.setattr(
-        "app.services.domain.transfer.execution.fs_provider.exists",
-        lambda path: str(path) == rooted_path,
+        "app.services.domain.transfer.execution.source_file_is_intact",
+        lambda path, item: str(path) == rooted_path,
     )
 
     source_path = generate_source_path(task, file_item, Path("/downloads"))
@@ -231,8 +502,8 @@ def test_generate_source_path_prefers_plain_file_for_true_single_file(monkeypatc
     plain_path = "/downloads/Show.S01E01.2026.2160p.WEB-DL.mkv"
 
     monkeypatch.setattr(
-        "app.services.domain.transfer.execution.fs_provider.exists",
-        lambda path: str(path) == plain_path,
+        "app.services.domain.transfer.execution.source_file_is_intact",
+        lambda path, item: str(path) == plain_path,
     )
 
     source_path = generate_source_path(task, file_item, Path("/downloads"))
@@ -264,7 +535,7 @@ async def test_execute_transfer_uses_copy_materializer_for_copy_mode(monkeypatch
         year=2024,
         season_number=1,
     )
-    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.source_file_is_intact", lambda path, item: True)
     monkeypatch.setattr("app.services.domain.transfer.execution.validate_transfer_upgrade_policy", AsyncMock())
     monkeypatch.setattr("app.services.domain.transfer.execution.library_service.find_file_by_path", AsyncMock(return_value=None))
 
@@ -274,10 +545,14 @@ async def test_execute_transfer_uses_copy_materializer_for_copy_mode(monkeypatch
 
     monkeypatch.setattr("app.services.domain.transfer.execution.transfer_materializer_registry.resolve", resolve_materializer)
 
-    results = await execute_transfer(task, context)
+    report = await execute_transfer(task, context)
 
-    assert len(results) == 1
-    assert calls == [(Path(results[0].source_path), Path(results[0].destination_path))]
+    assert len(report.materialized_files) == 1
+    assert report.skipped_existing_files == []
+    assert calls == [(
+        Path(report.materialized_files[0].source_path),
+        Path(report.materialized_files[0].destination_path),
+    )]
 
 
 @pytest.mark.asyncio
@@ -305,14 +580,16 @@ async def test_execute_transfer_skips_existing_same_task_file_materialization(mo
         year=2024,
         season_number=1,
     )
-    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.source_file_is_intact", lambda path, item: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.library_service.file_is_intact", lambda _: True)
     monkeypatch.setattr("app.services.domain.transfer.execution.validate_transfer_upgrade_policy", AsyncMock())
     monkeypatch.setattr("app.services.domain.transfer.execution.library_service.find_file_by_path", AsyncMock(return_value=existing_file))
     monkeypatch.setattr("app.services.domain.transfer.execution.transfer_materializer_registry.resolve", lambda mode: RecordingMaterializer())
 
-    results = await execute_transfer(task, context)
+    report = await execute_transfer(task, context)
 
-    assert len(results) == 1
+    assert report.materialized_files == []
+    assert len(report.skipped_existing_files) == 1
     assert calls == []
 
 
@@ -347,7 +624,7 @@ def test_build_transfer_plan_preserves_bdmv_package_layout(monkeypatch):
             ],
         ),
     )
-    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.source_file_is_intact", lambda path, item: True)
     context = TransferExecutionContext(
         source_base_path=Path("/downloads"),
         destination_base_path=Path("/library"),
@@ -385,7 +662,7 @@ def test_build_transfer_plan_names_tv_disc_iso_with_single_template(monkeypatch)
         ),
         files=[TorrentFileItem(index=0, filename="Test.Show.S01.Disc1.iso", size=100)],
     )
-    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.source_file_is_intact", lambda path, item: True)
     context = TransferExecutionContext(
         source_base_path=Path("/downloads"),
         destination_base_path=Path("/library"),
@@ -426,7 +703,7 @@ def test_build_transfer_plan_uses_context_episode_parsed_from_description(monkey
             )
         ],
     )
-    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.source_file_is_intact", lambda path, item: True)
     context = TransferExecutionContext(
         source_base_path=Path("/downloads"),
         destination_base_path=Path("/library"),
@@ -467,7 +744,7 @@ def test_build_transfer_plan_names_multi_episode_file(monkeypatch):
             )
         ],
     )
-    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.source_file_is_intact", lambda path, item: True)
     context = TransferExecutionContext(
         source_base_path=Path("/downloads"),
         destination_base_path=Path("/library"),
@@ -510,7 +787,7 @@ def test_build_transfer_plan_attaches_context_attrs_when_file_attrs_missing(monk
             )
         ],
     )
-    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.source_file_is_intact", lambda path, item: True)
     context = TransferExecutionContext(
         source_base_path=Path("/downloads"),
         destination_base_path=Path("/library"),
@@ -563,7 +840,7 @@ def test_build_transfer_plan_backfills_description_technical_attrs(monkeypatch):
             )
         ],
     )
-    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    monkeypatch.setattr("app.services.domain.transfer.execution.source_file_is_intact", lambda path, item: True)
     context = TransferExecutionContext(
         source_base_path=Path("/downloads"),
         destination_base_path=Path("/library"),

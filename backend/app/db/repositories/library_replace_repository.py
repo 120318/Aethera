@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import delete, select, tuple_
 
-from app.db.sql.models import LibraryEpisodeORM, LibraryFileORM, LibraryMetaORM
+from app.db.repositories.event_dispatch_repository import EventDispatchRepository
+from app.db.repositories.event_repository import EventRepository
+from app.db.sql.models import LibraryEpisodeORM, LibraryFileArtifactORM, LibraryFileORM, LibraryMetaORM, TaskORM
 from app.db.sql.session import SessionLocal
 from app.schemas.media_id import MediaID
 from app.schemas.domain.download import TransferFileResult
+from app.schemas.domain.event import Event
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.resource_attributes import ResourceAttributes
+from app.schemas.persistence.event_dispatch import EventDispatchRecord
 from app.utils.library_paths import build_library_file_path, split_library_storage_path
 
 
@@ -24,24 +29,49 @@ class LibraryReplaceRepository:
         transfer_results: list[TransferFileResult],
         season: int | None = None,
         replacement_files: list[LibraryFile] | None = None,
+        *,
+        incremental: bool = False,
+        preserve_existing: bool = False,
+        imported_file_indices: list[int] | None = None,
+        completion_event: Event | None = None,
+        dispatch_records: list[EventDispatchRecord] | None = None,
     ) -> list[LibraryFile]:
         existing_files = await self._find_existing_files(task_id)
+        if incremental or preserve_existing:
+            incoming_indices = {result.file_index for result in transfer_results}
+            incoming_paths = {Path(result.destination_path) for result in transfer_results}
+            existing_files = [
+                item for item in existing_files
+                if item.file_index in incoming_indices or build_library_file_path(item.path, item.file_name) in incoming_paths
+            ]
         conflicting_files = await self._find_conflicting_files(task_id, transfer_results)
         replacement_files = replacement_files or []
         existing_file_ids = [library_file.id for library_file in existing_files if library_file.id]
         conflicting_file_ids = [library_file.id for library_file in conflicting_files if library_file.id]
         replacement_file_ids = [library_file.id for library_file in replacement_files if library_file.id]
+        removed_file_ids = list({*existing_file_ids, *conflicting_file_ids, *replacement_file_ids})
         existing_paths = {
             build_library_file_path(library_file.path, library_file.file_name): library_file
             for library_file in [*existing_files, *conflicting_files, *replacement_files]
         }
 
         with SessionLocal.begin() as session:
+            task_row = None
+            if imported_file_indices is not None:
+                task_row = session.get(TaskORM, task_id)
+                if task_row is None:
+                    raise ValueError(f"Task not found while recording imported files: {task_id}")
             self._upsert_library_meta(session, media_id)
 
+            if removed_file_ids:
+                session.execute(
+                    delete(LibraryFileArtifactORM).where(
+                        LibraryFileArtifactORM.library_file_id.in_(removed_file_ids)
+                    )
+                )
             if existing_file_ids:
                 session.execute(delete(LibraryEpisodeORM).where(LibraryEpisodeORM.file_id.in_(existing_file_ids)))
-                session.execute(delete(LibraryFileORM).where(LibraryFileORM.task_id == task_id))
+                session.execute(delete(LibraryFileORM).where(LibraryFileORM.id.in_(existing_file_ids)))
             if conflicting_file_ids:
                 session.execute(delete(LibraryEpisodeORM).where(LibraryEpisodeORM.file_id.in_(conflicting_file_ids)))
                 session.execute(delete(LibraryFileORM).where(LibraryFileORM.id.in_(conflicting_file_ids)))
@@ -59,6 +89,18 @@ class LibraryReplaceRepository:
                     season,
                     existing_paths,
                 )
+            if task_row is not None:
+                context = dict(task_row.context_json or {})
+                context["imported_file_indices"] = sorted(
+                    {int(value) for value in context.get("imported_file_indices", [])}
+                    | {int(value) for value in imported_file_indices or []}
+                )
+                task_row.context_json = context
+                task_row.updated_at = datetime.now().isoformat()
+            if completion_event is not None:
+                EventRepository.add_to_session(session, completion_event)
+                for dispatch_record in dispatch_records or []:
+                    EventDispatchRepository.add_to_session(session, dispatch_record)
 
         return self._merge_library_files(existing_files, conflicting_files, replacement_files)
 

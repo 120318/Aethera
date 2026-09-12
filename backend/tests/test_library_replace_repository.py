@@ -7,13 +7,23 @@ from sqlalchemy import text
 os.environ["DATA_PATH"] = f"/tmp/aethera-test-data-{uuid.uuid4()}"
 
 from app.db.repositories.library_replace_repository import LibraryReplaceRepository
-from app.db.sql.models import LibraryEpisodeORM, LibraryFileORM, LibraryMetaORM
+from app.db.sql.models import (
+    EventDispatchORM,
+    EventORM,
+    LibraryEpisodeORM,
+    LibraryFileArtifactORM,
+    LibraryFileORM,
+    LibraryMetaORM,
+    TaskORM,
+)
 from app.db.sql.session import SessionLocal
 from app.schemas.media_id import MediaID
 from app.schemas.domain.download import TransferFileResult
-from app.schemas.domain.library import LibraryFile
+from app.schemas.domain.event import Event, EventType
+from app.schemas.domain.library import LibraryFile, LibraryFileArtifactStatus, LibraryFileArtifactType
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem
+from app.schemas.persistence.event_dispatch import EventDispatchRecord
 
 
 pytestmark = [pytest.mark.aggregation]
@@ -22,15 +32,23 @@ pytestmark = [pytest.mark.aggregation]
 @pytest.fixture(autouse=True)
 def _fresh_library_tables():
     with SessionLocal() as session:
+        session.execute(text("DELETE FROM library_file_artifacts"))
         session.execute(text("DELETE FROM library_episodes"))
         session.execute(text("DELETE FROM library_files"))
         session.execute(text("DELETE FROM library_meta"))
+        session.execute(text("DELETE FROM tasks"))
+        session.execute(text("DELETE FROM event_dispatches"))
+        session.execute(text("DELETE FROM events"))
         session.commit()
     yield
     with SessionLocal() as session:
+        session.execute(text("DELETE FROM library_file_artifacts"))
         session.execute(text("DELETE FROM library_episodes"))
         session.execute(text("DELETE FROM library_files"))
         session.execute(text("DELETE FROM library_meta"))
+        session.execute(text("DELETE FROM tasks"))
+        session.execute(text("DELETE FROM event_dispatches"))
+        session.execute(text("DELETE FROM events"))
         session.commit()
 
 
@@ -130,6 +148,20 @@ async def test_replace_task_entries_removes_explicit_replacement_files():
                 created_at=1000.0,
             )
         )
+        session.add(
+            LibraryFileArtifactORM(
+                id="artifact-replaced",
+                library_file_id="file-replaced",
+                artifact_type=LibraryFileArtifactType.danmu_ass.value,
+                expected_path="/data/library/Movies/Test Movie (2024)/Test.Movie.2024.1080p.danmu.ass",
+                status=LibraryFileArtifactStatus.succeeded.value,
+                last_success_at=1000.0,
+                last_error=None,
+                next_retry_at=None,
+                created_at=1000.0,
+                updated_at=1000.0,
+            )
+        )
         session.commit()
 
     repo = LibraryReplaceRepository()
@@ -171,12 +203,79 @@ async def test_replace_task_entries_removes_explicit_replacement_files():
     with SessionLocal() as session:
         files = session.query(LibraryFileORM).all()
         episodes = session.query(LibraryEpisodeORM).all()
+        artifacts = session.query(LibraryFileArtifactORM).all()
 
     assert [item.id for item in replaced] == ["file-replaced"]
     assert len(files) == 1
     assert files[0].task_id == "task-new"
     assert files[0].file_name == "Test.Movie.2024.2160p.mkv"
     assert episodes == []
+    assert artifacts == []
+
+
+@pytest.mark.asyncio
+async def test_replace_task_entries_preserves_unmodified_task_file_artifacts():
+    media_id = MediaID.parse("tmdb:tv:1")
+    with SessionLocal() as session:
+        session.add(
+            LibraryFileORM(
+                id="file-existing",
+                task_id="task-new",
+                directory_id="dir-1",
+                media_id=str(media_id),
+                path="TV/Test/Season 01",
+                file_name="Test.S01E01.mkv",
+                file_size=1000,
+                file_index=0,
+                created_at=1000.0,
+                resource_attributes_json=ResourceAttributes(
+                    seasons=[1], episodes=[1], resolution="1080p",
+                ).model_dump(mode="json"),
+            )
+        )
+        session.add(
+            LibraryFileArtifactORM(
+                id="artifact-existing",
+                library_file_id="file-existing",
+                artifact_type=LibraryFileArtifactType.danmu_xml.value,
+                expected_path="/data/library/TV/Test/Season 01/Test.S01E01.danmu.xml",
+                status=LibraryFileArtifactStatus.succeeded.value,
+                last_success_at=1000.0,
+                last_error=None,
+                next_retry_at=None,
+                created_at=1000.0,
+                updated_at=1000.0,
+            )
+        )
+        session.commit()
+
+    await LibraryReplaceRepository().replace_task_entries(
+        "task-new",
+        "dir-1",
+        media_id,
+        [TransferFileResult(
+            source_path="/downloads/Test.S01E02.mkv",
+            destination_path="/data/library/TV/Test/Season 01/Test.S01E02.mkv",
+            file_index=1,
+            episode_number=2,
+            episode_numbers=[2],
+            file_item=TorrentFileItem(
+                index=1,
+                filename="Test.S01E02.mkv",
+                size=1000,
+                attrs=ResourceAttributes(seasons=[1], episodes=[2], resolution="1080p"),
+            ),
+        )],
+        season=1,
+        preserve_existing=True,
+    )
+
+    with SessionLocal() as session:
+        files = session.query(LibraryFileORM).order_by(LibraryFileORM.file_index).all()
+        artifacts = session.query(LibraryFileArtifactORM).all()
+
+    assert [item.file_index for item in files] == [0, 1]
+    assert [item.id for item in artifacts] == ["artifact-existing"]
 
 
 @pytest.mark.asyncio
@@ -217,3 +316,75 @@ async def test_replace_task_entries_registers_multi_episode_file():
         (10, 17, files[0].id),
         (10, 18, files[0].id),
     ]
+
+
+@pytest.mark.asyncio
+async def test_incremental_replace_records_imported_indices_in_same_transaction():
+    media_id = MediaID.parse("tmdb:tv:1")
+    with SessionLocal.begin() as session:
+        session.add(TaskORM(
+            id="task-new",
+            media_id=str(media_id),
+            provider="tmdb",
+            provider_item_id="1",
+            torrent_hash="hash",
+            status="downloading",
+            progress=0.5,
+            error_params_json={},
+            context_json={"imported_file_indices": [2]},
+            created_at="2026-01-01T00:00:00",
+            updated_at="2026-01-01T00:00:00",
+        ))
+
+    result = TransferFileResult(
+        source_path="/downloads/E2.mkv",
+        destination_path="/data/library/TV/Show/Season 01/Show - S01E02.mkv",
+        file_index=5,
+        file_item=TorrentFileItem(
+            index=5,
+            filename="E2.mkv",
+            size=2000,
+            attrs=ResourceAttributes(seasons=[1], episodes=[2], resolution="1080p"),
+        ),
+        episode_number=2,
+        episode_numbers=[2],
+    )
+    repo = LibraryReplaceRepository()
+    await repo.replace_task_entries(
+        "task-new",
+        "dir-1",
+        media_id,
+        [result],
+        season=1,
+        incremental=True,
+        imported_file_indices=[5, 2],
+        completion_event=Event(id="event-1", type=EventType.MEDIA_IMPORT_COMPLETED, task_id="task-new"),
+        dispatch_records=[EventDispatchRecord(
+            id="dispatch-1",
+            event_id="event-1",
+            consumer_name="test-consumer",
+        )],
+    )
+
+    with SessionLocal() as session:
+        task = session.get(TaskORM, "task-new")
+        files = session.query(LibraryFileORM).filter_by(task_id="task-new").all()
+        event = session.get(EventORM, "event-1")
+        dispatch = session.get(EventDispatchORM, "dispatch-1")
+    assert task.context_json["imported_file_indices"] == [2, 5]
+    assert [item.file_index for item in files] == [5]
+    assert event.task_id == "task-new"
+    assert dispatch.event_id == "event-1"
+
+    with pytest.raises(ValueError, match="Task not found"):
+        await repo.replace_task_entries(
+            "missing-task",
+            "dir-1",
+            media_id,
+            [result.model_copy(update={"destination_path": "/data/library/TV/Show/Season 01/Show - S01E03.mkv"})],
+            season=1,
+            incremental=True,
+            imported_file_indices=[9],
+        )
+    with SessionLocal() as session:
+        assert session.query(LibraryFileORM).filter_by(task_id="missing-task").count() == 0

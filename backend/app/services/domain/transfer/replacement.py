@@ -6,59 +6,402 @@ from app.schemas.domain.library import LibraryFile, LibraryPackageSummary
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.quality_profile import QualityProfile
 from app.schemas.domain.resource_attributes import ResourceAttributes
+from app.schemas.exception.exceptions import TransferException
 from app.services.config.settings_service import settings_service
 from app.services.domain.library.service import library_service
 from app.services.domain.resource.filtering import compute_preference_score_from_attrs, is_original_disc_attrs
 from app.services.domain.resource.quality import quality_sort_key
-from app.utils.library_paths import normalize_path_separators
+from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file, normalize_path_separators
+
+from .episode_coverage import episode_coverage_satisfies, episode_group_dominates
+from .execution import with_context_resource_attrs
 
 
 class LibraryReplacementPolicy:
+    def select_batch_winners(self, transfer_results: list[TransferFileResult]) -> list[TransferFileResult]:
+        quality_profile = self._quality_profile()
+        videos = [
+            result for result in transfer_results
+            if file_name_looks_like_media_file(result.file_item.filename)
+        ]
+        winner_by_path: dict[str, TransferFileResult] = {}
+        for result in videos:
+            path = normalize_path_separators(result.destination_path)
+            current = winner_by_path.get(path)
+            if current is not None and self._episode_set(current) != self._episode_set(result):
+                raise TransferException(
+                    "backendErrors.transferEpisodePathConflict",
+                    params={"path": path},
+                )
+            if current is None or self._batch_rank(result, quality_profile) > self._batch_rank(current, quality_profile):
+                winner_by_path[path] = result
+
+        winner_by_episodes: dict[frozenset[int], TransferFileResult] = {}
+        for result in winner_by_path.values():
+            episodes = frozenset(result.episode_numbers or ([result.episode_number] if result.episode_number else []))
+            if not episodes:
+                continue
+            current = winner_by_episodes.get(episodes)
+            if current is None or self._batch_rank(result, quality_profile) > self._batch_rank(current, quality_profile):
+                winner_by_episodes[episodes] = result
+
+        episode_winners = list(winner_by_episodes.items())
+        covered_indices: set[int] = set()
+        for episodes, result in episode_winners:
+            quality = self._quality_rank(result.file_item.attrs, quality_profile)
+            if all(
+                any(
+                    other.file_index != result.file_index
+                    and episode in other_episodes
+                    and episode_group_dominates(
+                        self._quality_rank(other.file_item.attrs, quality_profile),
+                        other_episodes,
+                        quality,
+                        episodes,
+                    )
+                    for other_episodes, other in episode_winners
+                )
+                for episode in episodes
+            ):
+                covered_indices.add(result.file_index)
+
+        winner_indices = {
+            result.file_index for result in winner_by_path.values()
+            if not (result.episode_numbers or ([result.episode_number] if result.episode_number else []))
+        } | {
+            result.file_index for result in winner_by_episodes.values()
+            if result.file_index not in covered_indices
+        }
+        return [
+            result for result in transfer_results
+            if not file_name_looks_like_media_file(result.file_item.filename) or result.file_index in winner_indices
+        ]
+
+    @staticmethod
+    def _episode_set(result: TransferFileResult) -> frozenset[int]:
+        return frozenset(result.episode_numbers or ([result.episode_number] if result.episode_number else []))
+
+    async def select_library_winners(
+        self,
+        task: TaskData,
+        transfer_results: list[TransferFileResult],
+        season: int | None,
+    ) -> list[TransferFileResult]:
+        if task.media_id.media_type != MediaType.tv or season is None:
+            return transfer_results
+        incoming_episode_union = frozenset(
+            episode
+            for result in transfer_results
+            if file_name_looks_like_media_file(result.file_item.filename)
+            for episode in self._episode_set(result)
+        )
+        library_files = await library_service.get_files_by_media(task.media_id, season)
+        library_episodes = await library_service.get_episodes_by_media(task.media_id)
+        episodes_by_file_id: dict[str, set[int]] = {}
+        for episode in library_episodes:
+            if episode.season == season:
+                episodes_by_file_id.setdefault(episode.file_id, set()).add(int(episode.episode))
+        files_by_path: dict[str, list[LibraryFile]] = {}
+        files_by_episode_set: dict[frozenset[int], list[LibraryFile]] = {}
+        episode_sets_by_file_id: dict[str, frozenset[int]] = {}
+        intact_library_files: list[LibraryFile] = []
+        for item in library_files:
+            if not file_name_looks_like_media_file(item.file_name):
+                continue
+            path = normalize_path_separators(str(build_library_file_path(item.path, item.file_name)))
+            files_by_path.setdefault(path, []).append(item)
+            episode_set = frozenset(item.resource_attributes.episodes or []) | frozenset(
+                episodes_by_file_id.get(item.id or "", set())
+            )
+            if (
+                episode_set
+                and episode_set & incoming_episode_union
+                and self._library_file_is_intact(item)
+            ):
+                files_by_episode_set.setdefault(episode_set, []).append(item)
+                intact_library_files.append(item)
+                if item.id:
+                    episode_sets_by_file_id[item.id] = episode_set
+
+        quality_profile = self._quality_profile()
+        selected: list[TransferFileResult] = []
+        for result in transfer_results:
+            if not file_name_looks_like_media_file(result.file_item.filename):
+                selected.append(result)
+                continue
+            incoming_episodes = self._episode_set(result)
+            if not incoming_episodes:
+                selected.append(result)
+                continue
+            path = normalize_path_separators(result.destination_path)
+            for item in files_by_path.get(path, []):
+                existing_episodes = frozenset(item.resource_attributes.episodes or []) | frozenset(
+                    episodes_by_file_id.get(item.id or "", set())
+                )
+                if existing_episodes and existing_episodes != incoming_episodes:
+                    raise TransferException(
+                        "backendErrors.transferEpisodePathConflict",
+                        params={"path": path},
+                    )
+            incoming_rank = self._rank(
+                result.file_item.attrs or ResourceAttributes(),
+                result.file_item.size or 0,
+                quality_profile,
+            )
+            is_dominated = any(
+                not (item.task_id == task.id and item.file_index == result.file_index)
+                and incoming_rank <= self._rank(
+                    item.resource_attributes,
+                    item.file_size or 0,
+                    quality_profile,
+                )
+                for item in files_by_episode_set.get(incoming_episodes, [])
+            )
+            if not is_dominated:
+                incoming_quality = incoming_rank[:2]
+                is_dominated = all(
+                    any(
+                        episode in episode_set
+                        and episode_set != incoming_episodes
+                        and episode_group_dominates(
+                            self._quality_rank(item.resource_attributes, quality_profile),
+                            episode_set,
+                            incoming_quality,
+                            incoming_episodes,
+                        )
+                        for item in intact_library_files
+                        if (episode_set := episode_sets_by_file_id.get(item.id or ""))
+                    )
+                    for episode in incoming_episodes
+                )
+            if not is_dominated:
+                selected.append(result)
+        return selected
+
+    def _quality_rank(
+        self,
+        attrs: ResourceAttributes | None,
+        quality_profile: QualityProfile,
+    ) -> tuple[int, tuple[int, ...]]:
+        return self._rank(attrs or ResourceAttributes(), 0, quality_profile)[:2]
+
+    @staticmethod
+    def _library_file_is_intact(item: LibraryFile) -> bool:
+        try:
+            return library_service.file_is_intact(item)
+        except OSError as exc:
+            raise TransferException(
+                "backendErrors.transferFailed",
+                params={"reason": str(exc)},
+            ) from exc
+
     async def build_plan(
         self,
         task: TaskData,
         transfer_results: list[TransferFileResult],
         season: int | None,
+        *,
+        incremental: bool = False,
     ) -> LibraryReplacementPlan:
         if not transfer_results:
             return LibraryReplacementPlan(reason="empty transfer")
 
         if self._is_original_disc_import(transfer_results):
             return await self._build_original_disc_plan(task, transfer_results, season)
-        return await self._build_video_file_plan(task, transfer_results, season)
+        primary_results = [
+            result for result in transfer_results
+            if file_name_looks_like_media_file(result.file_item.filename)
+        ]
+        if not primary_results:
+            return LibraryReplacementPlan(reason="no primary media file replacement")
+        return await self._build_video_file_plan(task, primary_results, season, incremental=incremental)
+
+    async def satisfied_file_indices(
+        self,
+        task: TaskData,
+        season: int | None,
+        imported_episode_numbers: set[int],
+    ) -> set[int]:
+        if task.media_id.media_type != MediaType.tv or season is None or not task.metadata:
+            return set()
+        library_files = await library_service.get_files_by_media(task.media_id, season)
+        episodes = await library_service.get_episodes_by_media(task.media_id)
+        files_by_id: dict[str, LibraryFile] = {}
+        for item in library_files:
+            if not item.id or not file_name_looks_like_media_file(item.file_name):
+                continue
+            try:
+                if library_service.file_is_intact(item):
+                    files_by_id[item.id] = item
+            except OSError as exc:
+                raise TransferException(
+                    "backendErrors.transferFailed",
+                    params={"reason": str(exc)},
+                ) from exc
+        quality_profile = self._quality_profile()
+        episode_sets_by_file_id: dict[str, set[int]] = {}
+        for episode in episodes:
+            if episode.season == season and episode.file_id in files_by_id:
+                episode_sets_by_file_id.setdefault(episode.file_id, set()).add(int(episode.episode))
+        library_coverage = [
+            (
+                frozenset(item.resource_attributes.episodes or [])
+                | frozenset(episode_sets_by_file_id.get(item.id or "", set())),
+                self._rank(item.resource_attributes, item.file_size or 0, quality_profile),
+            )
+            for item in files_by_id.values()
+        ]
+
+        selected = set(task.context.selected_files) if task.context and task.context.selected_files else None
+        satisfied: set[int] = set()
+        for item in task.metadata.files:
+            if selected is not None and item.index not in selected:
+                continue
+            if not file_name_looks_like_media_file(item.filename):
+                continue
+            incoming = with_context_resource_attrs(task, item)
+            episode_numbers = {int(value) for value in incoming.get_episodes() if int(value) > 0}
+            if not episode_numbers or not episode_numbers.issubset(imported_episode_numbers):
+                continue
+            incoming_rank = self._rank(incoming.attrs or ResourceAttributes(), incoming.size or 0, quality_profile)
+            incoming_episode_set = frozenset(episode_numbers)
+            is_satisfied = episode_coverage_satisfies(
+                library_coverage,
+                incoming_rank,
+                incoming_episode_set,
+            )
+            if is_satisfied:
+                satisfied.add(item.index)
+        return satisfied
 
     async def _build_video_file_plan(
         self,
         task: TaskData,
         transfer_results: list[TransferFileResult],
         season: int | None,
+        *,
+        incremental: bool,
     ) -> LibraryReplacementPlan:
         quality_profile = self._quality_profile()
+        library_files = await library_service.get_files_by_media(task.media_id, season)
+        primary_library_files = [
+            item for item in library_files
+            if file_name_looks_like_media_file(item.file_name)
+        ]
+        incoming_indices = {result.file_index for result in transfer_results}
+        incoming_paths = {result.destination_path for result in transfer_results}
         candidates = [
             item
-            for item in await library_service.get_files_by_media(task.media_id, season)
-            if item.task_id != task.id and not self._is_original_disc_file(item)
+            for item in primary_library_files
+            if not self._is_original_disc_file(item)
+            and (
+                item.task_id != task.id
+                or (
+                    incremental
+                    and item.file_index not in incoming_indices
+                    and str(build_library_file_path(item.path, item.file_name)) not in incoming_paths
+                )
+            )
         ]
         episode_file_ids: dict[int, set[str]] = {}
+        combined_file_ids: set[str] = set()
         if task.media_id.media_type == MediaType.tv and season is not None:
             episodes = await library_service.get_episodes_by_media(task.media_id)
             for episode in episodes:
                 if episode.season == season:
                     episode_file_ids.setdefault(int(episode.episode), set()).add(episode.file_id)
+            candidate_episodes = {
+                item.id: set(item.resource_attributes.episodes or []) | {
+                    episode.episode for episode in episodes if episode.file_id == item.id
+                }
+                for item in candidates
+                if item.id
+            }
+            replaceable_file_ids: set[str] = set()
+            for result in transfer_results:
+                incoming_episodes = self._episode_set(result)
+                incoming_rank = self._rank(
+                    result.file_item.attrs or ResourceAttributes(),
+                    result.file_item.size or 0,
+                    quality_profile,
+                )
+                for candidate in self._video_file_candidates_for_result(
+                    task, candidates, result, season, episode_file_ids,
+                ):
+                    if not candidate.id:
+                        continue
+                    candidate_episode_set = frozenset(candidate_episodes.get(candidate.id, set()))
+                    if (
+                        candidate_episode_set != incoming_episodes
+                        and len(candidate_episode_set) > 1
+                    ) or incoming_rank > self._rank(
+                        candidate.resource_attributes,
+                        candidate.file_size or 0,
+                        quality_profile,
+                    ):
+                        replaceable_file_ids.add(candidate.id)
+            # Every episode needs an equal-or-better replacement. Do not compare
+            # individual file sizes against the total size of a combined file.
+            episode_quality: dict[int, tuple[int, tuple[int, ...]]] = {}
+            incoming_paths = {result.destination_path for result in transfer_results}
+            for result in transfer_results:
+                quality = self._rank(result.file_item.attrs or ResourceAttributes(), 0, quality_profile)[:2]
+                for episode in result.episode_numbers or ([result.episode_number] if result.episode_number else []):
+                    episode_quality[episode] = max(episode_quality.get(episode, quality), quality)
+            for item in primary_library_files:
+                path = build_library_file_path(item.path, item.file_name)
+                if item.id in replaceable_file_ids or str(path) in incoming_paths or not library_service.file_is_intact(item):
+                    continue
+                quality = self._rank(item.resource_attributes, 0, quality_profile)[:2]
+                for episode in episodes:
+                    if episode.season == season and episode.file_id == item.id:
+                        episode_quality[episode.episode] = max(episode_quality.get(episode.episode, quality), quality)
+            candidates = [
+                item for item in candidates
+                if all(
+                    number in episode_quality and episode_quality[number] >= self._rank(item.resource_attributes, 0, quality_profile)[:2]
+                    for number in set(item.resource_attributes.episodes or []) | {
+                        episode.episode for episode in episodes if episode.file_id == item.id
+                    }
+                )
+                and all(
+                    episode.season == season
+                    for episode in episodes if episode.file_id == item.id
+                )
+            ]
+            combined_file_ids = {
+                item.id for item in candidates if item.id and len(
+                    set(item.resource_attributes.episodes or []) | {
+                        episode.episode for episode in episodes if episode.file_id == item.id
+                    }
+                ) > 1
+                and frozenset(
+                    set(item.resource_attributes.episodes or []) | {
+                        episode.episode for episode in episodes if episode.file_id == item.id
+                    }
+                ) not in {self._episode_set(result) for result in transfer_results}
+            }
         replace_files: dict[str, LibraryFile] = {}
         for transfer_result in transfer_results:
             scoped_candidates = self._video_file_candidates_for_result(task, candidates, transfer_result, season, episode_file_ids)
+            # These groups already passed the per-episode quality check above.
+            # Their total size must not be compared to one replacement episode.
+            for candidate in scoped_candidates:
+                if candidate.id in combined_file_ids:
+                    replace_files[candidate.id] = candidate
+            scoped_candidates = [item for item in scoped_candidates if item.id not in combined_file_ids]
             if not scoped_candidates:
                 continue
             incoming_attrs = transfer_result.file_item.attrs or ResourceAttributes()
             incoming_size = transfer_result.file_item.size or 0
-            best_existing = max(scoped_candidates, key=lambda item: self._rank(item.resource_attributes, item.file_size or 0, quality_profile))
-            if self._rank(incoming_attrs, incoming_size, quality_profile) > self._rank(
-                best_existing.resource_attributes, best_existing.file_size or 0, quality_profile
-            ):
-                for candidate in scoped_candidates:
-                    if candidate.id:
-                        replace_files[candidate.id] = candidate
+            incoming_rank = self._rank(incoming_attrs, incoming_size, quality_profile)
+            for candidate in scoped_candidates:
+                if candidate.id and incoming_rank > self._rank(
+                    candidate.resource_attributes,
+                    candidate.file_size or 0,
+                    quality_profile,
+                ):
+                    replace_files[candidate.id] = candidate
 
         return LibraryReplacementPlan(
             replace_files=list(replace_files.values()),
@@ -155,6 +498,16 @@ class LibraryReplacementPolicy:
         preference_score = compute_preference_score_from_attrs(attrs, quality_profile)[0]
         ranking = quality_profile.ranking if quality_profile else None
         return preference_score, quality_sort_key(attrs, ranking), int(size or 0)
+
+    def _batch_rank(
+        self,
+        result: TransferFileResult,
+        quality_profile: QualityProfile | None,
+    ) -> tuple[tuple[int, tuple[int, ...], int], int]:
+        return (
+            self._rank(result.file_item.attrs or ResourceAttributes(), result.file_item.size or 0, quality_profile),
+            -result.file_index,
+        )
 
     def _quality_profile(self) -> QualityProfile | None:
         return settings_service.get_default_quality_profile()
