@@ -305,8 +305,11 @@ event's imported files, not all files belonging to the task.
   for different episode sets may never share a destination path, within one batch
   or across earlier incremental registrations; a conflicting naming template
   rejects the whole batch before materialization instead of silently dropping an
-  episode. Equal-quality combined files with the same episode set retain normal
-  size ordering, while split-file coverage comparisons ignore aggregate size.
+  episode. A candidate with the same episode set as an intact registered file
+  must win the full quality-and-size rank before it can be materialized. Dominated
+  candidates are recorded as handled coverage without creating duplicate episode
+  mappings at different paths. Split-file coverage comparisons alone ignore
+  aggregate size.
 - Directory integrity treats a completed task whose owned files were removed by
   quality replacement as satisfied only when its imported-file ledger is
   complete and visible replacement files anywhere in the library still cover

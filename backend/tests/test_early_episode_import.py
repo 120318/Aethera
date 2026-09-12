@@ -892,6 +892,7 @@ async def test_combined_file_uses_higher_quality_existing_episode_not_replaced_b
     assert better_path.exists()
     assert await library_service.get_files_by_task(old_task_id) == []
     assert len(await library_service.get_files_by_task(better_task_id)) == 1
+    assert [item.file_index for item in await library_service.get_files_by_task(env.task.id)] == [5]
 
 
 @pytest.mark.asyncio

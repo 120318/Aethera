@@ -232,7 +232,7 @@ async def test_combined_video_replaces_only_lower_quality_single_episode_candida
 
 
 @pytest.mark.asyncio
-async def test_same_episode_group_keeps_larger_equal_quality_combined_file(monkeypatch):
+async def test_same_episode_group_drops_smaller_equal_quality_combined_file(monkeypatch):
     media_id = MediaID.parse("tmdb:tv:1")
     existing = _library_file(
         "combined",
@@ -250,13 +250,17 @@ async def test_same_episode_group_keeps_larger_equal_quality_combined_file(monke
     )
     monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
 
-    plan = await library_replacement_policy.build_plan(
+    incoming = _batch_result(0, [1, 2], "1080p").model_copy(
+        update={"destination_path": "/library/different-name.mkv"},
+    )
+
+    selected = await library_replacement_policy.select_library_winners(
         _task(media_id, season=1),
-        [_batch_result(0, [1, 2], "1080p")],
+        [incoming],
         season=1,
     )
 
-    assert plan.replace_files == []
+    assert selected == []
 
 
 @pytest.mark.asyncio

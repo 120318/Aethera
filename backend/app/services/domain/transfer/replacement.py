@@ -81,14 +81,14 @@ class LibraryReplacementPolicy:
     def _episode_set(result: TransferFileResult) -> frozenset[int]:
         return frozenset(result.episode_numbers or ([result.episode_number] if result.episode_number else []))
 
-    async def validate_destination_episode_conflicts(
+    async def select_library_winners(
         self,
         task: TaskData,
         transfer_results: list[TransferFileResult],
         season: int | None,
-    ) -> None:
+    ) -> list[TransferFileResult]:
         if task.media_id.media_type != MediaType.tv or season is None:
-            return
+            return transfer_results
         library_files = await library_service.get_files_by_media(task.media_id, season)
         library_episodes = await library_service.get_episodes_by_media(task.media_id)
         episodes_by_file_id: dict[str, set[int]] = {}
@@ -96,17 +96,27 @@ class LibraryReplacementPolicy:
             if episode.season == season:
                 episodes_by_file_id.setdefault(episode.file_id, set()).add(int(episode.episode))
         files_by_path: dict[str, list[LibraryFile]] = {}
+        files_by_episode_set: dict[frozenset[int], list[LibraryFile]] = {}
         for item in library_files:
             if not file_name_looks_like_media_file(item.file_name):
                 continue
             path = normalize_path_separators(str(build_library_file_path(item.path, item.file_name)))
             files_by_path.setdefault(path, []).append(item)
+            episode_set = frozenset(item.resource_attributes.episodes or []) | frozenset(
+                episodes_by_file_id.get(item.id or "", set())
+            )
+            if episode_set:
+                files_by_episode_set.setdefault(episode_set, []).append(item)
 
+        quality_profile = self._quality_profile()
+        selected: list[TransferFileResult] = []
         for result in transfer_results:
             if not file_name_looks_like_media_file(result.file_item.filename):
+                selected.append(result)
                 continue
             incoming_episodes = self._episode_set(result)
             if not incoming_episodes:
+                selected.append(result)
                 continue
             path = normalize_path_separators(result.destination_path)
             for item in files_by_path.get(path, []):
@@ -118,6 +128,33 @@ class LibraryReplacementPolicy:
                         "backendErrors.transferEpisodePathConflict",
                         params={"path": path},
                     )
+            incoming_rank = self._rank(
+                result.file_item.attrs or ResourceAttributes(),
+                result.file_item.size or 0,
+                quality_profile,
+            )
+            is_dominated = False
+            for item in files_by_episode_set.get(incoming_episodes, []):
+                if item.task_id == task.id and item.file_index == result.file_index:
+                    continue
+                try:
+                    if not library_service.file_is_intact(item):
+                        continue
+                except OSError as exc:
+                    raise TransferException(
+                        "backendErrors.transferFailed",
+                        params={"reason": str(exc)},
+                    ) from exc
+                if incoming_rank <= self._rank(
+                    item.resource_attributes,
+                    item.file_size or 0,
+                    quality_profile,
+                ):
+                    is_dominated = True
+                    break
+            if not is_dominated:
+                selected.append(result)
+        return selected
 
     async def build_plan(
         self,

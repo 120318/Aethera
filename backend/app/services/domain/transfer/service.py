@@ -182,7 +182,7 @@ class TransferService:
             transfer_plan = library_replacement_policy.select_batch_winners(
                 execution.build_transfer_plan(task, context),
             )
-            await library_replacement_policy.validate_destination_episode_conflicts(
+            transfer_plan = await library_replacement_policy.select_library_winners(
                 task,
                 transfer_plan,
                 context.season_number,
@@ -226,7 +226,7 @@ class TransferService:
             execution_context = await execution.build_transfer_execution_context(task)
             full_transfer_plan = execution.build_transfer_plan(task, execution_context)
             transfer_plan = library_replacement_policy.select_batch_winners(full_transfer_plan)
-            await library_replacement_policy.validate_destination_episode_conflicts(
+            transfer_plan = await library_replacement_policy.select_library_winners(
                 task,
                 transfer_plan,
                 execution_context.season_number,
