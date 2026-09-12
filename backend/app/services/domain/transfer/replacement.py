@@ -13,6 +13,7 @@ from app.services.domain.resource.filtering import compute_preference_score_from
 from app.services.domain.resource.quality import quality_sort_key
 from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file, normalize_path_separators
 
+from .episode_coverage import episode_group_dominates
 from .execution import with_context_resource_attrs
 
 
@@ -47,17 +48,16 @@ class LibraryReplacementPolicy:
         episode_winners = list(winner_by_episodes.items())
         covered_indices: set[int] = set()
         for episodes, result in episode_winners:
-            quality = self._rank(result.file_item.attrs or ResourceAttributes(), 0, quality_profile)[:2]
+            quality = self._quality_rank(result.file_item.attrs, quality_profile)
             if all(
                 any(
                     other.file_index != result.file_index
                     and episode in other_episodes
-                    and (
-                        self._rank(other.file_item.attrs or ResourceAttributes(), 0, quality_profile)[:2] > quality
-                        or (
-                            self._rank(other.file_item.attrs or ResourceAttributes(), 0, quality_profile)[:2] == quality
-                            and other_episodes < episodes
-                        )
+                    and episode_group_dominates(
+                        self._quality_rank(other.file_item.attrs, quality_profile),
+                        other_episodes,
+                        quality,
+                        episodes,
                     )
                     for other_episodes, other in episode_winners
                 )
@@ -89,6 +89,12 @@ class LibraryReplacementPolicy:
     ) -> list[TransferFileResult]:
         if task.media_id.media_type != MediaType.tv or season is None:
             return transfer_results
+        incoming_episode_union = frozenset(
+            episode
+            for result in transfer_results
+            if file_name_looks_like_media_file(result.file_item.filename)
+            for episode in self._episode_set(result)
+        )
         library_files = await library_service.get_files_by_media(task.media_id, season)
         library_episodes = await library_service.get_episodes_by_media(task.media_id)
         episodes_by_file_id: dict[str, set[int]] = {}
@@ -97,6 +103,8 @@ class LibraryReplacementPolicy:
                 episodes_by_file_id.setdefault(episode.file_id, set()).add(int(episode.episode))
         files_by_path: dict[str, list[LibraryFile]] = {}
         files_by_episode_set: dict[frozenset[int], list[LibraryFile]] = {}
+        episode_sets_by_file_id: dict[str, frozenset[int]] = {}
+        intact_library_files: list[LibraryFile] = []
         for item in library_files:
             if not file_name_looks_like_media_file(item.file_name):
                 continue
@@ -105,8 +113,15 @@ class LibraryReplacementPolicy:
             episode_set = frozenset(item.resource_attributes.episodes or []) | frozenset(
                 episodes_by_file_id.get(item.id or "", set())
             )
-            if episode_set:
+            if (
+                episode_set
+                and episode_set & incoming_episode_union
+                and self._library_file_is_intact(item)
+            ):
                 files_by_episode_set.setdefault(episode_set, []).append(item)
+                intact_library_files.append(item)
+                if item.id:
+                    episode_sets_by_file_id[item.id] = episode_set
 
         quality_profile = self._quality_profile()
         selected: list[TransferFileResult] = []
@@ -133,28 +148,52 @@ class LibraryReplacementPolicy:
                 result.file_item.size or 0,
                 quality_profile,
             )
-            is_dominated = False
-            for item in files_by_episode_set.get(incoming_episodes, []):
-                if item.task_id == task.id and item.file_index == result.file_index:
-                    continue
-                try:
-                    if not library_service.file_is_intact(item):
-                        continue
-                except OSError as exc:
-                    raise TransferException(
-                        "backendErrors.transferFailed",
-                        params={"reason": str(exc)},
-                    ) from exc
-                if incoming_rank <= self._rank(
+            is_dominated = any(
+                not (item.task_id == task.id and item.file_index == result.file_index)
+                and incoming_rank <= self._rank(
                     item.resource_attributes,
                     item.file_size or 0,
                     quality_profile,
-                ):
-                    is_dominated = True
-                    break
+                )
+                for item in files_by_episode_set.get(incoming_episodes, [])
+            )
+            if not is_dominated:
+                incoming_quality = incoming_rank[:2]
+                is_dominated = all(
+                    any(
+                        episode in episode_set
+                        and episode_set != incoming_episodes
+                        and episode_group_dominates(
+                            self._quality_rank(item.resource_attributes, quality_profile),
+                            episode_set,
+                            incoming_quality,
+                            incoming_episodes,
+                        )
+                        for item in intact_library_files
+                        if (episode_set := episode_sets_by_file_id.get(item.id or ""))
+                    )
+                    for episode in incoming_episodes
+                )
             if not is_dominated:
                 selected.append(result)
         return selected
+
+    def _quality_rank(
+        self,
+        attrs: ResourceAttributes | None,
+        quality_profile: QualityProfile,
+    ) -> tuple[int, tuple[int, ...]]:
+        return self._rank(attrs or ResourceAttributes(), 0, quality_profile)[:2]
+
+    @staticmethod
+    def _library_file_is_intact(item: LibraryFile) -> bool:
+        try:
+            return library_service.file_is_intact(item)
+        except OSError as exc:
+            raise TransferException(
+                "backendErrors.transferFailed",
+                params={"reason": str(exc)},
+            ) from exc
 
     async def build_plan(
         self,

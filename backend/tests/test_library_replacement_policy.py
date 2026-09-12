@@ -264,6 +264,97 @@ async def test_same_episode_group_drops_smaller_equal_quality_combined_file(monk
 
 
 @pytest.mark.asyncio
+async def test_library_combined_file_dominates_lower_quality_single_episode(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    existing = _library_file(
+        "combined",
+        media_id=media_id,
+        file_name="Test.S01E01E02.2160p.mkv",
+        size=3000,
+        attrs=ResourceAttributes(resolution="2160p", seasons=[1], episodes=[1, 2]),
+    )
+    stub = _LibraryServiceStub(
+        [existing],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="combined", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="combined", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+    incoming = _batch_result(0, [1], "1080p").model_copy(
+        update={"destination_path": "/library/different-name.mkv"},
+    )
+
+    selected = await library_replacement_policy.select_library_winners(
+        _task(media_id, season=1),
+        [incoming],
+        season=1,
+    )
+
+    assert selected == []
+
+
+@pytest.mark.asyncio
+async def test_combined_library_file_drops_only_lower_quality_split_member(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    existing = _library_file(
+        "combined",
+        media_id=media_id,
+        file_name="Test.S01E01E02.720p.mkv",
+        attrs=ResourceAttributes(resolution="720p", seasons=[1], episodes=[1, 2]),
+    )
+    stub = _LibraryServiceStub(
+        [existing],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="combined", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="combined", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+
+    selected = await library_replacement_policy.select_library_winners(
+        _task(media_id, season=1),
+        [_batch_result(0, [1], "480p"), _batch_result(1, [2], "720p")],
+        season=1,
+    )
+
+    assert [result.file_index for result in selected] == [1]
+
+
+@pytest.mark.asyncio
+async def test_split_library_files_dominate_lower_quality_combined_candidate(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    episode_one = _library_file(
+        "episode-1",
+        media_id=media_id,
+        file_name="Test.S01E01.2160p.mkv",
+        attrs=ResourceAttributes(resolution="2160p", seasons=[1], episodes=[1]),
+    )
+    episode_two = _library_file(
+        "episode-2",
+        media_id=media_id,
+        file_name="Test.S01E02.2160p.mkv",
+        attrs=ResourceAttributes(resolution="2160p", seasons=[1], episodes=[2]),
+    )
+    stub = _LibraryServiceStub(
+        [episode_one, episode_two],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="episode-1", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="episode-2", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+
+    selected = await library_replacement_policy.select_library_winners(
+        _task(media_id, season=1),
+        [_batch_result(0, [1, 2], "1080p")],
+        season=1,
+    )
+
+    assert selected == []
+
+
+@pytest.mark.asyncio
 async def test_subtitle_does_not_replace_existing_episode_video(monkeypatch):
     media_id = MediaID.parse("tmdb:tv:1")
     old_video = _library_file(

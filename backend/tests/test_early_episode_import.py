@@ -830,7 +830,7 @@ async def test_combined_old_file_requires_equal_or_better_replacements_for_every
     preserve_old = first_resolution == "480p"
     assert old_path.exists() == preserve_old
     assert len(await library_service.get_files_by_task(old_task_id)) == int(preserve_old)
-    assert len(await library_service.get_files_by_task(env.task.id)) == 2
+    assert len(await library_service.get_files_by_task(env.task.id)) == (1 if preserve_old else 2)
 
 
 @pytest.mark.asyncio

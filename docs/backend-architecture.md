@@ -308,8 +308,12 @@ event's imported files, not all files belonging to the task.
   episode. A candidate with the same episode set as an intact registered file
   must win the full quality-and-size rank before it can be materialized. Dominated
   candidates are recorded as handled coverage without creating duplicate episode
-  mappings at different paths. Split-file coverage comparisons alone ignore
-  aggregate size.
+  mappings at different paths. Different episode groupings use the same per-episode
+  dominance rule as batch selection: higher quality wins regardless of grouping,
+  while equal quality wins only from a narrower episode set. Consequently, a higher
+  quality combined file suppresses a lower quality single episode, but an equal
+  quality combined file does not block progressive split-file replacement. Split
+  files can satisfy a combined candidate without comparing aggregate size.
 - Directory integrity treats a completed task whose owned files were removed by
   quality replacement as satisfied only when its imported-file ledger is
   complete and visible replacement files anywhere in the library still cover
