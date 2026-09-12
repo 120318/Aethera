@@ -6,8 +6,15 @@ from app.schemas.domain.command import CommandCreateRequest, CommandInitiator, C
 from app.schemas.domain.download import BatchJobResult, TaskData, TaskErrorStage, TaskStatus
 from app.services.application.commands.service import CommandConflictException, command_service
 from app.services.domain.download import download_service
+from app.services.domain.library.service import library_service
 from app.services.domain.transfer.execution import missing_transfer_source_paths
-from app.services.domain.transfer.ready_files import ACTIVE_IMPORT_STATUSES, find_ready_file_indices
+from app.services.domain.transfer.ready_files import (
+    ACTIVE_IMPORT_STATUSES,
+    find_ready_file_indices,
+    remaining_selected_file_indices,
+    satisfied_file_indices,
+    supports_early_import,
+)
 from app.services.platform.domain_lock_service import domain_lock_service
 
 logger = logging.getLogger("app.services.scheduled_transfer_command")
@@ -78,7 +85,12 @@ class ScheduledTransferCommandService:
         for task in finished_tasks:
             processed += 1
             try:
-                missing_sources = await missing_transfer_source_paths(task)
+                pending_indices = None
+                if supports_early_import(task):
+                    existing_files = await library_service.get_files_by_task(task.id)
+                    satisfied = await satisfied_file_indices(task, existing_files)
+                    pending_indices = remaining_selected_file_indices(task, satisfied)
+                missing_sources = await missing_transfer_source_paths(task, pending_indices)
                 if missing_sources:
                     if not _source_visibility_grace_elapsed(task):
                         logger.info(

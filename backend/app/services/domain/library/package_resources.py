@@ -32,8 +32,12 @@ def matches_package_root(library_file: LibraryFile, package_root: str) -> bool:
     return full_path == normalized_root or full_path.startswith(f"{normalized_root}/")
 
 
-def is_displayable_library_file(file: LibraryFile) -> bool:
+def is_primary_library_resource(file: LibraryFile) -> bool:
     return resolve_package_root(file) is not None or file_name_looks_like_media_file(file.file_name)
+
+
+def is_displayable_library_file(file: LibraryFile) -> bool:
+    return is_primary_library_resource(file)
 
 
 def format_package_file_name(attrs: ResourceAttributes) -> str:

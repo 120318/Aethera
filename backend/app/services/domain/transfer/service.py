@@ -29,6 +29,8 @@ from .ready_files import (
     ReadyFileDisposition,
     inspect_ready_files,
     ready_file_indices,
+    remaining_selected_file_indices,
+    selected_file_indices,
     satisfied_file_indices,
     supports_early_import,
 )
@@ -109,10 +111,8 @@ class TransferService:
         existing_files: list[LibraryFile],
         satisfied: set[int],
     ) -> TransferResult:
-        selected = {
-            index for index, _ in execution.iter_selected_files(task.metadata.files, execution.resolve_selected_indices(task))
-        }
-        remaining = selected - satisfied
+        selected = selected_file_indices(task)
+        remaining = remaining_selected_file_indices(task, satisfied)
         if remaining:
             inspection = await inspect_ready_files(
                 task,

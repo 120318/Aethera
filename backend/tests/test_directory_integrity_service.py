@@ -20,7 +20,10 @@ from app.schemas.runtime.directory_integrity import (
 )
 from app.services.application.workflows.directory_integrity import service as integrity_module
 from app.services.application.workflows.directory_integrity.service import DirectoryIntegrityService
-from app.services.domain.directory_integrity.task_replacement import is_task_fully_replaced
+from app.services.domain.directory_integrity.task_replacement import (
+    is_task_fully_replaced,
+    task_library_relationship_is_satisfied,
+)
 
 
 pytestmark = [pytest.mark.health]
@@ -688,6 +691,37 @@ def test_replaced_task_coverage_propagates_replacement_storage_failure(tmp_path,
 
     with pytest.raises(DirectoryIntegrityStorageUnavailableException, match="backendErrors.directoryIntegrityStorageUnavailable"):
         is_task_fully_replaced(task, [replacement])
+
+
+@pytest.mark.parametrize(
+    ("file_name", "path_suffix", "attrs", "expected"),
+    [
+        ("episode.mkv", "", ResourceAttributes(), True),
+        ("episode.nfo", "", ResourceAttributes(), False),
+        ("episode.srt", "", ResourceAttributes(), False),
+        ("index.bdmv", "Movie/BDMV", ResourceAttributes(package_layout="BDMV"), True),
+    ],
+)
+def test_task_relationship_short_circuit_requires_primary_library_resource(
+    tmp_path,
+    file_name,
+    path_suffix,
+    attrs,
+    expected,
+):
+    task = _task(tmp_path)
+    task.context.imported_file_indices = [0, 1]
+    owned = _library_file("owned", tmp_path / path_suffix, file_name)
+    owned.resource_attributes = attrs
+
+    satisfied = task_library_relationship_is_satisfied(
+        task,
+        "dir-1",
+        {task.id: [owned]},
+        [owned],
+    )
+
+    assert satisfied is expected
 
 
 @pytest.mark.asyncio

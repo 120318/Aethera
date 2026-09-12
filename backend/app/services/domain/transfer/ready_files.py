@@ -105,6 +105,19 @@ async def satisfied_file_indices(task: TaskData, existing_files: list[LibraryFil
     return satisfied
 
 
+def selected_file_indices(task: TaskData) -> set[int]:
+    if not task.metadata:
+        return set()
+    return {
+        index
+        for index, _ in iter_selected_files(task.metadata.files, resolve_selected_indices(task))
+    }
+
+
+def remaining_selected_file_indices(task: TaskData, satisfied: set[int]) -> set[int]:
+    return selected_file_indices(task) - satisfied
+
+
 def _torrent_relative_path(task: TaskData, filename: str) -> Path:
     relative = Path(filename)
     root_name = Path(task.metadata.name).name

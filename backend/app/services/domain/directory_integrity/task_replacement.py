@@ -5,6 +5,7 @@ from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.media_types import MediaType
 from app.schemas.exception.exceptions import DirectoryIntegrityStorageUnavailableException
 from app.services.domain.download.coverage import resolve_task_episode_coverage_detail
+from app.services.domain.library.package_resources import is_primary_library_resource
 from app.services.domain.library.service import library_service
 from app.utils.library_paths import file_name_looks_like_media_file
 
@@ -26,7 +27,10 @@ def task_library_relationship_is_satisfied(
     return bool(
         task.context.directory_id != directory_id
         or task.status not in DOWNLOAD_AUDIT_STATUSES
-        or task.id in files_by_task_id
+        or any(
+            is_primary_library_resource(item)
+            for item in files_by_task_id.get(task.id, [])
+        )
         or is_task_fully_replaced(task, directory_files)
     )
 
