@@ -89,6 +89,24 @@ async def test_qbittorrent_batch_status_marks_transient_file_stages_unreadable(m
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["metaDL", "forcedMetaDL", "allocating", "moving"])
+async def test_qbittorrent_detail_status_marks_transient_file_stages_unreadable(monkeypatch, state):
+    client = QBittorrentClient(QBittorrentConfig(id="qb-1", type="qbittorrent"))
+    monkeypatch.setattr(client, "authenticate", AsyncMock())
+    monkeypatch.setattr(client, "_call_with_reauth", AsyncMock(return_value=[{
+        "hash": "abc",
+        "name": "Show",
+        "state": state,
+        "save_path": "/downloads/tv",
+    }]))
+
+    lookup = await client.lookup_torrent_info("abc")
+
+    assert lookup.info is not None
+    assert lookup.info.files_readable is False
+
+
+@pytest.mark.asyncio
 async def test_qbittorrent_add_torrent_file_does_not_sync_priorities_when_add_fails(monkeypatch):
     class FakeClient:
         pass

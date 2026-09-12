@@ -267,7 +267,9 @@ event's imported files, not all files belonging to the task.
   readiness, terminal source fallback, and missing-source diagnosis.
 - Readiness has one explicit disposition: wait, reject, or confirmed source
   fallback. Download-client lookup failures normalize to wait and never escape as
-  protocol exceptions or authorize importing preallocated files.
+  protocol exceptions or authorize importing preallocated files. Each downloader
+  adapter uses the same file-readability mapping for batch and detail status
+  projections, including metadata, allocation, and move stages.
 - File attributes are normalized with the task parse context before any episode
   decision, including integrity audits. Same-batch and historical deduplication
   both use per-episode coverage and quality; exact episode-group equality is not
