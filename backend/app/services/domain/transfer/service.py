@@ -182,6 +182,11 @@ class TransferService:
             transfer_plan = library_replacement_policy.select_batch_winners(
                 execution.build_transfer_plan(task, context),
             )
+            await library_replacement_policy.validate_destination_episode_conflicts(
+                task,
+                transfer_plan,
+                context.season_number,
+            )
             execution_report = await execution.execute_transfer_plan(task, context, transfer_plan)
             results = execution_report.materialized_files
             replacement_plan = await library_replacement_policy.build_plan(
@@ -221,6 +226,11 @@ class TransferService:
             execution_context = await execution.build_transfer_execution_context(task)
             full_transfer_plan = execution.build_transfer_plan(task, execution_context)
             transfer_plan = library_replacement_policy.select_batch_winners(full_transfer_plan)
+            await library_replacement_policy.validate_destination_episode_conflicts(
+                task,
+                transfer_plan,
+                execution_context.season_number,
+            )
             discarded_file_indices = {
                 result.file_index for result in full_transfer_plan
             } - {

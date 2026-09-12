@@ -302,8 +302,11 @@ event's imported files, not all files belonging to the task.
 - Batch selection records discarded lower-quality indices separately from
   idempotently skipped winners. A repair-mode commit preserves the skipped files
   while explicitly removing existing records for discarded indices. Candidates
-  for different episode sets may never share a destination path; a conflicting
-  naming template rejects the whole batch instead of silently dropping an episode.
+  for different episode sets may never share a destination path, within one batch
+  or across earlier incremental registrations; a conflicting naming template
+  rejects the whole batch before materialization instead of silently dropping an
+  episode. Equal-quality combined files with the same episode set retain normal
+  size ordering, while split-file coverage comparisons ignore aggregate size.
 - Directory integrity treats a completed task whose owned files were removed by
   quality replacement as satisfied only when its imported-file ledger is
   complete and visible replacement files anywhere in the library still cover

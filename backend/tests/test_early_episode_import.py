@@ -132,6 +132,22 @@ async def test_incremental_import_preserves_previous_batches_and_finishes_withou
 
 
 @pytest.mark.asyncio
+async def test_incremental_import_rejects_cross_batch_episode_path_conflict(setup_import):
+    env = setup_import
+    env.context.template_config.file_template = "{title}"
+    first = await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[2])
+    first_path = Path(first.transferred_files[0].destination_path)
+    env.live[1].progress = 1.0
+
+    with pytest.raises(TransferException, match="backendErrors.transferEpisodePathConflict"):
+        await transfer_service.perform_transfer_by_task_id(env.task.id, file_indices=[5])
+
+    assert first_path.read_bytes() == b"test"
+    assert env.task.context.imported_file_indices == [2]
+    assert [item.file_index for item in await library_service.get_files_by_task(env.task.id)] == [2]
+
+
+@pytest.mark.asyncio
 async def test_empty_final_batch_does_not_require_transfer_context(setup_import, monkeypatch):
     env = setup_import
     for item in env.live:

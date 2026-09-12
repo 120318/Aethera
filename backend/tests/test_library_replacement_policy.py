@@ -232,6 +232,34 @@ async def test_combined_video_replaces_only_lower_quality_single_episode_candida
 
 
 @pytest.mark.asyncio
+async def test_same_episode_group_keeps_larger_equal_quality_combined_file(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    existing = _library_file(
+        "combined",
+        media_id=media_id,
+        file_name="Test.S01E01E02.1080p.mkv",
+        size=3000,
+        attrs=ResourceAttributes(resolution="1080p", seasons=[1], episodes=[1, 2]),
+    )
+    stub = _LibraryServiceStub(
+        [existing],
+        [
+            LibraryEpisode(media_id=media_id, season=1, episode=1, file_id="combined", created_at=0.0),
+            LibraryEpisode(media_id=media_id, season=1, episode=2, file_id="combined", created_at=0.0),
+        ],
+    )
+    monkeypatch.setattr("app.services.domain.transfer.replacement.library_service", stub)
+
+    plan = await library_replacement_policy.build_plan(
+        _task(media_id, season=1),
+        [_batch_result(0, [1, 2], "1080p")],
+        season=1,
+    )
+
+    assert plan.replace_files == []
+
+
+@pytest.mark.asyncio
 async def test_subtitle_does_not_replace_existing_episode_video(monkeypatch):
     media_id = MediaID.parse("tmdb:tv:1")
     old_video = _library_file(
