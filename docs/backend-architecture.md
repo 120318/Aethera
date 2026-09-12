@@ -313,7 +313,9 @@ event's imported files, not all files belonging to the task.
 - Directory integrity treats a completed task whose owned files were removed by
   quality replacement as satisfied only when its imported-file ledger is
   complete and visible replacement files anywhere in the library still cover
-  the task's media episodes.
+  the task's media episodes. Storage failures while checking cross-directory
+  replacements abort the audit as a domain failure; they never become negative
+  coverage evidence or executable repair items.
 - Partial import failures belong to the transfer command. They do not promote a
   downloading task to finished, and retries recompute the unimported file set.
 - Pre-command failures update task error fields without manufacturing a state

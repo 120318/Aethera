@@ -11,6 +11,7 @@ from app.schemas.domain.media import MediaExecutionSnapshot
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
+from app.schemas.exception.exceptions import DirectoryIntegrityStorageUnavailableException
 from app.schemas.media_id import MediaID
 from app.schemas.runtime.directory_integrity import (
     DirectoryIntegrityIssueType,
@@ -658,6 +659,35 @@ def test_replaced_task_coverage_uses_selected_file_execution_attributes(tmp_path
     )
 
     assert is_task_fully_replaced(task, [replacement])
+
+
+def test_replaced_task_coverage_propagates_replacement_storage_failure(tmp_path, monkeypatch):
+    replacement_path = tmp_path / "replacement.mkv"
+    replacement_path.write_text("replacement")
+    task = _task(tmp_path)
+    task.context.imported_file_indices = [0, 1]
+    replacement = LibraryFile(
+        id="replacement-file",
+        task_id="replacement-task",
+        directory_id="dir-2",
+        media_id=task.media_id,
+        path=str(tmp_path),
+        file_name=replacement_path.name,
+        file_size=replacement_path.stat().st_size,
+        file_index=0,
+        created_at=1.0,
+    )
+
+    def raise_storage_failure(_file):
+        raise OSError("replacement NAS offline")
+
+    monkeypatch.setattr(
+        "app.services.domain.directory_integrity.task_replacement.library_service.file_is_intact",
+        raise_storage_failure,
+    )
+
+    with pytest.raises(DirectoryIntegrityStorageUnavailableException, match="backendErrors.directoryIntegrityStorageUnavailable"):
+        is_task_fully_replaced(task, [replacement])
 
 
 @pytest.mark.asyncio

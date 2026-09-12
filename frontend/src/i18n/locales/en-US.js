@@ -261,6 +261,7 @@ export default {
     taskStorageChangeBlocked: 'Storage change blocked: {reason}',
     libraryFileDirectoryChangeBlocked: 'Local resource directory change blocked: {reason}',
     directoryNotFound: 'Directory not found',
+    directoryIntegrityStorageUnavailable: 'Directory integrity scan encountered unavailable storage: {reason}',
     fileBusy: 'This file is currently being processed. Try again later',
     resourceFileNotFound: 'Resource file not found',
     resultIdInvalidOrExpired: 'result_id is invalid or expired',

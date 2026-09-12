@@ -261,6 +261,7 @@ export default {
     taskStorageChangeBlocked: '更换存储被阻止：{reason}',
     libraryFileDirectoryChangeBlocked: '更换本地资源目录被阻止：{reason}',
     directoryNotFound: '目录不存在',
+    directoryIntegrityStorageUnavailable: '目录完整性扫描遇到不可用存储：{reason}',
     fileBusy: '当前文件正在处理中，请稍后再试',
     resourceFileNotFound: '资源文件不存在',
     resultIdInvalidOrExpired: 'result_id 无效或已过期',
