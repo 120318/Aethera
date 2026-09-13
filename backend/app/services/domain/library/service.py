@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 from app.db.repositories.library_episode_repository import LibraryEpisodeRepository
@@ -395,7 +396,11 @@ class LibraryService:
             if str(build_library_file_path(item.path, item.file_name)) not in preserved_paths
         ]
         if removed_files:
-            await asyncio.to_thread(self._cleanup.delete_files, removed_files)
+            await asyncio.to_thread(
+                self._cleanup.delete_files,
+                removed_files,
+                {Path(path) for path in preserved_paths},
+            )
 
     # Deletion
     async def delete_task_library_records(self, task_id: str) -> int:

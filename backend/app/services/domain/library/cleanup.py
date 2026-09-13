@@ -18,26 +18,36 @@ LIBRARY_SIDECAR_EXTENSIONS = {
 
 
 class LibraryCleanup:
-    def delete_files(self, files: list[LibraryFile]) -> None:
+    def delete_files(
+        self,
+        files: list[LibraryFile],
+        preserved_paths: set[Path] | None = None,
+    ) -> None:
+        preserved_paths = preserved_paths or set()
         candidate_dirs: list[Path] = []
         for item in files:
             try:
                 full_path = build_library_file_path(item.path, item.file_name)
                 candidate_dirs.append(full_path.parent)
-                if full_path and full_path.exists() and full_path.is_file():
+                if full_path not in preserved_paths and full_path.exists() and full_path.is_file():
                     os.remove(str(full_path))
                     logger.debug("Physically removed library file: %s", full_path)
-                self.delete_sidecar_files(full_path)
+                self.delete_sidecar_files(full_path, preserved_paths)
             except OSError as exc:
                 logger.warning("Failed to remove file %s: %s", item.path, exc)
         self.cleanup_directories_without_media_files(candidate_dirs)
 
-    def delete_sidecar_files(self, media_file: Path) -> None:
+    def delete_sidecar_files(
+        self,
+        media_file: Path,
+        preserved_paths: set[Path] | None = None,
+    ) -> None:
         if not media_file or not media_file.name:
             return
+        preserved_paths = preserved_paths or set()
         for suffix in LIBRARY_SIDECAR_EXTENSIONS:
             sidecar = media_file.with_suffix(suffix)
-            if sidecar == media_file:
+            if sidecar == media_file or sidecar in preserved_paths:
                 continue
             try:
                 if sidecar.exists() and sidecar.is_file():

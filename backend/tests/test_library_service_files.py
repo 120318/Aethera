@@ -111,3 +111,34 @@ def test_delete_files_removes_same_stem_nfo_sidecar(tmp_path):
     assert not danmu_xml_file.exists()
     assert not danmu_ass_file.exists()
     assert other_episode_file.exists()
+
+
+def test_delete_files_preserves_sidecars_materialized_by_current_transfer(tmp_path):
+    old_episode_file = tmp_path / "Show.S01E01.mkv"
+    incoming_nfo_file = tmp_path / "Show.S01E01.nfo"
+    stale_danmu_file = tmp_path / "Show.S01E01.danmu.ass"
+    old_episode_file.write_text("old video")
+    incoming_nfo_file.write_text("new nfo")
+    stale_danmu_file.write_text("old danmu")
+    cleanup = LibraryCleanup()
+
+    cleanup.delete_files(
+        [
+            LibraryFile(
+                id="old-episode-file",
+                task_id="task-old",
+                directory_id="dir-1",
+                media_id=MediaID.parse("tmdb:tv:100088"),
+                path=str(tmp_path),
+                file_name=old_episode_file.name,
+                file_size=10,
+                created_at=1.0,
+                resource_attributes=ResourceAttributes(seasons=[1], episodes=[1]),
+            )
+        ],
+        preserved_paths={incoming_nfo_file},
+    )
+
+    assert not old_episode_file.exists()
+    assert incoming_nfo_file.read_text() == "new nfo"
+    assert not stale_danmu_file.exists()
