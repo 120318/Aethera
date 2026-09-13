@@ -142,3 +142,34 @@ def test_delete_files_preserves_sidecars_materialized_by_current_transfer(tmp_pa
     assert not old_episode_file.exists()
     assert incoming_nfo_file.read_text() == "new nfo"
     assert not stale_danmu_file.exists()
+
+
+def test_replacement_cleanup_keeps_existing_sidecars_until_they_are_replaced(tmp_path):
+    old_episode_file = tmp_path / "Show.S01E01.mkv"
+    existing_subtitle = tmp_path / "Show.S01E01.srt"
+    existing_nfo = tmp_path / "Show.S01E01.nfo"
+    old_episode_file.write_text("old video")
+    existing_subtitle.write_text("existing subtitle")
+    existing_nfo.write_text("existing nfo")
+    cleanup = LibraryCleanup()
+
+    cleanup.delete_files(
+        [
+            LibraryFile(
+                id="old-episode-file",
+                task_id="task-old",
+                directory_id="dir-1",
+                media_id=MediaID.parse("tmdb:tv:100088"),
+                path=str(tmp_path),
+                file_name=old_episode_file.name,
+                file_size=10,
+                created_at=1.0,
+                resource_attributes=ResourceAttributes(seasons=[1], episodes=[1]),
+            )
+        ],
+        delete_sidecars=False,
+    )
+
+    assert not old_episode_file.exists()
+    assert existing_subtitle.read_text() == "existing subtitle"
+    assert existing_nfo.read_text() == "existing nfo"

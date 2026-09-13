@@ -269,6 +269,47 @@ async def test_combined_old_file_waits_until_every_episode_has_equal_or_better_c
 
 
 @pytest.mark.asyncio
+async def test_sidecar_does_not_prove_video_coverage_for_combined_replacement(monkeypatch):
+    task = _task()
+    old = _library_file("old-e1-e2", [1, 2], "1080p", "old-task")
+    imported_e1 = _library_file("new-e1", [1], "2160p", task.id)
+    subtitle_e2 = TransferFileResult(
+        source_path="/downloads/e2.srt",
+        destination_path="/library/e2.srt",
+        file_item=TorrentFileItem(
+            index=8,
+            filename="Show/Show.S01E02.srt",
+            size=100,
+            attrs=ResourceAttributes(seasons=[1], episodes=[2], resolution="2160p"),
+        ),
+        file_index=8,
+        episode_number=2,
+        episode_numbers=[2],
+    )
+    episodes = [
+        LibraryEpisode(media_id=task.media_id, season=1, episode=1, file_id="old-e1-e2", created_at=0),
+        LibraryEpisode(media_id=task.media_id, season=1, episode=2, file_id="old-e1-e2", created_at=0),
+        LibraryEpisode(media_id=task.media_id, season=1, episode=1, file_id="new-e1", created_at=0),
+    ]
+    monkeypatch.setattr(
+        "app.services.domain.transfer.replacement.library_service.get_episodes_by_media",
+        AsyncMock(return_value=episodes),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.replacement.library_service.get_files_by_task",
+        AsyncMock(return_value=[imported_e1]),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.replacement.library_service.file_exists",
+        lambda item: True,
+    )
+
+    assert await library_replacement_policy.keep_complete_episode_replacements(
+        task, [subtitle_e2], [old], 1
+    ) == []
+
+
+@pytest.mark.asyncio
 async def test_protected_same_path_conflict_is_detected_before_materialization(monkeypatch):
     task = _task()
     old = _library_file("old-e1-e2", [1, 2], "1080p", "old-task")

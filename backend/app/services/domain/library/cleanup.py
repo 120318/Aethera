@@ -22,6 +22,8 @@ class LibraryCleanup:
         self,
         files: list[LibraryFile],
         preserved_paths: set[Path] | None = None,
+        *,
+        delete_sidecars: bool = True,
     ) -> None:
         preserved_paths = preserved_paths or set()
         candidate_dirs: list[Path] = []
@@ -32,7 +34,8 @@ class LibraryCleanup:
                 if full_path not in preserved_paths and full_path.exists() and full_path.is_file():
                     os.remove(str(full_path))
                     logger.debug("Physically removed library file: %s", full_path)
-                self.delete_sidecar_files(full_path, preserved_paths)
+                if delete_sidecars:
+                    self.delete_sidecar_files(full_path, preserved_paths)
             except OSError as exc:
                 logger.warning("Failed to remove file %s: %s", item.path, exc)
         self.cleanup_directories_without_media_files(candidate_dirs)

@@ -400,6 +400,7 @@ class LibraryService:
                 self._cleanup.delete_files,
                 removed_files,
                 {Path(path) for path in preserved_paths},
+                delete_sidecars=False,
             )
 
     # Deletion

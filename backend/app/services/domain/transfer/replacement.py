@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.schemas.domain.download import TaskData, TransferFileResult
 from app.schemas.domain.import_upgrade import LibraryReplacementPlan
 from app.schemas.domain.library import LibraryFile, LibraryPackageSummary
@@ -10,7 +12,7 @@ from app.services.config.settings_service import settings_service
 from app.services.domain.library.service import library_service
 from app.services.domain.resource.filtering import compute_preference_score_from_attrs, is_original_disc_attrs
 from app.services.domain.resource.quality import quality_sort_key
-from app.utils.library_paths import normalize_path_separators
+from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file, normalize_path_separators
 
 
 class LibraryReplacementPolicy:
@@ -60,13 +62,15 @@ class LibraryReplacementPolicy:
         current_files = await library_service.get_files_by_task(task.id)
         incoming_by_episode: dict[int, list[tuple[ResourceAttributes, int]]] = {}
         for item in current_files:
-            if not library_service.file_exists(item):
+            if not library_service.is_primary_file(item) or not library_service.file_exists(item):
                 continue
             for episode in self._episodes_for_library_file(item, season, episodes_by_file):
                 incoming_by_episode.setdefault(episode, []).append(
                     (item.resource_attributes or ResourceAttributes(), item.file_size or 0)
                 )
         for result in transfer_results:
+            if not file_name_looks_like_media_file(result.destination_path):
+                continue
             result_episodes = result.episode_numbers or (
                 [result.episode_number] if result.episode_number else []
             )
@@ -78,6 +82,9 @@ class LibraryReplacementPolicy:
         quality_profile = self._quality_profile()
         safe: list[LibraryFile] = []
         for candidate in replacement_files:
+            if not library_service.is_primary_file(candidate):
+                safe.append(candidate)
+                continue
             covered = self._episodes_for_library_file(candidate, season, episodes_by_file)
             if len(covered) <= 1:
                 safe.append(candidate)
@@ -117,11 +124,19 @@ class LibraryReplacementPolicy:
         season: int | None,
     ) -> LibraryReplacementPlan:
         quality_profile = self._quality_profile()
-        candidates = [
+        all_candidates = [
             item
             for item in await library_service.get_files_by_media(task.media_id, season)
             if item.task_id != task.id and not self._is_original_disc_file(item)
         ]
+        candidates = [
+            item for item in all_candidates if library_service.is_primary_file(item)
+        ]
+        sidecars_by_path = {
+            build_library_file_path(item.path, item.file_name): item
+            for item in all_candidates
+            if item.id and not library_service.is_primary_file(item)
+        }
         episode_file_ids: dict[int, set[str]] = {}
         if task.media_id.media_type == MediaType.tv and season is not None:
             episodes = await library_service.get_episodes_by_media(task.media_id)
@@ -130,6 +145,11 @@ class LibraryReplacementPolicy:
                     episode_file_ids.setdefault(int(episode.episode), set()).add(episode.file_id)
         replace_files: dict[str, LibraryFile] = {}
         for transfer_result in transfer_results:
+            if not file_name_looks_like_media_file(transfer_result.destination_path):
+                existing = sidecars_by_path.get(Path(transfer_result.destination_path))
+                if existing and existing.id:
+                    replace_files[existing.id] = existing
+                continue
             scoped_candidates = self._video_file_candidates_for_result(task, candidates, transfer_result, season, episode_file_ids)
             if not scoped_candidates:
                 continue
