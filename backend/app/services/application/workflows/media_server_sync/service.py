@@ -7,6 +7,7 @@ from app.schemas.config import JellyfinConfig, MediaServerSyncConfig
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.action import ActionSource
 from app.schemas.domain.addon_events import MediaDeletedEventMeta, MediaImportCompletedEventMeta
+from app.schemas.domain.download import TaskData, TransferFileResult
 from app.schemas.domain.event import Event, EventType
 from app.schemas.domain.library import LibraryFile, LibraryFileArtifactStatus
 from app.schemas.domain.media import MediaFullInfo
@@ -17,6 +18,7 @@ from app.schemas.domain.media_server_sync import (
     MediaServerSyncRunResult,
     MediaServerSyncTargetFile,
 )
+from app.schemas.exception.base import AppException
 from app.schemas.media_id import MediaID
 from app.services.application.events.consumer import event_consumer_service
 from app.services.application.workflows.scoped_seasons import (
@@ -35,7 +37,7 @@ from app.services.application.workflows.media_server_sync.target import media_se
 from app.services.audit.workflow_event_emitters import emit_media_server_sync_events
 from app.services.domain.library.service import library_service
 from app.services.domain.media import media_service
-from app.utils.library_paths import build_library_file_path
+from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file
 
 logger = logging.getLogger("app.media_server_sync.service")
 
@@ -216,6 +218,40 @@ class MediaServerSyncService:
             else None
         )
         await media_server_sync_pipeline.refresh_media_server(media, file_path, transfer_results, media_server=media_server)
+
+    async def refresh_after_sidecar_only_completion(
+        self,
+        task: TaskData,
+        transferred_files: list[TransferFileResult],
+    ) -> None:
+        if not task.context.imported_file_indices or not transferred_files:
+            return
+        if any(file_name_looks_like_media_file(item.destination_path) for item in transferred_files):
+            return
+
+        library_files = await library_service.get_files_by_task(task.id)
+        primary_file = next(
+            (
+                item
+                for item in library_files
+                if library_service.is_primary_file(item) and library_service.file_exists(item)
+            ),
+            None,
+        )
+        if primary_file is None:
+            logger.warning("Sidecar-only transfer has no imported video anchor: task=%s", task.id)
+            return
+
+        season_number = library_files_season_number([primary_file])
+        media = await media_service.info(task.media_id, season_number=season_number)
+        if media is None:
+            logger.warning("Sidecar-only transfer has no media profile for refresh: task=%s", task.id)
+            return
+        anchor_path = build_library_file_path(primary_file.path, primary_file.file_name)
+        try:
+            await self.refresh_media_server(media, str(anchor_path))
+        except (AppException, OSError, ValueError) as exc:
+            logger.warning("Failed to refresh media server after sidecar-only transfer: task=%s error=%s", task.id, exc)
 
     async def rerun_for_task(self, task_id: str, season_number: int | None = None) -> int:
         library_files = await library_service.get_files_by_task(task_id)

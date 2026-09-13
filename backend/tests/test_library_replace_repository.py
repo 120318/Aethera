@@ -105,6 +105,59 @@ async def test_replace_task_entries_reconciles_same_path_conflicts_from_other_ta
 
 
 @pytest.mark.asyncio
+async def test_episode_batch_rejects_path_conflict_not_approved_by_replacement_policy():
+    media_id = MediaID.parse("tmdb:tv:1")
+    with SessionLocal() as session:
+        session.add(
+            LibraryFileORM(
+                id="protected-file",
+                task_id="old-task",
+                directory_id="dir-1",
+                media_id=str(media_id),
+                path="TV/Show/Season 01",
+                file_name="same.mkv",
+                file_size=1000,
+                file_index=0,
+                created_at=1000.0,
+                resource_attributes_json=ResourceAttributes(
+                    seasons=[1],
+                    episodes=[1, 2],
+                    resolution="1080p",
+                ).model_dump(mode="json"),
+            )
+        )
+        session.commit()
+
+    with pytest.raises(ValueError, match="Unsafe library path conflict"):
+        await LibraryReplaceRepository().replace_task_batch_entries(
+            "new-task",
+            "dir-1",
+            media_id,
+            [
+                TransferFileResult(
+                    source_path="/downloads/e1.mkv",
+                    destination_path="/data/library/TV/Show/Season 01/same.mkv",
+                    file_index=1,
+                    file_item=TorrentFileItem(
+                        index=1,
+                        filename="e1.mkv",
+                        size=2000,
+                        attrs=ResourceAttributes(seasons=[1], episodes=[1], resolution="2160p"),
+                    ),
+                    episode_number=1,
+                    episode_numbers=[1],
+                )
+            ],
+            imported_file_indices=[1],
+            season=1,
+            replacement_files=[],
+        )
+
+    with SessionLocal() as session:
+        assert session.get(LibraryFileORM, "protected-file") is not None
+
+
+@pytest.mark.asyncio
 async def test_replace_task_entries_removes_explicit_replacement_files():
     media_id = MediaID.parse("tmdb:movie:1")
     replacement_data = {

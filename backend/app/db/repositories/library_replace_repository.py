@@ -43,6 +43,12 @@ class LibraryReplaceRepository:
         ]
         conflicting_files = await self._find_conflicting_files(task_id, transfer_results)
         replacement_files = replacement_files or []
+        replacement_file_ids = {item.id for item in replacement_files if item.id}
+        unsafe_conflicts = [
+            item for item in conflicting_files if not item.id or item.id not in replacement_file_ids
+        ]
+        if unsafe_conflicts:
+            raise ValueError("Unsafe library path conflict was not approved by replacement policy")
         removed_files = self._merge_library_files(existing_files, conflicting_files, replacement_files)
         removed_file_ids = [item.id for item in removed_files if item.id]
         existing_paths = {

@@ -101,23 +101,26 @@ class TransferService:
             context = await execution.build_transfer_execution_context(task)
             context.selected_indices = file_indices
             transfer_plan = execution.build_transfer_plan(task, context)
-            transfer_results = await execution.execute_transfer_plan(task, context, transfer_plan)
-            replacement_plan = await library_replacement_policy.build_plan(
+            replacement_plan = await library_replacement_policy.build_safe_plan(
                 task,
-                transfer_results,
+                transfer_plan,
                 context.season_number,
             )
-            replacement_files = await library_replacement_policy.keep_complete_episode_replacements(
+            if await library_replacement_policy.has_unsafe_path_conflict(
                 task,
-                transfer_results,
+                transfer_plan,
                 replacement_plan.replace_files,
-                context.season_number,
-            )
+            ):
+                if completes_task:
+                    raise TransferException("backendErrors.transferProtectedEpisodePathConflict")
+                logger.info("Episode batch deferred due to protected target path: task=%s", task.id)
+                return TransferResult(transferred_files=[])
+            transfer_results = await execution.execute_transfer_plan(task, context, transfer_plan)
             await commit_episode_batch(
                 task,
                 transfer_results,
                 context,
-                replacement_files,
+                replacement_plan.replace_files,
                 handled_file_indices=file_indices,
             )
             if completes_task and not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
@@ -136,8 +139,19 @@ class TransferService:
             await self._lock_task_status(task)
             existing_library_files = await library_service.get_files_by_task(task.id)
             execution_context = await execution.build_transfer_execution_context(task)
-            transfer_results = await execution.execute_transfer(task, execution_context)
-            replacement_plan = await library_replacement_policy.build_plan(task, transfer_results, execution_context.season_number)
+            transfer_plan = execution.build_transfer_plan(task, execution_context)
+            replacement_plan = await library_replacement_policy.build_safe_plan(
+                task,
+                transfer_plan,
+                execution_context.season_number,
+            )
+            if await library_replacement_policy.has_unsafe_path_conflict(
+                task,
+                transfer_plan,
+                replacement_plan.replace_files,
+            ):
+                raise TransferException("backendErrors.transferProtectedEpisodePathConflict")
+            transfer_results = await execution.execute_transfer_plan(task, execution_context, transfer_plan)
             await commit_transfer_results(
                 task,
                 transfer_results,

@@ -246,7 +246,12 @@ class TaskTransferCommandHandler(TaskCommandSupport):
 
     async def execute(self, command: CommandRecord) -> CommandResult:
         payload = command.payload
+        task = await self._resolve_task(payload.resolved_task_id)
         result = await transfer_service.perform_transfer_by_task_id(payload.resolved_task_id)
+        await media_server_sync_service.refresh_after_sidecar_only_completion(
+            task,
+            result.transferred_files or [],
+        )
         return CommandResult(transferred_files_count=len(result.transferred_files or []))
 
     def resolve_running_message(self) -> str:

@@ -14,6 +14,34 @@ from app.utils.library_paths import normalize_path_separators
 
 
 class LibraryReplacementPolicy:
+    async def build_safe_plan(
+        self,
+        task: TaskData,
+        transfer_results: list[TransferFileResult],
+        season: int | None,
+    ) -> LibraryReplacementPlan:
+        plan = await self.build_plan(task, transfer_results, season)
+        plan.replace_files = await self.keep_complete_episode_replacements(
+            task,
+            transfer_results,
+            plan.replace_files,
+            season,
+        )
+        return plan
+
+    async def has_unsafe_path_conflict(
+        self,
+        task: TaskData,
+        transfer_results: list[TransferFileResult],
+        replacement_files: list[LibraryFile],
+    ) -> bool:
+        allowed_ids = {item.id for item in replacement_files if item.id}
+        for result in transfer_results:
+            existing = await library_service.find_file_by_path(result.destination_path)
+            if existing and existing.task_id != task.id and existing.id not in allowed_ids:
+                return True
+        return False
+
     async def keep_complete_episode_replacements(
         self,
         task: TaskData,

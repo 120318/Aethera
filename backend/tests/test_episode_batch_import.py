@@ -12,11 +12,14 @@ os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
 from app.schemas.config import Template
 from app.schemas.domain.download import DownloadFileInfo, TaskContext, TaskData, TaskStatus, TransferFileResult
+from app.schemas.domain.import_upgrade import LibraryReplacementPlan
 from app.schemas.domain.library import LibraryEpisode, LibraryFile
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
+from app.schemas.exception.exceptions import TransferException
 from app.schemas.media_id import MediaID
+from app.services.application.workflows.media_server_sync.service import media_server_sync_service
 from app.services.application.workflows.scheduled_transfer.service import scheduled_transfer_command_service
 from app.services.domain.transfer import transfer_service
 from app.services.domain.transfer.episode_batch import find_ready_episode_file_indices, has_episode_target_collisions
@@ -263,3 +266,120 @@ async def test_combined_old_file_waits_until_every_episode_has_equal_or_better_c
     assert await library_replacement_policy.keep_complete_episode_replacements(
         task, [batch_e2], [old], 1
     ) == [old]
+
+
+@pytest.mark.asyncio
+async def test_protected_same_path_conflict_is_detected_before_materialization(monkeypatch):
+    task = _task()
+    old = _library_file("old-e1-e2", [1, 2], "1080p", "old-task")
+    incoming = TransferFileResult(
+        source_path="/downloads/e1.mkv",
+        destination_path="/library/same.mkv",
+        file_item=task.metadata.files[0],
+        file_index=2,
+        episode_number=1,
+        episode_numbers=[1],
+    )
+    old.path = "/library"
+    old.file_name = "same.mkv"
+    monkeypatch.setattr(
+        "app.services.domain.transfer.replacement.library_service.find_file_by_path",
+        AsyncMock(return_value=old),
+    )
+
+    assert await library_replacement_policy.has_unsafe_path_conflict(task, [incoming], []) is True
+    assert await library_replacement_policy.has_unsafe_path_conflict(task, [incoming], [old]) is False
+
+
+@pytest.mark.asyncio
+async def test_unsafe_episode_batch_path_returns_before_materialization(monkeypatch):
+    task = _task()
+    context = _context()
+    transfer_plan = [
+        TransferFileResult(
+            source_path="/downloads/e1.mkv",
+            destination_path="/library/same.mkv",
+            file_item=task.metadata.files[0],
+            file_index=2,
+            episode_number=1,
+            episode_numbers=[1],
+        )
+    ]
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.execution.build_transfer_execution_context",
+        AsyncMock(return_value=context),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.execution.build_transfer_plan",
+        lambda *_args: transfer_plan,
+    )
+    monkeypatch.setattr(
+        library_replacement_policy,
+        "build_safe_plan",
+        AsyncMock(return_value=LibraryReplacementPlan(replace_files=[])),
+    )
+    monkeypatch.setattr(
+        library_replacement_policy,
+        "has_unsafe_path_conflict",
+        AsyncMock(return_value=True),
+    )
+    execute = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.execution.execute_transfer_plan",
+        execute,
+    )
+
+    result = await transfer_service._perform_episode_batch(task, {2}, completes_task=False)
+
+    assert result.transferred_files == []
+    execute.assert_not_awaited()
+
+    with pytest.raises(TransferException) as exc_info:
+        await transfer_service._perform_episode_batch(task, {2}, completes_task=True)
+
+    assert exc_info.value.message_key == "backendErrors.transferProtectedEpisodePathConflict"
+    execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sidecar_only_final_batch_refreshes_server_without_import_event(monkeypatch):
+    task = _task(TaskStatus.FINISHED)
+    task.context.imported_file_indices = [2, 5]
+    video = _library_file("new-e1", [1], "2160p", task.id)
+    sidecar = TransferFileResult(
+        source_path="/downloads/Show.S01E02.zh.srt",
+        destination_path="/library/Show - S01E02.zh.srt",
+        file_item=task.metadata.files[2],
+        file_index=8,
+        episode_number=2,
+        episode_numbers=[2],
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_server_sync.service.library_service.get_files_by_task",
+        AsyncMock(return_value=[video]),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_server_sync.service.library_service.is_primary_file",
+        lambda _item: True,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_server_sync.service.library_service.file_exists",
+        lambda _item: True,
+    )
+    media = SimpleNamespace(media_id=task.media_id)
+    monkeypatch.setattr(
+        "app.services.application.workflows.media_server_sync.service.media_service.info",
+        AsyncMock(return_value=media),
+    )
+    refresh = AsyncMock()
+    monkeypatch.setattr(
+        media_server_sync_service,
+        "refresh_media_server",
+        refresh,
+    )
+
+    await media_server_sync_service.refresh_after_sidecar_only_completion(task, [sidecar])
+
+    refresh.assert_awaited_once()
+    assert refresh.await_args.args[0] is media
+    assert refresh.await_args.args[1].endswith("new-e1.mkv")
