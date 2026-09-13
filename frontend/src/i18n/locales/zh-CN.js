@@ -309,6 +309,7 @@ export default {
     transferSourceFileNotFound: '下载源文件不存在：{filename}',
     transferSourceFilesMissing: '存在缺失的下载源文件，无法安全重新转移',
     transferDiscFileConflict: '当前已存在同名原盘文件，无法覆盖',
+    transferProtectedEpisodePathConflict: '目标路径中的多集文件仍覆盖未替换的剧集，无法安全覆盖',
     transferFileNotBetter: '当前已存在同名文件，新资源不是更优版本',
     transferFileUpgradeUnknown: '当前已存在同名文件，无法确认新资源是否为升级版本',
     transferModeUnsupported: '不支持的转移模式：{mode}',

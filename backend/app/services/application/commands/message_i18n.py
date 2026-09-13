@@ -11,6 +11,7 @@ COMMAND_KEY_BY_TYPE = {
     CommandType.TASK_PAUSE: "taskPause",
     CommandType.TASK_RESUME: "taskResume",
     CommandType.TASK_TRANSFER: "taskTransfer",
+    CommandType.TASK_EPISODE_BATCH_IMPORT: "taskTransfer",
     CommandType.TASK_STORAGE_CHANGE: "taskStorageChange",
     CommandType.TASK_MEDIA_SERVER_SYNC: "taskMediaServerSync",
     CommandType.TASK_DANMU_GENERATE: "taskDanmuGenerate",

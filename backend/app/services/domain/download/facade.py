@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.clients.factory import ClientFactory
 from app.db.repositories.task_repository import TaskRepository
-from app.schemas.domain.download import BatchJobResult, DownloadTaskCreateInput, TaskData, TaskEpisodeCoverage, TaskErrorStage, TaskSource, TaskStatus
+from app.schemas.domain.download import BatchJobResult, DownloadFileInfo, DownloadTaskCreateInput, TaskData, TaskEpisodeCoverage, TaskErrorStage, TaskSource, TaskStatus
 from app.schemas.domain.event import EventActor
 from app.schemas.domain.resource_search import ResourceSearchResult
 from app.schemas.domain.torrent_status import TorrentStatus
@@ -174,6 +174,15 @@ class DownloadService:
 
     async def get_torrent_status_by_task_ids(self, task_ids: list[str]) -> Mapping[str, TorrentStatus]:
         return await self.task_service.get_torrent_status_by_task_ids(task_ids)
+
+    async def get_torrent_status_by_tasks(self, tasks: list[TaskData]) -> Mapping[str, TorrentStatus]:
+        return await self.task_service.get_torrent_status_by_tasks(tasks)
+
+    async def get_task_torrent_files(self, task: TaskData) -> list[DownloadFileInfo] | None:
+        client = self.task_service.resolve_task_client(task)
+        if client is None:
+            return None
+        return await client.get_torrent_files(task.torrent_hash)
 
     async def update_task_state(
         self,

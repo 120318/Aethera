@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +11,7 @@ from app.schemas.media_id import MediaID
 from app.schemas.domain.library import LibraryEpisode, LibraryFile
 from app.services.domain.library.service import LibraryService
 from app.services.domain.transfer.replacement import library_replacement_policy
+from app.utils.library_paths import file_name_looks_like_media_file
 
 
 pytestmark = [pytest.mark.drift, pytest.mark.health]
@@ -91,6 +93,20 @@ class _LibraryServiceStub:
     async def get_episodes_by_media(self, media_id: MediaID) -> list[LibraryEpisode]:
         return [item for item in self.episodes if item.media_id == media_id]
 
+    async def find_file_by_path(self, file_path: str) -> LibraryFile | None:
+        target = Path(file_path)
+        return next(
+            (
+                item
+                for item in self.files
+                if Path(item.path) / (item.file_name or "") == target
+            ),
+            None,
+        )
+
+    def is_primary_file(self, file: LibraryFile) -> bool:
+        return file_name_looks_like_media_file(file.file_name)
+
     def build_package_summaries(self, files: list[LibraryFile]):
         return self._package_service.build_package_summaries(files)
 
@@ -131,6 +147,74 @@ async def test_video_file_replaces_only_same_episode_video_files(monkeypatch):
     )
 
     assert [item.id for item in plan.replace_files] == ["old-video"]
+
+
+@pytest.mark.asyncio
+async def test_video_upgrade_does_not_replace_existing_episode_sidecars(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    old_video = _library_file(
+        "old-video",
+        media_id=media_id,
+        attrs=ResourceAttributes(resolution="1080p", seasons=[1], episodes=[1]),
+    )
+    old_subtitle = _library_file(
+        "old-subtitle",
+        media_id=media_id,
+        file_name="Test.S01E01.srt",
+        attrs=ResourceAttributes(resolution="1080p", seasons=[1], episodes=[1]),
+    )
+    episodes = [
+        LibraryEpisode(media_id=media_id, season=1, episode=1, file_id=item.id, created_at=0.0)
+        for item in (old_video, old_subtitle)
+    ]
+    monkeypatch.setattr(
+        "app.services.domain.transfer.replacement.library_service",
+        _LibraryServiceStub([old_video, old_subtitle], episodes),
+    )
+
+    plan = await library_replacement_policy.build_plan(
+        _task(media_id, season=1),
+        [_transfer_result(attrs=ResourceAttributes(resolution="2160p", seasons=[1], episodes=[1]))],
+        season=1,
+    )
+
+    assert [item.id for item in plan.replace_files] == ["old-video"]
+
+
+@pytest.mark.asyncio
+async def test_sidecar_replaces_only_an_existing_sidecar_at_the_same_path(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    old_video = _library_file(
+        "old-video",
+        media_id=media_id,
+        path="/library",
+        attrs=ResourceAttributes(resolution="1080p", seasons=[1], episodes=[1]),
+    )
+    old_subtitle = _library_file(
+        "old-subtitle",
+        media_id=media_id,
+        path="/library",
+        file_name="Test.S01E01.srt",
+        attrs=ResourceAttributes(resolution="1080p", seasons=[1], episodes=[1]),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.replacement.library_service",
+        _LibraryServiceStub([old_video, old_subtitle]),
+    )
+
+    plan = await library_replacement_policy.build_plan(
+        _task(media_id, season=1),
+        [
+            _transfer_result(
+                filename="Test.S01E01.srt",
+                size=100,
+                attrs=ResourceAttributes(resolution="2160p", seasons=[1], episodes=[1]),
+            )
+        ],
+        season=1,
+    )
+
+    assert [item.id for item in plan.replace_files] == ["old-subtitle"]
 
 
 @pytest.mark.asyncio

@@ -238,6 +238,26 @@ Rules:
 - Audit records live in `audit`.
 - Actual business execution lives in the relevant domain or workflow.
 
+Episode batch import follows one inspection-round boundary:
+
+```text
+scheduler inspection
+  -> one task.episode_batch_import command with captured file indices
+  -> task operation lock and captured-index recheck
+  -> ordinary transfer planning/materialization for that subset
+  -> one transaction: library delta + imported-index ledger + one completion event
+  -> existing NFO, danmu, and media-server event consumers
+```
+
+Only completed primary video files enter an early batch. Torrent sidecars remain
+for the normal final transfer. A finished task with an import ledger transfers
+only its still-selected remaining files before becoming `completed`; without a
+ledger it uses the original full-task transfer unchanged. Original-disc packages
+and tasks whose selected episode files collide on one target path never enter the
+early path. Replacement ranking remains the existing policy, with one additional
+safety invariant: a multi-episode library file is removed only after every episode
+it covers has equal-or-better replacement coverage.
+
 ### Core Business Main Chains
 
 - Primary meaning lives in `domain`.

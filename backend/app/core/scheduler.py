@@ -91,7 +91,7 @@ class TaskScheduler:
             recovered = await download_service.recover_stuck_transferring_tasks()
             if recovered > 0:
                 logger.info("Recovered %d stuck transferring task(s)", recovered)
-            result = await scheduled_transfer_command_service.enqueue_finished_tasks()
+            result = await scheduled_transfer_command_service.enqueue_import_tasks()
             if result.processed > 0:
                 logger.debug("Ingest worker completed: %s", result)
         except (AppException, RuntimeError, ValueError, OSError) as e:

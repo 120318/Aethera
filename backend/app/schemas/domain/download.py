@@ -76,6 +76,7 @@ class TaskContext(BaseModel):
     # Internal note.
     directory_id: str
     selected_files: list[int] = []
+    imported_file_indices: list[int] = Field(default_factory=list)
 
     # Internal note.
     search_result: ResourceSearchResult | None = None

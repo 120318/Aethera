@@ -64,6 +64,7 @@ class ActionName(str, Enum):
     task_pause = "task.pause"
     task_resume = "task.resume"
     task_transfer = "task.transfer"
+    task_episode_batch_import = "task.episode_batch_import"
     task_storage_change = "task.storage_change"
     task_media_server_sync = "task.media_server_sync"
     task_danmu_generate = "task.danmu_generate"

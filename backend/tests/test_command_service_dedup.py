@@ -24,6 +24,7 @@ from app.schemas.domain.command import (
     SubscriptionRunCommandRequestPayload,
     SubscriptionRunCommandRecordPayload,
     TaskCreateCommandRecordPayload,
+    TaskEpisodeBatchImportCommandRecordPayload,
     TaskTransferCommandRequestPayload,
     TaskDeleteCommandRecordPayload,
     TaskTransferCommandRecordPayload,
@@ -151,6 +152,32 @@ def test_pilot_episode_action_preserves_media_snapshot_for_notification_navigati
     assert action.media.title == "Sample"
     assert action.media.year == 2026
     assert action.media.season_number == 2
+
+
+def test_episode_batch_import_command_builds_audit_action():
+    service = CommandService()
+    media_id = MediaID.parse("tmdb:tv:1")
+    target = MediaTarget(media_id=media_id, season_number=1)
+    command = CommandRecord(
+        id="cmd-episode-batch",
+        type=CommandType.TASK_EPISODE_BATCH_IMPORT,
+        payload=TaskEpisodeBatchImportCommandRecordPayload(
+            resolved_task_id="task-1",
+            target=target,
+            file_indices=[2, 5],
+        ),
+        initiator=CommandInitiator.SCHEDULER,
+        media_id=media_id,
+        target=target,
+        target_type=CommandTargetType.TASK,
+        target_id="task-1",
+        target_label="Sample",
+    )
+
+    action = service._build_command_action(command, source=ActionSource.api, persist=False)
+
+    assert action.action_name == CommandType.TASK_EPISODE_BATCH_IMPORT.value
+    assert action.task_id == "task-1"
 
 
 def _task_operation_command(command_id: str, command_type: CommandType, *, season_number: int) -> CommandRecord:

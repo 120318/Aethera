@@ -23,6 +23,7 @@ export const ACTION_NAME_LABELS = {
   'task.pause': 'operationCenter.types.taskPause',
   'task.resume': 'operationCenter.types.taskResume',
   'task.transfer': 'operationCenter.types.taskTransfer',
+  'task.episode_batch_import': 'operationCenter.types.taskTransfer',
   'task.storage_change': 'operationCenter.types.taskStorageChange',
   'task.media_server_sync': 'operationCenter.types.taskMediaServerSync',
   'task.danmu_generate': 'operationCenter.types.taskDanmuGenerate',
