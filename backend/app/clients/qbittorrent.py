@@ -105,6 +105,10 @@ QB_STATE_MAPPING = {
     "unknown": TorrentState.UNKNOWN,
 }
 
+QB_UNREADABLE_FILE_STATES = frozenset({
+    "metadl", "forcedmetadl", "allocating", "moving",
+})
+
 
 def _map_qb_state_to_torrent_state(state: str) -> TorrentState:
     if not state:
@@ -116,6 +120,10 @@ def _map_qb_state_to_torrent_state(state: str) -> TorrentState:
     
 
     return TorrentState.UNKNOWN
+
+
+def _qb_files_readable(state: str) -> bool:
+    return state.lower() not in QB_UNREADABLE_FILE_STATES
 
 
 class QBittorrentClient(DownloadClient):
@@ -251,6 +259,7 @@ class QBittorrentClient(DownloadClient):
                     size=t.size,
                     progress=t.progress,
                     state=_map_qb_state_to_torrent_state(t.state),
+                    files_readable=_qb_files_readable(t.state),
                     download_speed=t.dlspeed,
                     upload_speed=t.upspeed,
                     ratio=t.ratio,
@@ -260,7 +269,7 @@ class QBittorrentClient(DownloadClient):
                     added_on=datetime.fromtimestamp(t.added_on) if t.added_on > 0 else None,
                     completion_on=datetime.fromtimestamp(t.completion_on) if t.completion_on > 0 else None,
                     downloader_id=f"qbittorrent_{self.config.id if self.config else 'unknown'}",
-                    save_path=t.save_path,
+                    save_path=self._map_remote_to_local_path(t.save_path),
                     category=t.category,
                     tags=t.tags.split(",") if t.tags else [],
                 )

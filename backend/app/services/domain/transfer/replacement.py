@@ -14,6 +14,61 @@ from app.utils.library_paths import normalize_path_separators
 
 
 class LibraryReplacementPolicy:
+    async def keep_complete_episode_replacements(
+        self,
+        task: TaskData,
+        transfer_results: list[TransferFileResult],
+        replacement_files: list[LibraryFile],
+        season: int | None,
+    ) -> list[LibraryFile]:
+        if task.media_id.media_type != MediaType.tv or season is None:
+            return replacement_files
+        episodes = await library_service.get_episodes_by_media(task.media_id)
+        episodes_by_file: dict[str, set[int]] = {}
+        for episode in episodes:
+            if episode.season == season:
+                episodes_by_file.setdefault(episode.file_id, set()).add(int(episode.episode))
+
+        current_files = await library_service.get_files_by_task(task.id)
+        incoming_by_episode: dict[int, list[tuple[ResourceAttributes, int]]] = {}
+        for item in current_files:
+            if not library_service.file_exists(item):
+                continue
+            for episode in self._episodes_for_library_file(item, season, episodes_by_file):
+                incoming_by_episode.setdefault(episode, []).append(
+                    (item.resource_attributes or ResourceAttributes(), item.file_size or 0)
+                )
+        for result in transfer_results:
+            result_episodes = result.episode_numbers or (
+                [result.episode_number] if result.episode_number else []
+            )
+            for episode in {int(value) for value in result_episodes if int(value) > 0}:
+                incoming_by_episode.setdefault(episode, []).append(
+                    (result.file_item.attrs or ResourceAttributes(), result.file_item.size or 0)
+                )
+
+        quality_profile = self._quality_profile()
+        safe: list[LibraryFile] = []
+        for candidate in replacement_files:
+            covered = self._episodes_for_library_file(candidate, season, episodes_by_file)
+            if len(covered) <= 1:
+                safe.append(candidate)
+                continue
+            candidate_rank = self._rank(
+                candidate.resource_attributes or ResourceAttributes(),
+                candidate.file_size or 0,
+                quality_profile,
+            )
+            if all(
+                any(
+                    self._rank(attrs, size, quality_profile) >= candidate_rank
+                    for attrs, size in incoming_by_episode.get(episode, [])
+                )
+                for episode in covered
+            ):
+                safe.append(candidate)
+        return safe
+
     async def build_plan(
         self,
         task: TaskData,
@@ -136,6 +191,19 @@ class LibraryReplacementPolicy:
         if attrs.seasons and season not in attrs.seasons:
             return False
         return episode in (attrs.episodes or [])
+
+    def _episodes_for_library_file(
+        self,
+        file: LibraryFile,
+        season: int,
+        episodes_by_file: dict[str, set[int]],
+    ) -> set[int]:
+        if file.id and file.id in episodes_by_file:
+            return episodes_by_file[file.id]
+        attrs = file.resource_attributes or ResourceAttributes()
+        if attrs.seasons and season not in attrs.seasons:
+            return set()
+        return {int(value) for value in (attrs.episodes or []) if int(value) > 0}
 
     def _is_original_disc_import(self, transfer_results: list[TransferFileResult]) -> bool:
         return any(self._is_original_disc_attrs(result.file_item.attrs or ResourceAttributes()) for result in transfer_results)

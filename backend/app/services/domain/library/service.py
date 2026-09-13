@@ -11,6 +11,8 @@ from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.addon_events import LibraryFileMissingEventMeta
 from app.schemas.domain.download import TaskData, TransferFileResult
 from app.schemas.domain.event import EventActor, EventEntityRef, EventLevel, EventSource, MediaEventCreate
+from app.schemas.domain.event import Event
+from app.schemas.persistence.event_dispatch import EventDispatchRecord
 from app.schemas.domain.library import (
     LibraryFileArtifact,
     LibraryFileArtifactStatus,
@@ -357,6 +359,43 @@ class LibraryService:
             season,
             replacement_files,
         )
+
+    async def replace_task_batch_entries(
+        self,
+        task_id: str,
+        directory_id: str,
+        media_id: MediaID,
+        transfer_results: list[TransferFileResult],
+        imported_file_indices: list[int],
+        season: int | None = None,
+        replacement_files: list[LibraryFile] | None = None,
+        completion_event: Event | None = None,
+        dispatch_records: list[EventDispatchRecord] | None = None,
+    ) -> list[LibraryFile]:
+        return await self._registration.replace_task_batch_entries(
+            task_id,
+            directory_id,
+            media_id,
+            transfer_results,
+            imported_file_indices,
+            season,
+            replacement_files,
+            completion_event,
+            dispatch_records,
+        )
+
+    async def cleanup_replaced_files(
+        self,
+        files: list[LibraryFile],
+        preserved_paths: set[str],
+    ) -> None:
+        removed_files = [
+            item
+            for item in files
+            if str(build_library_file_path(item.path, item.file_name)) not in preserved_paths
+        ]
+        if removed_files:
+            await asyncio.to_thread(self._cleanup.delete_files, removed_files)
 
     # Deletion
     async def delete_task_library_records(self, task_id: str) -> int:

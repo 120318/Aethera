@@ -122,10 +122,17 @@ class EventService:
         event: MediaEventCreate,
         meta: BaseModel | None = None,
     ) -> Event | None:
+        return self._persist_event(self.build_media_event(event, meta))
+
+    def build_media_event(
+        self,
+        event: MediaEventCreate,
+        meta: BaseModel | None = None,
+    ) -> Event:
         media = event.media
         if not media.title or media.year <= 0:
             raise ValueError("media_title and media_year must be valid when media_id is provided")
-        ev = Event(
+        return Event(
             type=event.type,
             message_key=event.message_key or event_message_key(event.type),
             message_params=_merge_message_params(event, meta),
@@ -142,7 +149,6 @@ class EventService:
             correlation_id=event.correlation_id,
             action_id=event.action_id or get_current_action_id(),
         )
-        return self._persist_event(ev)
 
     def _match_event(
         self,

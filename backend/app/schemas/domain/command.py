@@ -19,6 +19,7 @@ class CommandType(str, Enum):
     TASK_PAUSE = "task.pause"
     TASK_RESUME = "task.resume"
     TASK_TRANSFER = "task.transfer"
+    TASK_EPISODE_BATCH_IMPORT = "task.episode_batch_import"
     TASK_STORAGE_CHANGE = "task.storage_change"
     TASK_MEDIA_SERVER_SYNC = "task.media_server_sync"
     TASK_DANMU_GENERATE = "task.danmu_generate"
@@ -79,6 +80,11 @@ class PilotEpisodeCommandRequestPayload(PayloadBase):
 
 class TaskTransferCommandRequestPayload(PayloadBase):
     task_id: str
+
+
+class TaskEpisodeBatchImportCommandRequestPayload(PayloadBase):
+    task_id: str
+    file_indices: list[int] = Field(min_length=1)
 
 
 class TaskStorageChangeCommandRequestPayload(PayloadBase):
@@ -165,6 +171,7 @@ CommandRequestPayload = (
     | TaskCreateCommandRequestPayload
     | PilotEpisodeCommandRequestPayload
     | TaskTransferCommandRequestPayload
+    | TaskEpisodeBatchImportCommandRequestPayload
     | TaskStorageChangeCommandRequestPayload
     | TaskMediaServerSyncCommandRequestPayload
     | TaskDanmuGenerateCommandRequestPayload
@@ -203,6 +210,12 @@ class PilotEpisodeCommandRecordPayload(PayloadBase):
 class TaskTransferCommandRecordPayload(PayloadBase):
     resolved_task_id: str
     target: MediaTarget
+
+
+class TaskEpisodeBatchImportCommandRecordPayload(PayloadBase):
+    resolved_task_id: str
+    target: MediaTarget
+    file_indices: list[int] = Field(min_length=1)
 
 
 class TaskStorageChangeCommandRecordPayload(PayloadBase):
@@ -294,6 +307,7 @@ CommandRecordPayload = (
     | TaskCreateCommandRecordPayload
     | PilotEpisodeCommandRecordPayload
     | TaskTransferCommandRecordPayload
+    | TaskEpisodeBatchImportCommandRecordPayload
     | TaskStorageChangeCommandRecordPayload
     | TaskMediaServerSyncCommandRecordPayload
     | TaskDanmuGenerateCommandRecordPayload
@@ -317,6 +331,7 @@ REQUEST_PAYLOAD_BY_TYPE: dict[CommandType, type[PayloadBase]] = {
     CommandType.TASK_CREATE: TaskCreateCommandRequestPayload,
     CommandType.PILOT_EPISODE: PilotEpisodeCommandRequestPayload,
     CommandType.TASK_TRANSFER: TaskTransferCommandRequestPayload,
+    CommandType.TASK_EPISODE_BATCH_IMPORT: TaskEpisodeBatchImportCommandRequestPayload,
     CommandType.TASK_STORAGE_CHANGE: TaskStorageChangeCommandRequestPayload,
     CommandType.TASK_MEDIA_SERVER_SYNC: TaskMediaServerSyncCommandRequestPayload,
     CommandType.TASK_DANMU_GENERATE: TaskDanmuGenerateCommandRequestPayload,
@@ -339,6 +354,7 @@ RECORD_PAYLOAD_BY_TYPE: dict[CommandType, type[PayloadBase]] = {
     CommandType.TASK_CREATE: TaskCreateCommandRecordPayload,
     CommandType.PILOT_EPISODE: PilotEpisodeCommandRecordPayload,
     CommandType.TASK_TRANSFER: TaskTransferCommandRecordPayload,
+    CommandType.TASK_EPISODE_BATCH_IMPORT: TaskEpisodeBatchImportCommandRecordPayload,
     CommandType.TASK_STORAGE_CHANGE: TaskStorageChangeCommandRecordPayload,
     CommandType.TASK_MEDIA_SERVER_SYNC: TaskMediaServerSyncCommandRecordPayload,
     CommandType.TASK_DANMU_GENERATE: TaskDanmuGenerateCommandRecordPayload,
