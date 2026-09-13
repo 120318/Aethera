@@ -91,8 +91,12 @@ async def resolve_media_snapshot(task: TaskData, template_config: Template | Non
 
 
 async def build_transfer_execution_context(task: TaskData) -> TransferExecutionContext:
-    validate_transfer_task(task)
     await validate_download_path_consistency(task)
+    return await build_transfer_planning_context(task)
+
+
+async def build_transfer_planning_context(task: TaskData) -> TransferExecutionContext:
+    validate_transfer_task(task)
     library_target = load_library_target(task)
     media_info = await resolve_media_snapshot(task, library_target.template)
     title, year = resolve_naming_identity(task, media_info)
@@ -211,8 +215,9 @@ async def validate_transfer_reentry(task: TaskData, existing_library_files: list
 
 def iter_selected_files(files: list[TorrentFileItem], selected_indices):
     selected = set(selected_indices) if selected_indices else None
-    for index, file_item in enumerate(files):
-        if selected and index not in selected:
+    for file_item in files:
+        index = file_item.index
+        if selected is not None and index not in selected:
             continue
         yield index, file_item
 
@@ -223,11 +228,11 @@ def _is_original_disc_package(task: TaskData) -> bool:
 
 def _with_package_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFileItem:
     if not task.metadata or not task.metadata.attrs:
-        return _with_context_resource_attrs(task, file_item)
-    return _with_context_resource_attrs(task, file_item.model_copy(update={"attrs": task.metadata.attrs}))
+        return with_context_resource_attrs(task, file_item)
+    return with_context_resource_attrs(task, file_item.model_copy(update={"attrs": task.metadata.attrs}))
 
 
-def _with_context_resource_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFileItem:
+def with_context_resource_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFileItem:
     context_attrs = task.context.parsed_attributes if task.context and task.context.parsed_attributes else None
     if not context_attrs:
         return file_item
@@ -350,7 +355,7 @@ def build_transfer_plan(task: TaskData, execution_context: TransferExecutionCont
         return _build_disc_package_transfer_plan(task, execution_context)
     transfer_results: list[TransferFileResult] = []
     for index, original_file_item in iter_selected_files(task.metadata.files, execution_context.selected_indices):
-        file_item = _with_context_resource_attrs(task, original_file_item)
+        file_item = with_context_resource_attrs(task, original_file_item)
         source_path = generate_source_path(task, file_item, execution_context.source_base_path)
         destination_path = library_target_path_policy.build_destination_path(
             destination_base_path=execution_context.destination_base_path,
@@ -374,8 +379,11 @@ def build_transfer_plan(task: TaskData, execution_context: TransferExecutionCont
     return transfer_results
 
 
-async def execute_transfer(task: TaskData, execution_context: TransferExecutionContext) -> list[TransferFileResult]:
-    transfer_results = build_transfer_plan(task, execution_context)
+async def execute_transfer_plan(
+    task: TaskData,
+    execution_context: TransferExecutionContext,
+    transfer_results: list[TransferFileResult],
+) -> list[TransferFileResult]:
     await validate_transfer_upgrade_policy(task, transfer_results)
     materializer = transfer_materializer_registry.resolve(execution_context.transfer_mode)
     for transfer_result in transfer_results:
@@ -388,3 +396,7 @@ async def execute_transfer(task: TaskData, execution_context: TransferExecutionC
         except (TransferException, OSError):
             raise
     return transfer_results
+
+
+async def execute_transfer(task: TaskData, execution_context: TransferExecutionContext) -> list[TransferFileResult]:
+    return await execute_transfer_plan(task, execution_context, build_transfer_plan(task, execution_context))

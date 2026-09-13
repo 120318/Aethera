@@ -7,7 +7,7 @@ from sqlalchemy import text
 os.environ["DATA_PATH"] = f"/tmp/aethera-test-data-{uuid.uuid4()}"
 
 from app.db.repositories.library_replace_repository import LibraryReplaceRepository
-from app.db.sql.models import LibraryEpisodeORM, LibraryFileORM, LibraryMetaORM
+from app.db.sql.models import LibraryEpisodeORM, LibraryFileORM, LibraryMetaORM, TaskORM
 from app.db.sql.session import SessionLocal
 from app.schemas.media_id import MediaID
 from app.schemas.domain.download import TransferFileResult
@@ -217,3 +217,79 @@ async def test_replace_task_entries_registers_multi_episode_file():
         (10, 17, files[0].id),
         (10, 18, files[0].id),
     ]
+
+
+@pytest.mark.asyncio
+async def test_replace_task_batch_entries_preserves_prior_batch_and_records_ledger_atomically():
+    media_id = MediaID.parse("tmdb:tv:batch")
+    task_id = f"task-batch-{uuid.uuid4()}"
+    context = {
+        "download_url": "https://example.com/file.torrent",
+        "directory_id": "dir-1",
+        "selected_files": [2, 5],
+        "imported_file_indices": [2],
+        "media": {"media_id": str(media_id), "title": "Show", "year": 2024, "season_number": 1},
+    }
+    with SessionLocal() as session:
+        session.add(
+            TaskORM(
+                id=task_id,
+                media_id=str(media_id),
+                provider="tmdb",
+                provider_item_id="batch",
+                torrent_hash="hash-batch",
+                status="downloading",
+                progress=0.5,
+                error_params_json={},
+                context_json=context,
+                created_at="2024-01-01T00:00:00",
+                updated_at="2024-01-01T00:00:00",
+            )
+        )
+        session.add(
+            LibraryFileORM(
+                id="batch-e1",
+                task_id=task_id,
+                directory_id="dir-1",
+                media_id=str(media_id),
+                path="TV/Show/Season 01",
+                file_name="Show - S01E01.mkv",
+                file_size=100,
+                file_index=2,
+                created_at=1000.0,
+                resource_attributes_json=ResourceAttributes(seasons=[1], episodes=[1]).model_dump(mode="json"),
+            )
+        )
+        session.add(LibraryEpisodeORM(media_id=str(media_id), season=1, episode=1, file_id="batch-e1", created_at=1000.0))
+        session.commit()
+
+    await LibraryReplaceRepository().replace_task_batch_entries(
+        task_id,
+        "dir-1",
+        media_id,
+        [
+            TransferFileResult(
+                source_path="/downloads/Show.S01E02.mkv",
+                destination_path="/data/library/TV/Show/Season 01/Show - S01E02.mkv",
+                file_index=5,
+                file_item=TorrentFileItem(
+                    index=5,
+                    filename="Show.S01E02.mkv",
+                    size=100,
+                    attrs=ResourceAttributes(seasons=[1], episodes=[2]),
+                ),
+                episode_number=2,
+                episode_numbers=[2],
+            )
+        ],
+        imported_file_indices=[5],
+        season=1,
+    )
+
+    with SessionLocal() as session:
+        files = session.query(LibraryFileORM).filter(LibraryFileORM.task_id == task_id).order_by(LibraryFileORM.file_index).all()
+        task = session.get(TaskORM, task_id)
+        assert [item.file_index for item in files] == [2, 5]
+        assert task.context_json["imported_file_indices"] == [2, 5]
+        session.delete(task)
+        session.commit()

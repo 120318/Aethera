@@ -2,20 +2,90 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import delete, select, tuple_
 
-from app.db.sql.models import LibraryEpisodeORM, LibraryFileORM, LibraryMetaORM
+from app.db.repositories.event_dispatch_repository import EventDispatchRepository
+from app.db.repositories.event_repository import EventRepository
+from app.db.sql.models import LibraryEpisodeORM, LibraryFileArtifactORM, LibraryFileORM, LibraryMetaORM, TaskORM
 from app.db.sql.session import SessionLocal
 from app.schemas.media_id import MediaID
 from app.schemas.domain.download import TransferFileResult
 from app.schemas.domain.library import LibraryFile
+from app.schemas.domain.event import Event
+from app.schemas.persistence.event_dispatch import EventDispatchRecord
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.utils.library_paths import build_library_file_path, split_library_storage_path
 
 
 class LibraryReplaceRepository:
+    async def replace_task_batch_entries(
+        self,
+        task_id: str,
+        directory_id: str,
+        media_id: MediaID,
+        transfer_results: list[TransferFileResult],
+        imported_file_indices: list[int],
+        season: int | None = None,
+        replacement_files: list[LibraryFile] | None = None,
+        completion_event: Event | None = None,
+        dispatch_records: list[EventDispatchRecord] | None = None,
+    ) -> list[LibraryFile]:
+        incoming_indices = {result.file_index for result in transfer_results}
+        incoming_paths = {Path(result.destination_path) for result in transfer_results}
+        existing_files = [
+            item
+            for item in await self._find_existing_files(task_id)
+            if item.file_index in incoming_indices
+            or build_library_file_path(item.path, item.file_name) in incoming_paths
+        ]
+        conflicting_files = await self._find_conflicting_files(task_id, transfer_results)
+        replacement_files = replacement_files or []
+        removed_files = self._merge_library_files(existing_files, conflicting_files, replacement_files)
+        removed_file_ids = [item.id for item in removed_files if item.id]
+        existing_paths = {
+            build_library_file_path(item.path, item.file_name): item
+            for item in removed_files
+        }
+
+        with SessionLocal.begin() as session:
+            task_row = session.get(TaskORM, task_id)
+            if task_row is None:
+                raise ValueError(f"Task not found while recording imported files: {task_id}")
+            self._upsert_library_meta(session, media_id)
+            if removed_file_ids:
+                session.execute(
+                    delete(LibraryFileArtifactORM).where(
+                        LibraryFileArtifactORM.library_file_id.in_(removed_file_ids)
+                    )
+                )
+                session.execute(delete(LibraryEpisodeORM).where(LibraryEpisodeORM.file_id.in_(removed_file_ids)))
+                session.execute(delete(LibraryFileORM).where(LibraryFileORM.id.in_(removed_file_ids)))
+            for transfer_result in transfer_results:
+                self._insert_transfer_result(
+                    session,
+                    task_id,
+                    directory_id,
+                    media_id,
+                    transfer_result,
+                    season,
+                    existing_paths,
+                )
+            context = dict(task_row.context_json or {})
+            context["imported_file_indices"] = sorted(
+                {int(value) for value in context.get("imported_file_indices", [])}
+                | {int(value) for value in imported_file_indices}
+            )
+            task_row.context_json = context
+            task_row.updated_at = datetime.now().isoformat()
+            if completion_event is not None:
+                EventRepository.add_to_session(session, completion_event)
+                for dispatch_record in dispatch_records or []:
+                    EventDispatchRepository.add_to_session(session, dispatch_record)
+        return removed_files
+
     async def replace_task_entries(
         self,
         task_id: str,

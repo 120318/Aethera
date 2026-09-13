@@ -21,6 +21,7 @@ from app.schemas.domain.command import (
     TaskResumeCommandRecordPayload,
     TaskStorageChangeCommandRecordPayload,
     TaskTransferCommandRecordPayload,
+    TaskEpisodeBatchImportCommandRecordPayload,
 )
 from app.schemas.domain.media import MediaTarget
 from app.schemas.runtime.command_runtime import CommandActionContext
@@ -256,6 +257,46 @@ class TaskTransferCommandHandler(TaskCommandSupport):
 
     def resolve_failed_message(self) -> str:
         return "Resource transfer failed"
+
+    def resolve_action_context(self, command: CommandRecord) -> CommandActionContext:
+        return self._resolve_task_action_context(command)
+
+
+class TaskEpisodeBatchImportCommandHandler(TaskCommandSupport):
+    command_type = CommandType.TASK_EPISODE_BATCH_IMPORT
+
+    async def build(self, body: CommandCreateRequest) -> CommandRecord:
+        request = body.payload
+        task = await self._resolve_task(request.task_id)
+        file_indices = sorted({int(index) for index in request.file_indices})
+        payload = TaskEpisodeBatchImportCommandRecordPayload(
+            resolved_task_id=task.id,
+            target=_task_media_target(task),
+            file_indices=file_indices,
+        )
+        return self._build_task_command_record(
+            body=body,
+            task=task,
+            payload=payload,
+            uniq_key=f"command:{CommandType.TASK_EPISODE_BATCH_IMPORT.value}:{task.id}",
+        )
+
+    async def execute(self, command: CommandRecord) -> CommandResult:
+        payload = command.payload
+        result = await transfer_service.import_episode_batch(
+            payload.resolved_task_id,
+            payload.file_indices,
+        )
+        return CommandResult(transferred_files_count=len(result.transferred_files or []))
+
+    def resolve_running_message(self) -> str:
+        return "Importing completed episodes"
+
+    def resolve_success_message(self, result: CommandResult) -> str:
+        return f"Episode batch imported, processed {result.transferred_files_count} files"
+
+    def resolve_failed_message(self) -> str:
+        return "Episode batch import failed"
 
     def resolve_action_context(self, command: CommandRecord) -> CommandActionContext:
         return self._resolve_task_action_context(command)
@@ -518,6 +559,7 @@ def register_download_command_handlers(registry) -> None:
     registry.register(TaskPauseCommandHandler())
     registry.register(TaskResumeCommandHandler())
     registry.register(TaskTransferCommandHandler())
+    registry.register(TaskEpisodeBatchImportCommandHandler())
     registry.register(TaskStorageChangeCommandHandler())
     registry.register(TaskMediaServerSyncCommandHandler())
     registry.register(TaskDanmuGenerateCommandHandler())

@@ -298,6 +298,10 @@ class DownloadTaskService:
         if not task_ids:
             return {}
         task_map = await self.get_tasks_by_ids(task_ids)
+        return await self.get_torrent_status_by_tasks(list(task_map.values()))
+
+    async def get_torrent_status_by_tasks(self, tasks: list[TaskData]) -> Mapping[str, TorrentStatus]:
+        task_map = {task.id: task for task in tasks}
         downloader_hashes: dict[str, list[str]] = {}
         for task in task_map.values():
             if task.downloader_id and task.torrent_hash:

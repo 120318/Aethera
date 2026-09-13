@@ -3,7 +3,7 @@ import { getTorrentProgress, syncFinishedTask } from '@/api/resource'
 import { t } from '@/i18n'
 import { getStatusGroup, hasSignificantStateChange } from '@/utils/taskStatus'
 
-const ACTIVE_TASK_COMMAND_TYPES = ['task.pause', 'task.resume', 'task.transfer', 'task.media_server_sync', 'task.danmu_generate', 'task.storage_change', 'task.delete']
+const ACTIVE_TASK_COMMAND_TYPES = ['task.pause', 'task.resume', 'task.transfer', 'task.episode_batch_import', 'task.media_server_sync', 'task.danmu_generate', 'task.storage_change', 'task.delete']
 
 export function useTaskLiveRealtime(options = {}) {
   const {

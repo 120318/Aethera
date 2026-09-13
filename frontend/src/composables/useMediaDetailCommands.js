@@ -12,7 +12,7 @@ const TASK_CREATE_REFRESH_RETRY_DELAY_MS = 500
 const DOWNLOAD_CREATION_COMMAND_TYPES = ['task.create', 'pilot.episode']
 const SUBSCRIPTION_COMMAND_TYPES = ['subscription.run']
 const PROFILE_REFRESH_COMMAND_TYPES = ['profile.refresh']
-const TASK_COMMAND_TYPES = ['task.pause', 'task.resume', 'task.transfer', 'task.media_server_sync', 'task.danmu_generate', 'task.storage_change', 'task.delete']
+const TASK_COMMAND_TYPES = ['task.pause', 'task.resume', 'task.transfer', 'task.episode_batch_import', 'task.media_server_sync', 'task.danmu_generate', 'task.storage_change', 'task.delete']
 const LIBRARY_FILE_COMMAND_TYPES = ['library_file.delete', 'library_file.media_server_sync', 'library_file.danmu_generate']
 const MEDIA_DETAIL_COMMAND_TYPES = [
   'resource.search',
