@@ -16,6 +16,7 @@ from .execution import (
     build_source_path,
     build_transfer_planning_context,
     iter_selected_files,
+    may_inherit_context_episodes,
     with_context_resource_attrs,
 )
 
@@ -81,10 +82,15 @@ async def has_episode_target_collisions(task: TaskData, context: TransferExecuti
         return False
     context = context or await build_transfer_planning_context(task)
     paths: set[Path] = set()
+    inherit_context_episodes = may_inherit_context_episodes(task)
     for _index, original_item in iter_selected_files(task.metadata.files, context.selected_indices):
         if not file_name_looks_like_media_file(original_item.filename):
             continue
-        item = with_context_resource_attrs(task, original_item)
+        item = with_context_resource_attrs(
+            task,
+            original_item,
+            inherit_context_episodes=inherit_context_episodes,
+        )
         destination = library_target_path_policy.build_destination_path(
             destination_base_path=context.destination_base_path,
             template_config=context.template_config,

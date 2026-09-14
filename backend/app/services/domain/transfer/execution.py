@@ -19,7 +19,7 @@ from app.services.domain.download import download_service
 from app.services.domain.library.service import library_service
 from app.services.domain.library.target_path_policy import library_target_path_policy
 from app.utils.fs_utils import fs_provider
-from app.utils.library_paths import build_download_path, build_library_file_path
+from app.utils.library_paths import build_download_path, build_library_file_path, file_name_looks_like_media_file
 
 from .materializers import transfer_materializer_registry
 from .upgrade import is_idempotent_transfer_retry, validate_transfer_upgrade_policy
@@ -226,26 +226,55 @@ def _is_original_disc_package(task: TaskData) -> bool:
     return bool(task.metadata and task.metadata.attrs and task.metadata.attrs.package_layout)
 
 
-def _with_package_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFileItem:
+def _with_package_attrs(
+    task: TaskData,
+    file_item: TorrentFileItem,
+    *,
+    inherit_context_episodes: bool,
+) -> TorrentFileItem:
     if not task.metadata or not task.metadata.attrs:
-        return with_context_resource_attrs(task, file_item)
-    return with_context_resource_attrs(task, file_item.model_copy(update={"attrs": task.metadata.attrs}))
+        return with_context_resource_attrs(task, file_item, inherit_context_episodes=inherit_context_episodes)
+    return with_context_resource_attrs(
+        task,
+        file_item.model_copy(update={"attrs": task.metadata.attrs}),
+        inherit_context_episodes=inherit_context_episodes,
+    )
 
 
-def with_context_resource_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFileItem:
+def may_inherit_context_episodes(task: TaskData) -> bool:
+    if not task.metadata:
+        return True
+    selected_indices = set(task.context.selected_files) if task.context and task.context.selected_files else None
+    media_file_count = sum(
+        file_name_looks_like_media_file(item.filename)
+        for _index, item in iter_selected_files(task.metadata.files, selected_indices)
+    )
+    return media_file_count <= 1
+
+
+def with_context_resource_attrs(
+    task: TaskData,
+    file_item: TorrentFileItem,
+    *,
+    inherit_context_episodes: bool,
+) -> TorrentFileItem:
     context_attrs = task.context.parsed_attributes if task.context and task.context.parsed_attributes else None
     if not context_attrs:
         return file_item
     if file_item.attrs is None:
-        return file_item.model_copy(update={"attrs": context_attrs})
+        if inherit_context_episodes or not context_attrs.episodes:
+            return file_item.model_copy(update={"attrs": context_attrs})
+        return file_item.model_copy(update={"attrs": context_attrs.model_copy(update={"episodes": []})})
     attrs = file_item.attrs
     context_data = context_attrs.model_dump(mode="python")
     attrs_data = attrs.model_dump(mode="python")
     updates = {}
-    for field in ("groups", "sources", "versions", "seasons", "episodes", "platforms"):
+    for field in ("groups", "sources", "versions", "seasons", "platforms"):
         context_value = context_data[field]
         if context_value and not attrs_data[field]:
             updates[field] = list(context_value)
+    if inherit_context_episodes and context_data["episodes"] and not attrs_data["episodes"]:
+        updates["episodes"] = list(context_data["episodes"])
     for field in (
         "desc",
         "resource_form",
@@ -318,9 +347,14 @@ def _build_disc_package_transfer_plan(
     package_attrs = task.metadata.attrs if task.metadata else None
     package_layout = str(package_attrs.package_layout) if package_attrs and package_attrs.package_layout else ""
     selected_files = list(iter_selected_files(task.metadata.files, execution_context.selected_indices))
+    inherit_context_episodes = may_inherit_context_episodes(task)
     disc_package_name = _disc_package_name(task, selected_files)
     for index, original_file_item in selected_files:
-        file_item = _with_package_attrs(task, original_file_item)
+        file_item = _with_package_attrs(
+            task,
+            original_file_item,
+            inherit_context_episodes=inherit_context_episodes,
+        )
         source_path = generate_source_path(task, original_file_item, execution_context.source_base_path)
         destination_dir = library_target_path_policy.build_destination_dir(
             destination_base_path=execution_context.destination_base_path,
@@ -354,8 +388,13 @@ def build_transfer_plan(task: TaskData, execution_context: TransferExecutionCont
     if _is_original_disc_package(task):
         return _build_disc_package_transfer_plan(task, execution_context)
     transfer_results: list[TransferFileResult] = []
+    inherit_context_episodes = may_inherit_context_episodes(task)
     for index, original_file_item in iter_selected_files(task.metadata.files, execution_context.selected_indices):
-        file_item = with_context_resource_attrs(task, original_file_item)
+        file_item = with_context_resource_attrs(
+            task,
+            original_file_item,
+            inherit_context_episodes=inherit_context_episodes,
+        )
         source_path = generate_source_path(task, file_item, execution_context.source_base_path)
         destination_path = library_target_path_policy.build_destination_path(
             destination_base_path=execution_context.destination_base_path,
@@ -376,6 +415,14 @@ def build_transfer_plan(task: TaskData, execution_context: TransferExecutionCont
                 episode_numbers=episode_numbers,
             )
         )
+    destination_paths: set[str] = set()
+    for result in transfer_results:
+        if result.destination_path in destination_paths:
+            raise TransferException(
+                "backendErrors.transferTargetPathCollision",
+                params={"path": result.destination_path},
+            )
+        destination_paths.add(result.destination_path)
     return transfer_results
 
 

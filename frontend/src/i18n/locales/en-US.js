@@ -310,6 +310,7 @@ export default {
     transferSourceFilesMissing: 'Some download source files are missing, so re-transfer cannot continue safely',
     transferDiscFileConflict: 'A disc file with the same name already exists and cannot be overwritten',
     transferProtectedEpisodePathConflict: 'The target multi-episode file still covers episodes without safe replacements',
+    transferTargetPathCollision: 'Multiple source files resolve to the same target path; transfer was blocked: {path}',
     transferFileNotBetter: 'A file with the same name already exists and the new resource is not better',
     transferFileUpgradeUnknown: 'A file with the same name already exists and the upgrade cannot be confirmed',
     transferModeUnsupported: 'Unsupported transfer mode: {mode}',

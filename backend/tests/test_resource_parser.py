@@ -216,6 +216,21 @@ class TestTVShows:
         if "audio_channels" in expected:
             assert attrs.audio_channels == expected["audio_channels"]
 
+    @pytest.mark.parametrize(
+        "title,expected_episodes",
+        [
+            ("[VCB-Studio] Fullmetal Alchemist Brotherhood [01][Ma10p_1080p][x265_flac].mkv", [1]),
+            ("[VCB-Studio] Fullmetal Alchemist Brotherhood [01v2][Ma10p_1080p].mkv", [1]),
+            ("[VCB-Studio] Fullmetal Alchemist Brotherhood [64][Ma10p_1080p].mkv", [64]),
+            ("Anime.Title.[100].[1080p].[10bit].mkv", [100]),
+            ("Anime.Title.[1080p].[10bit].[5.1].mkv", []),
+            ("Anime.Title.S01E02.[720].mkv", [2]),
+            ("Anime.Title.S01E02.[480].mkv", [2]),
+        ],
+    )
+    def test_anime_bracket_episode_parsing(self, title, expected_episodes):
+        assert sorted(resource_parser.parse(title).episodes) == expected_episodes
+
 
 class TestDiscNumberFormats:
     """Internal helper."""
