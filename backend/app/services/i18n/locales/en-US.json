@@ -37,6 +37,7 @@
   "backendErrors.downloadTorrentSeasonMismatch": "The torrent file season does not match target season {season}; download was blocked",
   "backendErrors.taskNotFound": "Task not found",
   "backendErrors.transferFailed": "Transfer failed: {reason}",
+  "backendErrors.transferTargetPathCollision": "Multiple source files resolve to the same target path; transfer was blocked: {path}",
   "runtimeReasons.danmuDurationMismatch": "Video duration mismatch",
   "runtimeReasons.danmuNotFound": "No danmu found",
   "commandMessages.libraryFileDanmuGenerate.cancelled": "Danmu generation cancelled",

@@ -19,7 +19,7 @@ from app.services.domain.download import download_service
 from app.services.domain.library.service import library_service
 from app.services.domain.library.target_path_policy import library_target_path_policy
 from app.utils.fs_utils import fs_provider
-from app.utils.library_paths import build_download_path, build_library_file_path
+from app.utils.library_paths import build_download_path, build_library_file_path, file_name_looks_like_media_file
 
 from .materializers import transfer_materializer_registry
 from .upgrade import is_idempotent_transfer_retry, validate_transfer_upgrade_policy
@@ -232,20 +232,32 @@ def _with_package_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFi
     return with_context_resource_attrs(task, file_item.model_copy(update={"attrs": task.metadata.attrs}))
 
 
+def _may_inherit_context_episodes(task: TaskData) -> bool:
+    if not task.metadata:
+        return True
+    media_file_count = sum(file_name_looks_like_media_file(item.filename) for item in task.metadata.files)
+    return media_file_count <= 1
+
+
 def with_context_resource_attrs(task: TaskData, file_item: TorrentFileItem) -> TorrentFileItem:
     context_attrs = task.context.parsed_attributes if task.context and task.context.parsed_attributes else None
     if not context_attrs:
         return file_item
+    may_inherit_context_episodes = _may_inherit_context_episodes(task)
     if file_item.attrs is None:
-        return file_item.model_copy(update={"attrs": context_attrs})
+        if may_inherit_context_episodes or not context_attrs.episodes:
+            return file_item.model_copy(update={"attrs": context_attrs})
+        return file_item.model_copy(update={"attrs": context_attrs.model_copy(update={"episodes": []})})
     attrs = file_item.attrs
     context_data = context_attrs.model_dump(mode="python")
     attrs_data = attrs.model_dump(mode="python")
     updates = {}
-    for field in ("groups", "sources", "versions", "seasons", "episodes", "platforms"):
+    for field in ("groups", "sources", "versions", "seasons", "platforms"):
         context_value = context_data[field]
         if context_value and not attrs_data[field]:
             updates[field] = list(context_value)
+    if may_inherit_context_episodes and context_data["episodes"] and not attrs_data["episodes"]:
+        updates["episodes"] = list(context_data["episodes"])
     for field in (
         "desc",
         "resource_form",
@@ -376,6 +388,14 @@ def build_transfer_plan(task: TaskData, execution_context: TransferExecutionCont
                 episode_numbers=episode_numbers,
             )
         )
+    destination_paths: set[str] = set()
+    for result in transfer_results:
+        if result.destination_path in destination_paths:
+            raise TransferException(
+                "backendErrors.transferTargetPathCollision",
+                params={"path": result.destination_path},
+            )
+        destination_paths.add(result.destination_path)
     return transfer_results
 
 

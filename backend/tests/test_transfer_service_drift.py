@@ -19,7 +19,7 @@ from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
 from app.services.domain.transfer import transfer_service
 from app.services.domain.transfer.service import commit_transfer_results
-from app.services.domain.transfer.execution import TransferExecutionContext, build_transfer_execution_context, build_transfer_plan, execute_transfer, generate_source_path, missing_transfer_source_paths
+from app.services.domain.transfer.execution import TransferExecutionContext, build_transfer_execution_context, build_transfer_plan, execute_transfer, generate_source_path, missing_transfer_source_paths, with_context_resource_attrs
 
 
 def _task(status: TaskStatus = TaskStatus.COMPLETED) -> TaskData:
@@ -445,6 +445,38 @@ def test_build_transfer_plan_uses_context_episode_parsed_from_description(monkey
     assert results[0].episode_number == 11
     assert results[0].file_item.attrs.episodes == [11]
     assert results[0].destination_path == "/library/爱情没有神话 (2026)/Season 01/爱情没有神话 - S01E11.mkv"
+
+
+def test_multi_video_files_do_not_inherit_package_episode_range(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+    task.context.parsed_attributes = ResourceAttributes(seasons=[1], episodes=[1, 2])
+    task.metadata = TorrentMetadata(
+        hash="hash-1",
+        name="Show.S01.Complete",
+        size=200,
+        files=[
+            TorrentFileItem(index=0, filename="Show/part-a.mkv", size=100, attrs=ResourceAttributes(episodes=[])),
+            TorrentFileItem(index=1, filename="Show/part-b.mkv", size=100, attrs=ResourceAttributes(episodes=[])),
+        ],
+    )
+    context = TransferExecutionContext(
+        source_base_path=Path("/downloads"),
+        destination_base_path=Path("/library"),
+        template_config=Template(
+            dir_template="{title} ({year})/Season {season:00}",
+            file_template="{title} - S{season:00}E{episode:00}",
+        ),
+        title="Show",
+        year=2024,
+        season_number=1,
+    )
+    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+
+    assert with_context_resource_attrs(task, task.metadata.files[0]).attrs.episodes == []
+    with pytest.raises(TransferException) as exc_info:
+        build_transfer_plan(task, context)
+
+    assert exc_info.value.message_key == "backendErrors.transferTargetPathCollision"
 
 
 def test_build_transfer_plan_names_multi_episode_file(monkeypatch):

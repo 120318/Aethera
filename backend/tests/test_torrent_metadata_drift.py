@@ -49,6 +49,47 @@ def test_parse_metadata_accepts_bencodepy_ordered_dict_info_and_file_entries():
     assert metadata.files[0].filename == "Show.Name.S01/Show.Name.S01E01.mkv"
 
 
+def test_parse_metadata_reads_anime_bracket_episode_tokens_per_file():
+    root = "[VCB-Studio] Fullmetal Alchemist Brotherhood [Ma10p_1080p]"
+    payload = bencodepy.encode(
+        OrderedDict(
+            [
+                (
+                    b"info",
+                    OrderedDict(
+                        [
+                            (b"name", root.encode()),
+                            (
+                                b"files",
+                                [
+                                    OrderedDict(
+                                        [
+                                            (b"length", 123),
+                                            (b"path", [root.encode(), f"{root} [01][x265_flac].mkv".encode()]),
+                                        ]
+                                    ),
+                                    OrderedDict(
+                                        [
+                                            (b"length", 456),
+                                            (b"path", [root.encode(), f"{root} [64][x265_flac].mkv".encode()]),
+                                        ]
+                                    ),
+                                ],
+                            ),
+                        ]
+                    ),
+                )
+            ]
+        )
+    )
+
+    metadata = parse_torrent_metadata(payload, desc="全64集")
+
+    assert [item.attrs.episodes for item in metadata.files] == [[1], [64]]
+    assert metadata.get_episodes() == {1, 64}
+    assert metadata.coverage_kind == "exact_episodes"
+
+
 def test_parse_metadata_confirms_bluray_disc_structure():
     payload = bencodepy.encode(
         OrderedDict(
