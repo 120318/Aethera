@@ -129,5 +129,5 @@ EPISODE_PATTERNS = [
     # Anime releases commonly use a standalone episode token, for example
     # ``[01]`` or ``[01v2]``.  Requiring two or three digits avoids treating
     # common technical tags as episode numbers.
-    r"\[(\d{2,3})(?:v\d+)?\]",
+    r"\[(?!(?:480|720)(?:v\d+)?\])(\d{2,3})(?:v\d+)?\]",
 ]
