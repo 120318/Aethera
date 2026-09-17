@@ -1,5 +1,5 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { attachMediaTMDBMapping, getMediaDetailPage, refreshMediaProfile } from '@/api/media'
+import { attachMediaTMDBMapping, getMediaDetailPage, refreshMediaProfile, updateMediaEpisodeCountOverride } from '@/api/media'
 import { getLibraryFileDetail } from '@/api/resource'
 import { useNotificationStore } from '@/stores/notification'
 import { useOperationsStore } from '@/stores/operations'
@@ -505,10 +505,26 @@ export function useMediaDetailPage() {
     }
     const episodeCountOverride = isTv ? normalizeEpisodeCountOverride(episodeCountOverrideInput) : null
     if (episodeCountOverride === undefined) return false
-    const currentTmdbId = detail.value?.tmdb_id ? String(detail.value.tmdb_id) : ''
-    const currentSeasonNumber = detail.value?.season_number ? String(detail.value.season_number) : ''
+    const parsedMediaId = parseMediaId(mediaId.value)
+    const currentTmdbId = String(detail.value?.tmdb_id || (isTv && parsedMediaId?.provider === 'tmdb' ? parsedMediaId.id : '') || '')
+    const currentSeasonNumber = selectedSeasonNumber.value ? String(selectedSeasonNumber.value) : ''
     const hasDoubanId = Boolean(String(detail.value?.douban_id || '').trim())
     const hasEpisodeCountOverride = currentSeasonEpisodeCountOverride.value !== null
+    const sameSeason = isTv && currentSeasonNumber === (seasonNumber ? String(seasonNumber) : '')
+    const overrideChanged = episodeCountOverride !== currentSeasonEpisodeCountOverride.value
+    if (currentTmdbId === normalized && sameSeason && overrideChanged) {
+      try {
+        await updateMediaEpisodeCountOverride(mediaId.value, seasonNumber, episodeCountOverride)
+        await handleFetchDetail()
+        notification.success(t('mediaDetail.episodeCountOverrideUpdated'))
+        return true
+      } catch (error) {
+        if (!error?.response && !error?.isAxiosError) {
+          notification.error(error?.message || t('mediaDetail.updateTmdbMappingFailed'))
+        }
+        return false
+      }
+    }
     if (
       currentTmdbId === normalized
       && (!isTv || currentSeasonNumber === (seasonNumber ? String(seasonNumber) : ''))

@@ -135,6 +135,23 @@ class MediaProfileScopeRepository:
             session.commit()
             return True
 
+    async def update_episode_count_override(
+        self,
+        media_id: MediaID,
+        season_number: int,
+        *,
+        episode_count_override: int | None,
+        updated_at: float,
+    ) -> bool:
+        with SessionLocal() as session:
+            row = session.get(MediaProfileScopeORM, (str(media_id), int(season_number)))
+            if row is None:
+                return False
+            row.episode_count_override = episode_count_override
+            row.updated_at = updated_at
+            session.commit()
+            return True
+
     async def upsert_scopes(self, scopes: list[MediaProfileScope]) -> bool:
         for scope in scopes:
             await self.upsert_scope(scope)

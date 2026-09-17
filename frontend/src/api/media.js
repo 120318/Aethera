@@ -43,6 +43,12 @@ export const attachMediaTMDBMapping = async (mediaId, tmdbId, seasonNumber = nul
     episode_count_override: episodeCountOverride,
   }, { params: { media_id: mediaId } })
 
+export const updateMediaEpisodeCountOverride = async (mediaId, seasonNumber, episodeCountOverride = null) =>
+  http.post('/api/v1/media/episode-count-override', {
+    season_number: seasonNumber,
+    episode_count_override: episodeCountOverride,
+  }, { params: { media_id: mediaId } })
+
 export const attachSourceTMDBMapping = async ({ source, sourceId, mediaType, tmdbId, seasonNumber = null, episodeCountOverride = null }) =>
   http.post('/api/v1/media/external-mapping/tmdb/source', {
     source,

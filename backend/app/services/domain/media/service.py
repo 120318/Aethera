@@ -1,4 +1,5 @@
 import logging
+import time
 
 from app.core.request_perf_context import db_perf_source
 from app.db.repositories.media_management_repository import media_management_repository
@@ -11,6 +12,7 @@ from app.schemas.domain.media_context import ResolvedMediaContext
 from app.schemas.domain.media_source import MediaSourceLookup
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.schedule import MediaScheduleSummary, ScheduleAiring
+from app.schemas.exception import InvalidRequestException, MediaNotFoundException
 from app.schemas.integration.media.provider import ProviderSearchItem
 from app.schemas.domain.search_models import MediaSearchResult
 from app.schemas.runtime.media_management import MediaManagementRowsPage, MediaManagementSummary
@@ -150,6 +152,43 @@ class MediaService:
             season_number=season_number,
             douban_id=douban_id,
             episode_count_override=episode_count_override,
+        )
+
+    async def update_episode_count_override(
+        self,
+        media_id: MediaID,
+        *,
+        season_number: int,
+        episode_count_override: int | None,
+    ) -> None:
+        if media_id.media_type != MediaType.tv or season_number <= 0:
+            raise InvalidRequestException("backendErrors.subscriptionSeasonRequired")
+        profile = await self.profile_service.profile_repo.find_by_media_id(media_id)
+        if not profile:
+            raise MediaNotFoundException()
+        mapping = self.mapping_repo.find_by_media_id_and_season(media_id, season_number)
+        tmdb_id = mapping.tmdb_id if mapping and mapping.tmdb_id else profile.tmdb_id
+        if not tmdb_id and media_id.provider.value == "tmdb":
+            try:
+                tmdb_id = int(media_id.id)
+            except ValueError as exc:
+                raise InvalidRequestException("backendErrors.invalidMediaId") from exc
+        if not tmdb_id:
+            raise InvalidRequestException("backendErrors.tmdbMappingRequired")
+        scope = await self.profile_service.scope_repo.find_by_media_id_and_season(media_id, season_number)
+        self.mapping_repo.upsert(
+            media_id=media_id,
+            tmdb_id=tmdb_id,
+            imdb_id=mapping.imdb_id if mapping else profile.imdb_id,
+            douban_id=mapping.douban_id if mapping else (scope.douban_id if scope else None),
+            season_number=season_number,
+            episode_count_override=episode_count_override,
+        )
+        await self.profile_service.scope_repo.update_episode_count_override(
+            media_id,
+            season_number,
+            episode_count_override=episode_count_override,
+            updated_at=time.time(),
         )
 
     def discover_available(self, source: BrowseSource) -> bool:
