@@ -26,13 +26,14 @@ LOG_PATH="/config/logs"
 CONFIG_ROOT="/config"
 DB_PATH="/config/db/aethera.db"
 CACHE_PATH="/config/cache"
+TORRENT_STORE_PATH="/config/torrents"
 DB_DIR="$(dirname "${DB_PATH}")"
 MEDIA_ROOT="${AETHERA_MEDIA_ROOT:-/data}"
 LIBRARY_PATH="${MEDIA_ROOT}/library"
 DOWNLOAD_PATH="${MEDIA_ROOT}/download"
 
 # Ensure directories exist
-mkdir -p "${CONFIG_ROOT}" "${DB_DIR}" "${CACHE_PATH}" "${LOG_PATH}" "${LIBRARY_PATH}" "${DOWNLOAD_PATH}" || true
+mkdir -p "${CONFIG_ROOT}" "${DB_DIR}" "${CACHE_PATH}" "${TORRENT_STORE_PATH}" "${LOG_PATH}" "${LIBRARY_PATH}" "${DOWNLOAD_PATH}" || true
 
 # Only attempt chown if we are root
 if [ "$(id -u)" = '0' ]; then
@@ -42,7 +43,7 @@ if [ "$(id -u)" = '0' ]; then
       chown "${PUID}:${PGID}" "$path" || true
     fi
   done
-  for path in "${DB_DIR}" "${CACHE_PATH}" "${LOG_PATH}"; do
+  for path in "${DB_DIR}" "${CACHE_PATH}" "${TORRENT_STORE_PATH}" "${LOG_PATH}"; do
     if [ -e "${path}" ]; then
       echo "[entrypoint] ensuring owner for $path -> ${PUID}:${PGID}"
       chown -R "${PUID}:${PGID}" "$path" || true
