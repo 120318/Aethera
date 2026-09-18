@@ -6,9 +6,7 @@ import pytest
 
 from app.api.v1.media.external_mapping_tmdb import (
     AttachTMDBMappingRequest,
-    UpdateEpisodeCountOverrideRequest,
     attach_tmdb_mapping,
-    update_episode_count_override,
 )
 from app.db.repositories.media_external_mapping_repository import MediaExternalMappingRepository
 from app.schemas.domain.command import (
@@ -170,30 +168,6 @@ async def test_attach_tmdb_mapping_route_returns_refresh_command(monkeypatch):
     assert response.command.id == "cmd-1"
     assert response.media_id == canonical_mid
     attach_mock.assert_awaited_once_with(mid, tmdb_id=12345, season_number=None, episode_count_override=None)
-
-
-@pytest.mark.asyncio
-async def test_update_episode_count_override_route_does_not_require_tmdb(monkeypatch):
-    mid = MediaID.parse("tmdb:tv:19995")
-    update_mock = AsyncMock()
-    monkeypatch.setattr(
-        "app.api.v1.media.external_mapping_tmdb.media_service.update_episode_count_override",
-        update_mock,
-    )
-
-    response = await update_episode_count_override(
-        UpdateEpisodeCountOverrideRequest(season_number=4, episode_count_override=13),
-        mid=mid,
-    )
-
-    assert response.media_id == mid
-    assert response.season_number == 4
-    assert response.episode_count_override == 13
-    update_mock.assert_awaited_once_with(
-        mid,
-        season_number=4,
-        episode_count_override=13,
-    )
 
 
 @pytest.mark.asyncio

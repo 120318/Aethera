@@ -336,6 +336,11 @@ def apply_scopes_to_profile(
     return profile.model_copy(update={
         "vendors": vendors,
         "seasons": seasons,
+        "episodes_count": (
+            int(selected.episode_count_override)
+            if selected.episode_count_override is not None and selected.episode_count_override > 0
+            else selected.episode_count
+        ),
         "status_label": selected.status_label,
         "first_air_date": selected.first_air_date,
         "aired_episode_count": selected.aired_episode_count,

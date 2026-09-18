@@ -99,6 +99,7 @@ def with_cached_season_metadata(media: MediaFullInfo, season_number: Optional[in
         updates["episodes_count"] = int(selected.episode_count_override)
         updates["episode_count_override"] = int(selected.episode_count_override)
     else:
+        updates["episodes_count"] = selected.episode_count if selected else None
         updates["episode_count_override"] = None
     if not selected_douban_id:
         updates.update(non_douban_rating_updates(media))
@@ -177,5 +178,10 @@ def with_season_external_ids(
         updates["episodes_count"] = episode_count_override
         updates["episode_count_override"] = episode_count_override
     else:
+        selected_season = next(
+            (season for season in seasons if int(season.season_number) == effective_season),
+            None,
+        )
+        updates["episodes_count"] = selected_season.episode_count if selected_season else None
         updates["episode_count_override"] = None
     return media.model_copy(update=updates)
