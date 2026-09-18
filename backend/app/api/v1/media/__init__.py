@@ -2,7 +2,7 @@
 
 This package contains media-related endpoints split into `search` and `detail` modules.
 """
-from app.api.v1.media import search, detail, detail_page, detail_overview, operations, proxy_image, external_mapping_tmdb, profile_refresh  # noqa: F401
+from app.api.v1.media import search, detail, detail_page, detail_overview, operations, proxy_image, external_mapping_tmdb, episode_count_override, profile_refresh  # noqa: F401
 from fastapi import APIRouter
 
 # Define router and logger first so submodules can import them
@@ -20,4 +20,5 @@ router.include_router(operations.router)
 router.include_router(search.router)
 router.include_router(proxy_image.router)
 router.include_router(external_mapping_tmdb.router)
+router.include_router(episode_count_override.router)
 router.include_router(profile_refresh.router)

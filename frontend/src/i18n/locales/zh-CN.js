@@ -1343,6 +1343,7 @@ export default {
     episodeCountOverride: '手动总集数',
     episodeCountOverridePlaceholder: '留空则使用 TMDB',
     tmdbMappingCreated: '已建立 TMDB 映射',
+    episodeCountOverrideUpdated: '已更新本季集数',
     updateTmdbMappingFailed: '更新 TMDB 映射失败',
     noViewableResourceDetail: '当前资源没有可查看的详情',
     loadLocalResourceDetailFailed: '获取本地资源详情失败',

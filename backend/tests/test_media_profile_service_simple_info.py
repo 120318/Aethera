@@ -892,7 +892,7 @@ async def test_mapping_snapshot_update_preserves_overview_for_same_douban_mappin
 
 
 @pytest.mark.asyncio
-async def test_detail_info_ignores_unscoped_episode_count_override_on_cached_profile(monkeypatch):
+async def test_detail_info_restores_selected_season_count_without_override(monkeypatch):
     media_id = MediaID.parse("tmdb:tv:83463")
     profile = _ready_profile(media_id)
     profile.episodes_count = 184
@@ -909,7 +909,7 @@ async def test_detail_info_ignores_unscoped_episode_count_override_on_cached_pro
 
     assert cache_mode == "hit"
     assert result is not None
-    assert result.episodes_count == 184
+    assert result.episodes_count == 12
     assert result.episode_count_override is None
     assert [season.episode_count for season in result.seasons] == [54, 12]
 

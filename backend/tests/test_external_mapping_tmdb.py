@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from app.api.v1.media.external_mapping_tmdb import AttachTMDBMappingRequest, attach_tmdb_mapping
+from app.api.v1.media.external_mapping_tmdb import (
+    AttachTMDBMappingRequest,
+    attach_tmdb_mapping,
+)
 from app.db.repositories.media_external_mapping_repository import MediaExternalMappingRepository
 from app.schemas.domain.command import (
     CommandInitiator,

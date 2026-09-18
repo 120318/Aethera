@@ -1342,6 +1342,7 @@ export default {
     episodeCountOverride: 'Manual total episodes',
     episodeCountOverridePlaceholder: 'Blank uses TMDB',
     tmdbMappingCreated: 'TMDB mapping created',
+    episodeCountOverrideUpdated: 'Episode count updated',
     updateTmdbMappingFailed: 'Failed to update TMDB mapping',
     noViewableResourceDetail: 'This resource has no viewable details',
     loadLocalResourceDetailFailed: 'Failed to load local resource details',
