@@ -122,13 +122,14 @@ Bad fits:
 
 ### 3.4 `addons/`
 
-`app/addons` is the optional-capability assembly layer. It only describes which optional capabilities exist, whether they are enabled, which events they subscribe to, and whether they provide scheduled tasks.
+`app/addons` is the optional-capability assembly layer. It describes which optional capabilities exist, whether they are enabled, and which extension points they contribute. Extension points include events, scheduled tasks, commands, resource actions, artifact types, providers, and settings sections.
 
 Good fits:
 
 - `AddonDescriptor`
 - addon registry
-- descriptor registration for auth, notifications, future danmu, and similar optional capabilities
+- descriptor registration for auth, notifications, danmu, subtitles, and similar optional capabilities
+- contribution identity and ownership validation
 
 Bad fits:
 
@@ -142,6 +143,8 @@ Boundary rules:
 - Optional capability workflows live in `app/services/application/workflows/<capability>/...`.
 - Core business semantics still live in `app/services/domain/...`.
 - `/api/v1/addons` exposes only addon framework information and scheduled-task metadata. Auth, notification, danmu, and similar business APIs live under their capability routes.
+- Contribution specs declare extension ownership and stable identities. The command bus, resource views, artifact lifecycle, provider registries, and settings APIs remain the execution owners of their respective contracts.
+- Built-in addons are assembled explicitly in the repository and released with Aethera. Addon discovery does not imply remote code loading, third-party package installation, or addon-owned database migrations.
 
 ### 3.5 `platform/`
 
