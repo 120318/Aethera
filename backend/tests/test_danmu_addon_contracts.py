@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
-from app.addons.descriptors import _danmu_jobs
+from app.addons.descriptors import _danmu_jobs, _enqueue_danmu_event
 from app.core.action_context import action_context
 from app.schemas.config import AddonsConfig
 from app.schemas.domain.addon_events import DanmuGenerationOutcome, ImportedMediaFile, MediaImportCompletedEventMeta
@@ -971,6 +971,30 @@ class TestDanmuAddonContracts(unittest.TestCase):
 
 
 class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
+    async def test_import_event_command_does_not_require_download_task(self):
+        media_id = MediaID.parse("tmdb:movie:1")
+        event = Event(
+            id="event-1",
+            type=EventType.MEDIA_IMPORT_COMPLETED,
+            meta=MediaImportCompletedEventMeta(
+                task_id="deleted-task",
+                directory_id="dir-1",
+                media_id=media_id,
+                file_path="/library/Movie.mkv",
+            ).model_dump_json(),
+        )
+
+        with patch(
+            "app.addons.descriptors.command_service.create_command_with_uniq_key",
+            new=AsyncMock(),
+        ) as create_mock:
+            await _enqueue_danmu_event(event)
+
+        body = create_mock.await_args.args[0]
+        self.assertIsNone(body.payload.task_id)
+        self.assertEqual(event.id, body.payload.event_id)
+        self.assertEqual(media_id, body.payload.target.media_id)
+
     def _media(
         self,
         *,

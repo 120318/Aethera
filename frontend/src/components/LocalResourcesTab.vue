@@ -188,7 +188,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, ref, toRef } from 'vue'
 import Button from 'primevue/button'
 import DataView from 'primevue/dataview'
 import InputText from 'primevue/inputtext'
@@ -200,9 +200,9 @@ import ResourceAttributes from './common/ResourceAttributes.vue'
 import SortControl from '@/components/common/filter/SortControl.vue'
 import SubtitleSearchDialog from '@/components/SubtitleSearchDialog.vue'
 import { getDirectoriesTabConfig } from '@/api/config'
-import { getAddons, previewLibraryFileDirectoryChange, resolveLibraryMediaServerLink, submitLibraryFileDirectoryChange } from '@/api/resource'
+import { previewLibraryFileDirectoryChange, resolveLibraryMediaServerLink, submitLibraryFileDirectoryChange } from '@/api/resource'
 import { ResourceTagType } from '@/constants/resourceTagTypes'
-import { resolveLibraryAddonActions } from '@/addons/resourceActions'
+import { useLocalResourceAddons } from '@/composables/useLocalResourceAddons'
 import { useLocalResourcesList } from '@/composables/useLocalResourcesList'
 import { useLocalResourcesOverview } from '@/composables/useLocalResourcesOverview'
 import { useOperationsStore } from '@/stores/operations'
@@ -270,11 +270,19 @@ const directoryChangeSubmitting = ref(false)
 const directoryChangePreview = ref(null)
 const directoryChangeConfig = ref({ directories: [] })
 const directoryChangeForm = ref({ target_directory_id: '' })
-const subtitlesEnabled = ref(false)
-const addonResourceActions = ref([])
-const subtitleDialogVisible = ref(false)
-const subtitleResource = ref(null)
-const subtitleBatchLoading = ref(false)
+const {
+  subtitlesEnabled,
+  addonResourceActions,
+  subtitleDialogVisible,
+  subtitleResource,
+  subtitleBatchLoading,
+  fillMissing,
+  openSubtitleSearch,
+} = useLocalResourceAddons({
+  mediaId: toRef(props, 'mediaId'),
+  seasonNumber: toRef(props, 'seasonNumber'),
+  emit,
+})
 
 const RESOURCES_ROWS_PER_PAGE = 10
 const LIBRARY_FILE_COMMAND_TYPES = [
@@ -444,48 +452,6 @@ async function openResourceInMediaServer(resource) {
     resolvingMediaServerLinkTargets.value = next
   }
 }
-
-async function fillMissing() {
-  if (!props.mediaId) return
-  subtitleBatchLoading.value = true
-  try {
-    const target = { media_id: props.mediaId }
-    if (props.seasonNumber) target.season_number = props.seasonNumber
-    const command = await operations.submitCommand(
-      {
-        type: 'addon.run',
-        payload: {
-          addon_id: 'subtitles',
-          operation_id: 'fill_missing',
-          target,
-        },
-      },
-      { dedupeKey: `media:${props.mediaId}:${props.seasonNumber || ''}:subtitles.fill_missing` },
-    )
-    if (command) {
-      emit('command-submitted', command)
-      notification.success(t('localResources.subtitles.fillQueued'))
-    }
-  } finally {
-    subtitleBatchLoading.value = false
-  }
-}
-
-function openSubtitleSearch(resource) {
-  subtitleResource.value = resource
-  subtitleDialogVisible.value = true
-}
-
-onMounted(async () => {
-  try {
-    const response = await getAddons()
-    const addons = response?.items || []
-    addonResourceActions.value = resolveLibraryAddonActions(addons)
-    subtitlesEnabled.value = addons.some(item => item.name === 'subtitles' && item.enabled)
-  } catch {
-    subtitlesEnabled.value = false
-  }
-})
 
 function getResourceMenuItems(resource) {
   const items = []

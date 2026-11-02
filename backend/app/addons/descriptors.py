@@ -160,7 +160,6 @@ async def _enqueue_danmu_event(event: Event) -> None:
             addon_id="danmu",
             operation_id="generate",
             target=MediaTarget(media_id=meta.media_id, season_number=season_number),
-            task_id=meta.task_id,
             event_id=event.id,
         ),
     )

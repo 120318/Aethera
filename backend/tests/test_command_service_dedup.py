@@ -31,6 +31,7 @@ from app.schemas.domain.command import (
     TaskDeleteCommandRecordPayload,
     TaskTransferCommandRecordPayload,
 )
+from app.addons.registry import addon_service
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.media import MediaExecutionSnapshot, MediaIdentity, MediaTarget
 from app.schemas.exception import InvalidRequestException
@@ -178,6 +179,56 @@ async def test_media_addon_command_deduplication_is_scoped_by_season(monkeypatch
 
     assert season_one.uniq_key == "command:addon.run:danmu:generate:media:tmdb:tv:1:season=1"
     assert season_two.uniq_key == "command:addon.run:danmu:generate:media:tmdb:tv:1:season=2"
+
+
+@pytest.mark.parametrize(
+    ("enabled", "operation", "message_key"),
+    [
+        (False, Mock(), "backendErrors.addonDisabled"),
+        (True, None, "backendErrors.addonOperationUnknown"),
+    ],
+)
+def test_addon_operation_validation_uses_domain_errors(
+    monkeypatch,
+    enabled,
+    operation,
+    message_key,
+):
+    monkeypatch.setattr(addon_service, "discover_and_register", Mock())
+    monkeypatch.setattr(addon_service, "is_addon_enabled", Mock(return_value=enabled))
+    monkeypatch.setattr(addon_service, "get_command", Mock(return_value=operation))
+
+    with pytest.raises(InvalidRequestException) as exc_info:
+        AddonRunCommandHandler._resolve_operation("sample", "generate")
+
+    assert exc_info.value.message_key == message_key
+    assert exc_info.value.params["addon_id"] == "sample"
+
+
+@pytest.mark.asyncio
+async def test_addon_operation_without_handler_uses_domain_error(monkeypatch):
+    handler = AddonRunCommandHandler()
+    media_id = MediaID.parse("tmdb:tv:1")
+    monkeypatch.setattr(handler, "_resolve_operation", Mock(return_value=Mock(handler=None)))
+    command = CommandRecord(
+        id="command-addon",
+        type=CommandType.ADDON_RUN,
+        payload=AddonRunCommandRecordPayload(
+            addon_id="sample",
+            operation_id="generate",
+            target=MediaTarget(media_id=media_id, season_number=1),
+        ),
+        media_id=media_id,
+        target=MediaTarget(media_id=media_id, season_number=1),
+        target_type=CommandTargetType.MEDIA,
+        target_id=str(media_id),
+    )
+
+    with pytest.raises(InvalidRequestException) as exc_info:
+        await handler.execute(command)
+
+    assert exc_info.value.message_key == "backendErrors.addonOperationHandlerMissing"
+    assert exc_info.value.params == {"addon_id": "sample", "operation_id": "generate"}
 
 
 def test_pilot_episode_action_preserves_media_snapshot_for_notification_navigation():

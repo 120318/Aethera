@@ -36,6 +36,7 @@ export const ACTION_NAME_LABELS = {
   'library_file.danmu_generate': 'operationCenter.types.libraryFileDanmuGenerate',
   'task.delete': 'operationCenter.types.taskDelete',
   'danmu.generate': 'operationCenter.types.danmuGenerate',
+  'subtitles.fill_missing': 'operationCenter.types.subtitleFillMissing',
   'addon.run': 'actions.names.addonRun',
   'notification.send': 'actions.names.notificationSend',
   sync_active_downloads: 'scheduler.jobs.syncActiveDownloads',

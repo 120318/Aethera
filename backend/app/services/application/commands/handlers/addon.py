@@ -11,6 +11,7 @@ from app.schemas.domain.command import (
     CommandTargetType,
     CommandType,
 )
+from app.schemas.exception import InvalidRequestException
 from app.schemas.runtime.command_runtime import CommandActionContext
 from app.services.application.commands.target_labels import format_media_target_label
 from app.services.domain.download import download_service
@@ -33,7 +34,7 @@ class AddonRunCommandHandler:
         if task_id:
             task = await download_service.find_task_by_id(task_id)
             if task is None:
-                raise ValueError("Task does not exist")
+                raise InvalidRequestException("backendErrors.taskNotFound")
             target_type = CommandTargetType.TASK
             target_id = task.id
             context = task.context
@@ -48,7 +49,7 @@ class AddonRunCommandHandler:
         elif file_id:
             library_file = await library_service.find_file_by_id(file_id)
             if library_file is None:
-                raise ValueError("Library file does not exist")
+                raise InvalidRequestException("backendErrors.resourceFileNotFound")
             target_type = CommandTargetType.LIBRARY_FILE
             target_id = request.package_root or library_file.id
             media = await media_service.resolve_execution_snapshot(
@@ -98,8 +99,12 @@ class AddonRunCommandHandler:
         payload = command.payload
         operation = self._resolve_operation(payload.addon_id, payload.operation_id)
         if operation.handler is None:
-            raise ValueError(
-                f"Addon operation has no handler: {payload.addon_id}.{payload.operation_id}"
+            raise InvalidRequestException(
+                "backendErrors.addonOperationHandlerMissing",
+                params={
+                    "addon_id": payload.addon_id,
+                    "operation_id": payload.operation_id,
+                },
             )
         return await operation.handler(payload)
 
@@ -123,10 +128,16 @@ class AddonRunCommandHandler:
     def _resolve_operation(addon_id: str, operation_id: str):
         addon_service.discover_and_register()
         if not addon_service.is_addon_enabled(addon_id):
-            raise ValueError(f"Addon is not enabled: {addon_id}")
+            raise InvalidRequestException(
+                "backendErrors.addonDisabled",
+                params={"addon_id": addon_id},
+            )
         operation = addon_service.get_command(addon_id, operation_id)
         if operation is None:
-            raise ValueError(f"Unknown addon operation: {addon_id}.{operation_id}")
+            raise InvalidRequestException(
+                "backendErrors.addonOperationUnknown",
+                params={"addon_id": addon_id, "operation_id": operation_id},
+            )
         return operation
 
 

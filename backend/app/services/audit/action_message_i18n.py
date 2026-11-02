@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.schemas.domain.action import ActionKind, ActionName, ActionRecord, ActionStatus
+from app.schemas.domain.action_meta import CommandQueuedActionMeta
 from app.schemas.domain.command import CommandStatus, CommandType
 from app.services.application.commands.message_i18n import command_message_key
 
@@ -25,10 +26,17 @@ ACTION_STATUS_KEY_BY_STATUS = {
 
 def action_message_key(action: ActionRecord) -> str | None:
     if action.kind == ActionKind.command:
-        try:
-            command_type = CommandType(action.action_name)
-        except ValueError:
-            return None
+        command_type = None
+        if action.meta:
+            try:
+                command_type = CommandQueuedActionMeta.model_validate_json(action.meta).command_type
+            except ValueError:
+                command_type = None
+        if command_type is None:
+            try:
+                command_type = CommandType(action.action_name)
+            except ValueError:
+                return None
         command_status = COMMAND_STATUS_BY_ACTION_STATUS.get(action.status)
         if command_status is None:
             return None

@@ -90,11 +90,11 @@ class SubtitleApplicationService:
             if season_number is not None and library_file_season_number(library_file) != season_number:
                 continue
             result.processed_count += 1
-            video_path = build_library_file_path(library_file.path, library_file.file_name)
-            if self._has_subtitle(video_path):
-                result.skipped_count += 1
-                continue
             try:
+                video_path = build_library_file_path(library_file.path, library_file.file_name)
+                if self._has_subtitle(video_path):
+                    result.skipped_count += 1
+                    continue
                 candidates = await self.search_for_file(library_file.id)
                 if not candidates:
                     result.skipped_count += 1

@@ -390,6 +390,7 @@ class CommandService:
                 command_id=command.id,
                 initiator=command.initiator.value,
                 target_label=command.target_label,
+                command_type=command.type,
             ),
             action_id=command.id,
             persist=persist,

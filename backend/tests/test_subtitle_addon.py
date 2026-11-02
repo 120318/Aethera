@@ -52,6 +52,27 @@ def test_danmu_sidecar_does_not_satisfy_dialogue_subtitle_check(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_fill_missing_isolates_subtitle_scan_os_error_per_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    video_path = tmp_path / "episode.mkv"
+    video_path.write_bytes(b"video")
+    library_file = _library_file(video_path)
+    service = SubtitleApplicationService()
+    monkeypatch.setattr(
+        "app.services.application.workflows.subtitles.service.library_service.get_files_by_media",
+        AsyncMock(return_value=[library_file]),
+    )
+    monkeypatch.setattr(service, "_has_subtitle", lambda _: (_ for _ in ()).throw(OSError("unavailable")))
+
+    result = await service.fill_missing(library_file.media_id, season_number=1)
+
+    assert result.processed_count == 1
+    assert result.failed_count == 1
+
+
+@pytest.mark.asyncio
 async def test_install_writes_jellyfin_language_sidecar_and_records_artifact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -258,6 +258,9 @@ export default {
     queryRequired: '缺少查询参数',
     commandNotFound: '命令不存在',
     taskNotFound: '任务不存在',
+    addonDisabled: '附加功能已禁用：{addon_id}',
+    addonOperationUnknown: '附加功能操作不存在：{addon_id}.{operation_id}',
+    addonOperationHandlerMissing: '附加功能操作缺少执行器：{addon_id}.{operation_id}',
     taskBusy: '当前任务正在处理中，请稍后再试',
     taskStorageChangeBlocked: '更换存储被阻止：{reason}',
     libraryFileDirectoryChangeBlocked: '更换本地资源目录被阻止：{reason}',
@@ -1761,6 +1764,7 @@ export default {
       libraryFileDanmuGenerate: '重新生成弹幕',
       taskDelete: '删除下载任务',
       danmuGenerate: '生成弹幕',
+      subtitleFillMissing: '补全缺失字幕',
     },
     status: {
       queued: '排队中',

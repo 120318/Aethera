@@ -257,6 +257,9 @@ export default {
     queryRequired: 'Query parameter is required',
     commandNotFound: 'Command not found',
     taskNotFound: 'Task not found',
+    addonDisabled: 'Addon is disabled: {addon_id}',
+    addonOperationUnknown: 'Unknown addon operation: {addon_id}.{operation_id}',
+    addonOperationHandlerMissing: 'Addon operation has no handler: {addon_id}.{operation_id}',
     taskBusy: 'This task is currently being processed. Try again later',
     taskStorageChangeBlocked: 'Storage change blocked: {reason}',
     libraryFileDirectoryChangeBlocked: 'Local resource directory change blocked: {reason}',
@@ -1759,6 +1762,7 @@ export default {
       libraryFileDanmuGenerate: 'Regenerate danmu',
       taskDelete: 'Delete download task',
       danmuGenerate: 'Generate danmu',
+      subtitleFillMissing: 'Fill missing subtitles',
     },
     status: {
       queued: 'Queued',
