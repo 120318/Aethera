@@ -477,12 +477,23 @@ class DanmuAddonConfig(BaseModel):
         return max(int(value or 1), 1)
 
 
+class SubtitlesAddonConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = False
+    provider: str = "opensubtitles"
+    api_key: str = ""
+    languages: list[str] = Field(default_factory=lambda: ["zh-cn", "zh-tw", "en"])
+    auto_fill_enabled: bool = False
+
+
 class AddonsConfig(BaseModel):
     """Internal helper."""
     model_config = ConfigDict(extra='allow')
     auth: AuthAddonConfig = Field(default_factory=AuthAddonConfig)
     notifications: NotificationsAddonConfig = Field(default_factory=NotificationsAddonConfig)
     danmu: DanmuAddonConfig = Field(default_factory=DanmuAddonConfig)
+    subtitles: SubtitlesAddonConfig = Field(default_factory=SubtitlesAddonConfig)
 
     @model_validator(mode='before')
     @classmethod

@@ -279,6 +279,7 @@ class LibraryResourceListService:
             CommandType.LIBRARY_FILE_STORAGE_CHANGE,
             CommandType.LIBRARY_FILE_MEDIA_SERVER_SYNC,
             CommandType.LIBRARY_FILE_DANMU_GENERATE,
+            CommandType.ADDON_RUN,
         }
         out: dict[str, CommandRecord] = {}
         for command in commands:

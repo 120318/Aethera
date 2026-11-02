@@ -313,7 +313,7 @@ class LibraryService:
         self,
         *,
         library_file_id: str,
-        artifact_type: LibraryFileArtifactType,
+        artifact_type: str,
         expected_path: str,
         status: LibraryFileArtifactStatus,
         last_error: str | None = None,

@@ -4,6 +4,7 @@ from app.schemas.domain.command import CommandRecord, CommandResult, CommandStat
 
 
 COMMAND_KEY_BY_TYPE = {
+    CommandType.ADDON_RUN: "addonRun",
     CommandType.RESOURCE_SEARCH: "resourceSearch",
     CommandType.SUBSCRIPTION_RUN: "subscriptionRun",
     CommandType.TASK_CREATE: "taskCreate",

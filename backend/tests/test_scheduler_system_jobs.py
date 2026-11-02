@@ -155,7 +155,7 @@ async def test_process_completed_tasks_recovers_stuck_transferring_before_enqueu
         calls.append("recover")
         return 2
 
-    async def enqueue_finished_tasks():
+    async def enqueue_import_tasks():
         calls.append("enqueue")
         return Mock(processed=0)
 
@@ -164,8 +164,8 @@ async def test_process_completed_tasks_recovers_stuck_transferring_before_enqueu
         recover_stuck_transferring_tasks,
     )
     monkeypatch.setattr(
-        "app.core.scheduler.scheduled_transfer_command_service.enqueue_finished_tasks",
-        enqueue_finished_tasks,
+        "app.core.scheduler.scheduled_transfer_command_service.enqueue_import_tasks",
+        enqueue_import_tasks,
     )
 
     await scheduler._process_completed_tasks()

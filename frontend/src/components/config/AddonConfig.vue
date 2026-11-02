@@ -7,6 +7,9 @@
       <div ref="notificationsRef" data-addon-card="notifications">
         <NotificationsAddonCard :config="props.config" />
       </div>
+      <div ref="subtitlesRef" data-addon-card="subtitles">
+        <SubtitlesAddonCard :config="props.config" />
+      </div>
       <div ref="danmuRef" data-addon-card="danmu">
         <DanmuAddonCard :config="props.config" :services-config="props.servicesConfig" />
       </div>
@@ -19,6 +22,7 @@ import { nextTick, ref, watch } from 'vue'
 import AuthAddonCard from '@/components/config/addons/AuthAddonCard.vue'
 import DanmuAddonCard from '@/components/config/addons/DanmuAddonCard.vue'
 import NotificationsAddonCard from '@/components/config/addons/NotificationsAddonCard.vue'
+import SubtitlesAddonCard from '@/components/config/addons/SubtitlesAddonCard.vue'
 
 const props = defineProps({
   config: {
@@ -38,6 +42,7 @@ const props = defineProps({
 const notificationsRef = ref(null)
 const authRef = ref(null)
 const danmuRef = ref(null)
+const subtitlesRef = ref(null)
 const oidcAuthEnabled = import.meta.env.VITE_AETHERA_EXPERIMENTAL_OIDC_AUTH === '1'
 
 function focusAddonCard(name) {
@@ -47,6 +52,7 @@ function focusAddonCard(name) {
     notifications: notificationsRef.value,
     telegram: notificationsRef.value,
     danmu: danmuRef.value,
+    subtitles: subtitlesRef.value,
   }
   const target = targets[name]
   if (!target) return

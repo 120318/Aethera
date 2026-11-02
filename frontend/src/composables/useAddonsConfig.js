@@ -16,6 +16,13 @@ export function useAddonsConfig() {
       enabled: false,
       channels: [],
     },
+    subtitles: {
+      enabled: false,
+      provider: 'opensubtitles',
+      api_key: '',
+      languages: ['zh-cn', 'zh-tw', 'en'],
+      auto_fill_enabled: false,
+    },
     danmu: {
       enabled: false,
       directory_ids: [],

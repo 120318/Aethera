@@ -12,6 +12,7 @@ from app.schemas.media_id import MediaID
 
 
 class CommandType(str, Enum):
+    ADDON_RUN = "addon.run"
     RESOURCE_SEARCH = "resource.search"
     SUBSCRIPTION_RUN = "subscription.run"
     TASK_CREATE = "task.create"
@@ -59,6 +60,16 @@ class CommandInitiator(str, Enum):
 
 class PayloadBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class AddonRunCommandRequestPayload(PayloadBase):
+    addon_id: str = Field(min_length=1)
+    operation_id: str = Field(min_length=1)
+    target: MediaTarget
+    task_id: str | None = None
+    file_id: str | None = None
+    package_root: str = ""
+    event_id: str | None = None
 
 
 class ResourceSearchCommandRequestPayload(PayloadBase):
@@ -166,7 +177,8 @@ class DirectoryIntegrityScanCommandRequestPayload(PayloadBase):
 
 
 CommandRequestPayload = (
-    ResourceSearchCommandRequestPayload
+    AddonRunCommandRequestPayload
+    | ResourceSearchCommandRequestPayload
     | SubscriptionRunCommandRequestPayload
     | TaskCreateCommandRequestPayload
     | PilotEpisodeCommandRequestPayload
@@ -192,6 +204,10 @@ CommandRequestPayload = (
 class ResourceSearchCommandRecordPayload(PayloadBase):
     media: MediaExecutionSnapshot
     site_ids: list[str] = Field(default_factory=list)
+
+
+class AddonRunCommandRecordPayload(AddonRunCommandRequestPayload):
+    pass
 
 
 class SubscriptionRunCommandRecordPayload(PayloadBase):
@@ -302,7 +318,8 @@ class DirectoryIntegrityScanCommandRecordPayload(PayloadBase):
 
 
 CommandRecordPayload = (
-    ResourceSearchCommandRecordPayload
+    AddonRunCommandRecordPayload
+    | ResourceSearchCommandRecordPayload
     | SubscriptionRunCommandRecordPayload
     | TaskCreateCommandRecordPayload
     | PilotEpisodeCommandRecordPayload
@@ -326,6 +343,7 @@ CommandRecordPayload = (
 
 
 REQUEST_PAYLOAD_BY_TYPE: dict[CommandType, type[PayloadBase]] = {
+    CommandType.ADDON_RUN: AddonRunCommandRequestPayload,
     CommandType.RESOURCE_SEARCH: ResourceSearchCommandRequestPayload,
     CommandType.SUBSCRIPTION_RUN: SubscriptionRunCommandRequestPayload,
     CommandType.TASK_CREATE: TaskCreateCommandRequestPayload,
@@ -349,6 +367,7 @@ REQUEST_PAYLOAD_BY_TYPE: dict[CommandType, type[PayloadBase]] = {
 }
 
 RECORD_PAYLOAD_BY_TYPE: dict[CommandType, type[PayloadBase]] = {
+    CommandType.ADDON_RUN: AddonRunCommandRecordPayload,
     CommandType.RESOURCE_SEARCH: ResourceSearchCommandRecordPayload,
     CommandType.SUBSCRIPTION_RUN: SubscriptionRunCommandRecordPayload,
     CommandType.TASK_CREATE: TaskCreateCommandRecordPayload,

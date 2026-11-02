@@ -35,7 +35,10 @@
           </button>
         </div>
         <div class="grid grid-cols-1 gap-item">
-          <InputText v-model="localFilters.keyword" :placeholder="$t('resourceSearch.keywordFilter')" class="w-full" />
+          <div class="flex gap-item">
+            <InputText v-model="localFilters.keyword" :placeholder="$t('resourceSearch.keywordFilter')" class="w-full" />
+            <Button v-if="subtitlesEnabled" :label="$t('localResources.subtitles.fillMissing')" severity="secondary" outlined :loading="subtitleBatchLoading" @click="fillMissing" />
+          </div>
         </div>
       </div>
 
@@ -180,11 +183,12 @@
         </section>
       </template>
     </Dialog>
+    <SubtitleSearchDialog v-model:visible="subtitleDialogVisible" :resource="subtitleResource" />
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import Button from 'primevue/button'
 import DataView from 'primevue/dataview'
 import InputText from 'primevue/inputtext'
@@ -194,9 +198,11 @@ import Dialog from 'primevue/dialog'
 import Select from 'primevue/select'
 import ResourceAttributes from './common/ResourceAttributes.vue'
 import SortControl from '@/components/common/filter/SortControl.vue'
+import SubtitleSearchDialog from '@/components/SubtitleSearchDialog.vue'
 import { getDirectoriesTabConfig } from '@/api/config'
-import { previewLibraryFileDirectoryChange, resolveLibraryMediaServerLink, submitLibraryFileDirectoryChange } from '@/api/resource'
+import { getAddons, previewLibraryFileDirectoryChange, resolveLibraryMediaServerLink, submitLibraryFileDirectoryChange } from '@/api/resource'
 import { ResourceTagType } from '@/constants/resourceTagTypes'
+import { resolveLibraryAddonActions } from '@/addons/resourceActions'
 import { useLocalResourcesList } from '@/composables/useLocalResourcesList'
 import { useLocalResourcesOverview } from '@/composables/useLocalResourcesOverview'
 import { useOperationsStore } from '@/stores/operations'
@@ -264,13 +270,18 @@ const directoryChangeSubmitting = ref(false)
 const directoryChangePreview = ref(null)
 const directoryChangeConfig = ref({ directories: [] })
 const directoryChangeForm = ref({ target_directory_id: '' })
+const subtitlesEnabled = ref(false)
+const addonResourceActions = ref([])
+const subtitleDialogVisible = ref(false)
+const subtitleResource = ref(null)
+const subtitleBatchLoading = ref(false)
 
 const RESOURCES_ROWS_PER_PAGE = 10
 const LIBRARY_FILE_COMMAND_TYPES = [
   'library_file.delete',
   'library_file.storage_change',
   'library_file.media_server_sync',
-  'library_file.danmu_generate',
+  'addon.run',
 ]
 const localResourceVisibleTags = [
   ResourceTagType.DIRECTORY,
@@ -379,7 +390,7 @@ function getResourceTarget() {
   }
 }
 
-async function submitResourceCommand(type, resource) {
+async function submitResourceCommand(type, resource, extraPayload = {}) {
   if (!resource?.id || !props.mediaId) return null
   const targetId = getResourceTargetId(resource)
   const command = await operations.submitCommand(
@@ -389,6 +400,7 @@ async function submitResourceCommand(type, resource) {
         file_id: resource.id,
         target: getResourceTarget(),
         package_root: resource.is_package ? resource.package_root || '' : '',
+        ...extraPayload,
       },
     },
     { dedupeKey: `library_file:${targetId}:${type}` },
@@ -433,6 +445,48 @@ async function openResourceInMediaServer(resource) {
   }
 }
 
+async function fillMissing() {
+  if (!props.mediaId) return
+  subtitleBatchLoading.value = true
+  try {
+    const target = { media_id: props.mediaId }
+    if (props.seasonNumber) target.season_number = props.seasonNumber
+    const command = await operations.submitCommand(
+      {
+        type: 'addon.run',
+        payload: {
+          addon_id: 'subtitles',
+          operation_id: 'fill_missing',
+          target,
+        },
+      },
+      { dedupeKey: `media:${props.mediaId}:${props.seasonNumber || ''}:subtitles.fill_missing` },
+    )
+    if (command) {
+      emit('command-submitted', command)
+      notification.success(t('localResources.subtitles.fillQueued'))
+    }
+  } finally {
+    subtitleBatchLoading.value = false
+  }
+}
+
+function openSubtitleSearch(resource) {
+  subtitleResource.value = resource
+  subtitleDialogVisible.value = true
+}
+
+onMounted(async () => {
+  try {
+    const response = await getAddons()
+    const addons = response?.items || []
+    addonResourceActions.value = resolveLibraryAddonActions(addons)
+    subtitlesEnabled.value = addons.some(item => item.name === 'subtitles' && item.enabled)
+  } catch {
+    subtitlesEnabled.value = false
+  }
+})
+
 function getResourceMenuItems(resource) {
   const items = []
   const disabled = hasActiveResourceOperationCommand(resource)
@@ -450,11 +504,17 @@ function getResourceMenuItems(resource) {
       command: () => submitResourceCommand('library_file.media_server_sync', resource),
     })
   }
-  if (isResourceActionAvailable(resource, 'danmu_generate')) {
+  for (const action of addonResourceActions.value) {
+    if (action.supports && !action.supports(resource)) continue
+    if (action.availabilityAction && !isResourceActionAvailable(resource, action.availabilityAction)) continue
     items.push({
-      label: t('taskLive.actions.danmuGenerate'),
+      label: t(action.labelKey),
       disabled,
-      command: () => submitResourceCommand('library_file.danmu_generate', resource),
+      command: () => action.execute({
+        resource,
+        submitCommand: submitResourceCommand,
+        openSubtitleSearch,
+      }),
     })
   }
   return items

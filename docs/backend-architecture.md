@@ -142,9 +142,12 @@ Boundary rules:
 - Concrete third-party adapters live in `app/services/integration/<capability>/...`.
 - Optional capability workflows live in `app/services/application/workflows/<capability>/...`.
 - Core business semantics still live in `app/services/domain/...`.
-- `/api/v1/addons` exposes only addon framework information and scheduled-task metadata. Auth, notification, danmu, and similar business APIs live under their capability routes.
+- `/api/v1/addons` exposes only addon framework metadata, including declared resource actions and scheduled-task metadata. Auth, notification, danmu, and similar business APIs live under their capability routes.
 - Contribution specs declare extension ownership and stable identities. The command bus, resource views, artifact lifecycle, provider registries, and settings APIs remain the execution owners of their respective contracts.
 - Built-in addons are assembled explicitly in the repository and released with Aethera. Addon discovery does not imply remote code loading, third-party package installation, or addon-owned database migrations.
+- Long-running addon operations use the persisted `addon.run` command contract. The core command worker excludes that type and the addon worker consumes only that type, so addon work remains observable and cannot block ordinary download commands.
+- Event handlers enqueue addon commands; they do not perform network or sidecar work inline. Manual addon commands remain user actions and do not emit automatic notification events.
+- Frontend contributions are same-repository modules selected by stable descriptor IDs. The backend may advertise an action, but the UI renders it only when a built-in implementation exists; arbitrary remote frontend code is never loaded.
 
 ### 3.5 `platform/`
 

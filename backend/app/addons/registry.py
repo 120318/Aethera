@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.config import AddonsConfig
 from app.schemas.domain.action import ActionSource
-from app.schemas.domain.command import CommandTargetType
+from app.schemas.domain.command import AddonRunCommandRecordPayload, CommandResult, CommandTargetType
 from app.schemas.domain.event import Event
 from app.services.application.events.consumer import event_consumer_service
 from app.services.config.settings_service import settings_service
@@ -18,6 +18,7 @@ AddonEnabledChecker = Callable[[AddonsConfig], bool]
 AddonEventHandler = Callable[[Event], Awaitable[None]]
 AddonEventPatternsFactory = Callable[[], list[str]]
 AddonJobsFactory = Callable[[], list["AddonJobSpec"]]
+AddonCommandHandler = Callable[[AddonRunCommandRecordPayload], Awaitable[CommandResult]]
 
 
 def _addon_enabled_default(_config: AddonsConfig) -> bool:
@@ -74,11 +75,13 @@ class AddonContributionSpec(BaseModel):
 
 
 class AddonCommandSpec(AddonContributionSpec):
-    pass
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    handler: AddonCommandHandler | None = None
 
 
 class AddonResourceActionSpec(AddonContributionSpec):
-    command_id: str = Field(min_length=1)
+    command_id: str | None = Field(default=None, min_length=1)
     target_type: CommandTargetType
     interaction_kind: str = Field(default="command", min_length=1)
 
@@ -143,7 +146,7 @@ class AddonRegistry:
     def _validate_contributions(self, addon: AddonDescriptor) -> None:
         command_ids = {item.id for item in addon.commands}
         for action in addon.resource_actions:
-            if action.command_id not in command_ids:
+            if action.command_id is not None and action.command_id not in command_ids:
                 raise ValueError(f"Resource action {action.id} in addon {addon.name} references " f"undeclared command {action.command_id}")
         self._validate_ids(addon.name, "command", [item.id for item in addon.commands], self._command_owners)
         self._validate_ids(
@@ -238,6 +241,15 @@ class AddonRegistry:
         for addon in self._addons:
             if addon.name == name:
                 return addon
+        return None
+
+    def get_command(self, addon_name: str, command_id: str) -> AddonCommandSpec | None:
+        addon = self.get_addon(addon_name)
+        if addon is None:
+            return None
+        for command in addon.commands:
+            if command.id == command_id:
+                return command
         return None
 
     def is_addon_enabled(self, name: str) -> bool:

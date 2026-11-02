@@ -50,7 +50,7 @@ class LibraryFileArtifact(BaseModel):
 
     id: str
     library_file_id: str
-    artifact_type: LibraryFileArtifactType
+    artifact_type: str
     expected_path: str
     status: LibraryFileArtifactStatus = LibraryFileArtifactStatus.pending
     last_success_at: float | None = None

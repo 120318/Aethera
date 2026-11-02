@@ -7,6 +7,14 @@ from app.schemas.domain.action import ActionStatus
 from app.schemas.domain.download import TaskStatus
 
 
+class AddonRunEventMeta(BaseModel):
+    addon_id: str
+    operation_id: str
+    result_count: int = 0
+    failed_count: int = 0
+    error: str = ""
+
+
 class DownloadTaskEventMeta(BaseModel):
     task_id: str
     media_id: MediaID

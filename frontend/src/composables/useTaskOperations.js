@@ -49,7 +49,26 @@ export function useTaskOperations(emit) {
   }
 
   async function handleDanmuGenerate(task) {
-    return submitTaskCommand('task.danmu_generate', task)
+    const taskId = resolveTaskId(task)
+    const mediaId = task?.media_id || task?.task_data?.media_id
+    if (!taskId || !mediaId) return null
+    const target = { media_id: mediaId }
+    const seasonNumber = task?.selected_season || task?.task_data?.metadata?.season_number
+    if (seasonNumber) target.season_number = seasonNumber
+    const command = await operations.submitCommand(
+      {
+        type: 'addon.run',
+        payload: {
+          addon_id: 'danmu',
+          operation_id: 'generate',
+          target,
+          task_id: taskId,
+        },
+      },
+      { dedupeKey: `task:${taskId}:addon.run:danmu.generate` },
+    )
+    if (command) emit('command-submitted', command)
+    return command
   }
 
   async function handleDelete(task, options = {}) {

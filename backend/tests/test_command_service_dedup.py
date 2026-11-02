@@ -12,6 +12,7 @@ pytestmark = [pytest.mark.drift, pytest.mark.health]
 os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
 from app.schemas.domain.command import (
+    AddonRunCommandRecordPayload,
     CommandCreateRequest,
     CommandInitiator,
     CommandRecord,
@@ -788,6 +789,58 @@ async def test_atomic_claim_prevents_mapping_finalizer_from_cancelling_worker_co
     assert claimed_saved.status == CommandStatus.RUNNING
     assert replacement_saved is not None
     assert replacement_saved.status == CommandStatus.READY
+
+
+@pytest.mark.asyncio
+async def test_command_claim_filters_keep_addon_work_out_of_core_worker():
+    repo = CommandRepository()
+    media_id = MediaID.parse("tmdb:tv:1")
+    target = MediaTarget(media_id=media_id, season_number=1)
+    addon_command = CommandRecord(
+        id="cmd-addon-filter",
+        type=CommandType.ADDON_RUN,
+        payload=AddonRunCommandRecordPayload(
+            addon_id="danmu",
+            operation_id="generate",
+            target=target,
+            task_id="task-1",
+        ),
+        media_id=media_id,
+        target=target,
+        target_type=CommandTargetType.TASK,
+        target_id="task-1",
+        created_at=datetime.now() - timedelta(seconds=2),
+    )
+    core_command = _media_command(
+        "cmd-core-filter",
+        CommandType.PROFILE_REFRESH,
+        season_number=1,
+    )
+    core_command.created_at = datetime.now() - timedelta(seconds=1)
+    await repo.insert(addon_command)
+    await repo.insert(core_command)
+
+    try:
+        core_claim = await repo.claim_next_queued(
+            datetime.now().isoformat(),
+            excluded_command_types=[CommandType.ADDON_RUN],
+        )
+        addon_claim = await repo.claim_next_queued(
+            datetime.now().isoformat(),
+            command_types=[CommandType.ADDON_RUN],
+        )
+    finally:
+        with SessionLocal.begin() as session:
+            session.execute(
+                delete(CommandORM).where(
+                    CommandORM.id.in_([addon_command.id, core_command.id])
+                )
+            )
+
+    assert core_claim is not None
+    assert core_claim.id == core_command.id
+    assert addon_claim is not None
+    assert addon_claim.id == addon_command.id
 
 
 @pytest.mark.asyncio
