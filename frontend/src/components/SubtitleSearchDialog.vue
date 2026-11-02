@@ -35,11 +35,11 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { toRef } from 'vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 
-import { installSubtitle, previewSubtitle, searchSubtitles } from '@/api/resource'
+import { useSubtitleSearchDialog } from '@/composables/useSubtitleSearchDialog'
 import { useNotificationStore } from '@/stores/notification'
 import { useI18n } from 'vue-i18n'
 
@@ -50,52 +50,22 @@ const props = defineProps({
 const emit = defineEmits(['update:visible', 'installed'])
 const { t } = useI18n()
 const notification = useNotificationStore()
-const loading = ref(false)
-const installingId = ref('')
-const candidates = ref([])
-const previewingId = ref('')
-const previewCandidateId = ref('')
-const previewContent = ref('')
-
-async function load() {
-  if (!props.visible || !props.resource?.id) return
-  loading.value = true
-  candidates.value = []
-  try {
-    const response = await searchSubtitles(props.resource.id)
-    candidates.value = response?.items || []
-  } finally {
-    loading.value = false
-  }
-}
-
-async function preview(candidate) {
-  previewingId.value = candidate.id
-  try {
-    const result = await previewSubtitle(candidate.file_id)
-    previewCandidateId.value = candidate.id
-    previewContent.value = result?.content || ''
-  } finally {
-    previewingId.value = ''
-  }
-}
+const {
+  loading,
+  installingId,
+  candidates,
+  previewingId,
+  previewCandidateId,
+  previewContent,
+  preview,
+  install: installCandidate,
+} = useSubtitleSearchDialog(toRef(props, 'visible'), toRef(props, 'resource'))
 
 async function install(candidate) {
-  installingId.value = candidate.id
-  try {
-    await installSubtitle({
-      file_id: props.resource.id,
-      candidate_file_id: candidate.file_id,
-      language: candidate.language,
-      format: candidate.format,
-    })
-    notification.success(t('localResources.subtitles.installed'))
-    emit('installed')
-    emit('update:visible', false)
-  } finally {
-    installingId.value = ''
-  }
+  const installed = await installCandidate(candidate)
+  if (!installed) return
+  notification.success(t('localResources.subtitles.installed'))
+  emit('installed')
+  emit('update:visible', false)
 }
-
-watch(() => [props.visible, props.resource?.id], load, { immediate: true })
 </script>

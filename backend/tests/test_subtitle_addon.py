@@ -39,6 +39,18 @@ def test_opensubtitles_hash_uses_file_size_and_edge_chunks(tmp_path: Path):
     assert movie_hash == "0000000000020000"
 
 
+def test_danmu_sidecar_does_not_satisfy_dialogue_subtitle_check(tmp_path: Path):
+    video_path = tmp_path / "episode.mkv"
+    video_path.write_bytes(b"video")
+    video_path.with_name("episode.danmu.ass").write_text("danmu")
+
+    assert SubtitleApplicationService._has_subtitle(video_path) is False
+
+    video_path.with_name("episode.zh-cn.srt").write_text("subtitle")
+
+    assert SubtitleApplicationService._has_subtitle(video_path) is True
+
+
 @pytest.mark.asyncio
 async def test_install_writes_jellyfin_language_sidecar_and_records_artifact(
     tmp_path: Path,

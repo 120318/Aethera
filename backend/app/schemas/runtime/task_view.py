@@ -89,6 +89,7 @@ class TaskViewItem(BaseModel):
     directory_name: str | None = None
     media_type: str | None = None
     media_id: str | None = None
+    season_number: int | None = None
     torrent_hash: str
     downloader_id: str | None = None
     download_client: str | None = None

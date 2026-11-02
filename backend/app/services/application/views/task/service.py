@@ -209,6 +209,7 @@ class TaskViewService:
             directory_name=self._directory_name(directory_id),
             media_type=task.media_id.media_type.value if task.media_id else None,
             media_id=str(task.media_id) if task.media_id else None,
+            season_number=context.media.season_number if context and context.media else None,
             torrent_hash=task.torrent_hash,
             downloader_id=task.downloader_id,
             download_client=task.download_client,

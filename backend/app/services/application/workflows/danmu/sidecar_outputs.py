@@ -7,12 +7,13 @@ from app.schemas.config import DanmuAddonConfig
 from app.services.application.workflows.danmu.formatters import build_ass, build_xml
 from app.services.integration.danmu.models import DanmuFetchResult
 from app.utils.fs_utils import write_text_file
+from app.utils.media_sidecars import danmu_sidecar_path
 
 logger = logging.getLogger("app.application.danmu")
 
 
 def sidecar_path(video_path: Path, suffix: str) -> Path:
-    return video_path.with_name(f"{video_path.stem}.danmu.{suffix}")
+    return danmu_sidecar_path(video_path, suffix)
 
 
 def expected_sidecar_paths(video_path: Path, config: DanmuAddonConfig) -> list[Path]:

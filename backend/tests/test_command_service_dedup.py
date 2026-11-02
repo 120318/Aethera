@@ -12,6 +12,7 @@ pytestmark = [pytest.mark.drift, pytest.mark.health]
 os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
 from app.schemas.domain.command import (
+    AddonRunCommandRequestPayload,
     AddonRunCommandRecordPayload,
     CommandCreateRequest,
     CommandInitiator,
@@ -40,6 +41,7 @@ from app.db.sql.models import ActionORM, CommandORM
 from app.db.sql.session import SessionLocal
 from app.services.audit.event_message_i18n import event_message_key, event_message_params
 from app.services.application.commands.service import CommandService
+from app.services.application.commands.handlers.addon import AddonRunCommandHandler
 from app.schemas.domain.action import (
     ActionActor,
     ActionKind,
@@ -140,6 +142,42 @@ def _pilot_episode_command(command_id: str, *, season_number: int) -> CommandRec
         target_label="Sample (2026)",
         created_at=datetime.now(),
     )
+
+
+@pytest.mark.asyncio
+async def test_media_addon_command_deduplication_is_scoped_by_season(monkeypatch):
+    handler = AddonRunCommandHandler()
+    media_id = MediaID.parse("tmdb:tv:1")
+    monkeypatch.setattr(handler, "_resolve_operation", Mock())
+    monkeypatch.setattr(
+        "app.services.application.commands.handlers.addon.media_service.resolve_execution_snapshot",
+        AsyncMock(
+            side_effect=lambda _, season_number: MediaExecutionSnapshot(
+                media_id=media_id,
+                title="Sample",
+                year=2026,
+                season_number=season_number,
+            )
+        ),
+    )
+
+    async def build(season_number: int) -> CommandRecord:
+        return await handler.build(
+            CommandCreateRequest(
+                type=CommandType.ADDON_RUN,
+                payload=AddonRunCommandRequestPayload(
+                    addon_id="danmu",
+                    operation_id="generate",
+                    target=MediaTarget(media_id=media_id, season_number=season_number),
+                ),
+            )
+        )
+
+    season_one = await build(1)
+    season_two = await build(2)
+
+    assert season_one.uniq_key == "command:addon.run:danmu:generate:media:tmdb:tv:1:season=1"
+    assert season_two.uniq_key == "command:addon.run:danmu:generate:media:tmdb:tv:1:season=2"
 
 
 def test_pilot_episode_action_preserves_media_snapshot_for_notification_navigation():

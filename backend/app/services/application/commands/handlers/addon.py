@@ -63,6 +63,12 @@ class AddonRunCommandHandler:
             )
             target_label = format_media_target_label(media)
 
+        target_scope = f"{target_type.value}:{target_id}"
+        if target_type == CommandTargetType.MEDIA:
+            target_scope = (
+                f"{target_scope}:season={request.target.season_number or 'all'}"
+            )
+
         payload = AddonRunCommandRecordPayload(
             addon_id=request.addon_id,
             operation_id=request.operation_id,
@@ -81,7 +87,7 @@ class AddonRunCommandHandler:
             target=request.target,
             uniq_key=(
                 f"command:{self.command_type.value}:{request.addon_id}:"
-                f"{request.operation_id}:{target_type.value}:{target_id}"
+                f"{request.operation_id}:{target_scope}"
             ),
             target_type=target_type,
             target_id=target_id,

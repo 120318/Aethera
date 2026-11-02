@@ -31,7 +31,7 @@ def _task(status: TaskStatus, *, progress: float = 1.0, error_stage: TaskErrorSt
         context=TaskContext(
             download_url="https://example.com/file.torrent",
             directory_id="dir-1",
-            media={"media_id": media_id, "title": "Test Show", "year": 2024},
+            media={"media_id": media_id, "title": "Test Show", "year": 2024, "season_number": 1},
         ),
         created_at=datetime.now(),
         updated_at=datetime.now(),
@@ -80,6 +80,7 @@ def test_build_task_view_marks_seeding_absent_as_attention_with_delete_only_acti
     assert view.phase_label_key == "taskStatus.status.seedingAbsent"
     assert view.media_type == "tv"
     assert view.media_id == "tmdb:tv:1"
+    assert view.season_number == 1
     assert view.attention_reason_key == "taskStatus.warning.seedingAbsent"
     assert view.actions == [TaskAction.VIEW_DETAIL, TaskAction.DELETE]
     assert [item.action for item in view.action_states if item.available] == view.actions

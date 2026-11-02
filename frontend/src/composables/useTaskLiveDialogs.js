@@ -86,6 +86,9 @@ export function useTaskLiveDialogs(options = {}) {
     return {
       ...(fallbackTask || {}),
       id: viewTask?.id || rawTask?.id || fallbackTask?.id || '',
+      media_id: viewTask?.media_id || fallbackTask?.media_id || '',
+      media_type: viewTask?.media_type || fallbackTask?.media_type || '',
+      season_number: viewTask?.season_number ?? fallbackTask?.season_number ?? null,
       title: viewTask?.title || fallbackTask?.title || t('downloadDialog.unknownResource'),
       description: viewTask?.description || fallbackTask?.description || '',
       attributes: viewTask?.attributes || fallbackTask?.attributes || {},

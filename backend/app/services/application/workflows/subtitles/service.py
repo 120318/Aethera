@@ -20,6 +20,7 @@ from app.services.config.settings_service import settings_service
 from app.services.domain.library.service import library_service
 from app.services.integration.subtitles.opensubtitles import OpenSubtitlesClient
 from app.utils.library_paths import build_library_file_path
+from app.utils.media_sidecars import is_danmu_sidecar_path
 
 SUBTITLE_ARTIFACT_TYPE = "subtitle"
 _HASH_CHUNK_SIZE = 65536
@@ -142,7 +143,10 @@ class SubtitleApplicationService:
     def _has_subtitle(video_path: Path) -> bool:
         prefix = f"{video_path.stem}."
         return any(
-            item.is_file() and item.name.startswith(prefix) and item.suffix.lower().lstrip(".") in _SUBTITLE_FORMATS
+            item.is_file()
+            and item.name.startswith(prefix)
+            and item.suffix.lower().lstrip(".") in _SUBTITLE_FORMATS
+            and not is_danmu_sidecar_path(item)
             for item in video_path.parent.iterdir()
         )
 
