@@ -67,7 +67,7 @@ class OpenSubtitlesClient:
                 continue
             subtitle_file = attributes.files[0]
             file_name = subtitle_file.file_name
-            hash_matched = attributes.match == "moviehash"
+            hash_matched = attributes.moviehash_match
             candidates.append(
                 SubtitleCandidate(
                     id=str(row.id),

@@ -16,7 +16,7 @@ class OpenSubtitlesAttributes(BaseModel):
     release: str = ""
     uploader: OpenSubtitlesUploader = Field(default_factory=OpenSubtitlesUploader)
     download_count: int = 0
-    match: str = ""
+    moviehash_match: bool = False
     hearing_impaired: bool = False
     machine_translated: bool = False
 

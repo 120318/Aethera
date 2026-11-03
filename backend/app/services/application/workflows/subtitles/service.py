@@ -14,6 +14,7 @@ from app.schemas.domain.subtitle import (
     SubtitleInstallRequest,
     SubtitleInstallResponse,
 )
+from app.schemas.exception import InvalidRequestException, ResourceNotFoundException
 from app.services.application.workflows.media_server_sync import refresh_library_file
 from app.services.application.workflows.scoped_seasons import library_file_season_number
 from app.services.config.settings_service import settings_service
@@ -61,7 +62,10 @@ class SubtitleApplicationService:
         config = self._ready_config()
         subtitle_format = request.format.lower()
         if subtitle_format not in _SUBTITLE_FORMATS:
-            raise ValueError("Unsupported subtitle format")
+            raise InvalidRequestException(
+                "backendErrors.subtitleFormatUnsupported",
+                params={"format": request.format},
+            )
         language = self._normalize_language(request.language)
         destination = video_path.with_suffix(f".{language}.{subtitle_format}")
         content = await OpenSubtitlesClient(config.api_key).download(request.candidate_file_id)
@@ -120,18 +124,21 @@ class SubtitleApplicationService:
     async def _resolve_video(self, file_id: str) -> tuple[LibraryFile, Path]:
         library_file = await library_service.find_file_by_id(file_id)
         if library_file is None or not library_service.is_primary_file(library_file):
-            raise ValueError("Library video file does not exist")
+            raise ResourceNotFoundException("backendErrors.resourceFileNotFound")
         video_path = build_library_file_path(library_file.path, library_file.file_name)
         if not video_path.is_file():
-            raise ValueError("Library video file does not exist")
+            raise ResourceNotFoundException("backendErrors.resourceFileNotFound")
         return library_file, video_path
 
     def _ready_config(self) -> SubtitlesAddonConfig:
         config = self.config()
         if not config.enabled:
-            raise ValueError("Subtitles addon is not enabled")
+            raise InvalidRequestException(
+                "backendErrors.addonDisabled",
+                params={"addon_id": "subtitles"},
+            )
         if config.provider != "opensubtitles" or not config.api_key.strip():
-            raise ValueError("OpenSubtitles API key is not configured")
+            raise InvalidRequestException("backendErrors.subtitleProviderNotConfigured")
         return config
 
     @staticmethod
@@ -154,7 +161,7 @@ class SubtitleApplicationService:
     def _opensubtitles_hash(path: Path) -> tuple[str, int]:
         size = path.stat().st_size
         if size < _HASH_CHUNK_SIZE * 2:
-            raise ValueError("Video file is too small for OpenSubtitles hashing")
+            raise InvalidRequestException("backendErrors.subtitleVideoTooSmall")
         value = size
         with path.open("rb") as handle:
             for chunk_offset in (0, size - _HASH_CHUNK_SIZE):

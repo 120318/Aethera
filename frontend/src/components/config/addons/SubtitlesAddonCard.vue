@@ -5,7 +5,7 @@
         <h4 class="m-none text-body font-semibold text-color">{{ $t('settings.addons.subtitles.title') }}</h4>
         <p class="m-none text-caption text-muted">{{ $t('settings.addons.subtitles.description') }}</p>
       </div>
-      <ToggleSwitch :model-value="subtitleConfig.enabled" input-id="addon-subtitles-enabled" @update:model-value="toggleEnabled" />
+      <ToggleSwitch :model-value="subtitleConfig.enabled" input-id="addon-subtitles-enabled" :disabled="saving" @update:model-value="toggleEnabled" />
     </div>
     <div class="ui-settings-card-body">
       <p class="m-none text-caption text-muted">{{ $t('settings.addons.subtitles.providerHint') }}</p>
@@ -34,62 +34,29 @@
       </div>
       <template #footer>
         <Button :label="$t('common.cancel')" severity="secondary" text @click="dialogVisible = false" />
-        <Button :label="$t('common.save')" severity="primary" @click="save" />
+        <Button :label="$t('common.save')" severity="primary" :loading="saving" @click="save" />
       </template>
     </ConfigDialog>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { toRef } from 'vue'
 import Button from 'primevue/button'
 import MultiSelect from 'primevue/multiselect'
 import Password from 'primevue/password'
 import ToggleSwitch from 'primevue/toggleswitch'
 
-import { saveAddons } from '@/api/config'
 import ConfigDialog from '@/components/common/ConfigDialog.vue'
-import { useNotificationStore } from '@/stores/notification'
+import { useSubtitlesAddonConfig } from '@/composables/useSubtitlesAddonConfig'
 
 const props = defineProps({ config: { type: Object, required: true } })
-const { t } = useI18n()
-const notification = useNotificationStore()
-const dialogVisible = ref(false)
-
-function ensureConfig() {
-  if (!props.config.addons.subtitles) {
-    props.config.addons.subtitles = {
-      enabled: false,
-      provider: 'opensubtitles',
-      api_key: '',
-      languages: ['zh-cn', 'zh-tw', 'en'],
-      auto_fill_enabled: false,
-    }
-  }
-  return props.config.addons.subtitles
-}
-
-const subtitleConfig = computed(() => ensureConfig())
-const languageOptions = computed(() => [
-  { label: t('settings.addons.subtitles.simplifiedChinese'), value: 'zh-cn' },
-  { label: t('settings.addons.subtitles.traditionalChinese'), value: 'zh-tw' },
-  { label: t('settings.addons.subtitles.english'), value: 'en' },
-])
-
-async function persist() {
-  const updated = await saveAddons(props.config.addons)
-  Object.assign(props.config.addons, updated)
-  notification.success(t('settings.addons.subtitles.saved'))
-}
-
-async function toggleEnabled(enabled) {
-  subtitleConfig.value.enabled = enabled
-  await persist()
-}
-
-async function save() {
-  await persist()
-  dialogVisible.value = false
-}
+const {
+  dialogVisible,
+  saving,
+  subtitleConfig,
+  languageOptions,
+  toggleEnabled,
+  save,
+} = useSubtitlesAddonConfig(toRef(props, 'config'))
 </script>

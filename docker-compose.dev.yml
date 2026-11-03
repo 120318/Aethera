@@ -65,11 +65,6 @@ services:
       - AETHERA_DEV_HOT_RELOAD=${AETHERA_DEV_HOT_RELOAD:-1}
     depends_on:
       - backend
-    networks:
-      default:
-      proxy:
-        aliases:
-          - aethera-frontend
 
   sqlite-web:
     logging: *aethera-dev-logging
@@ -81,8 +76,3 @@ services:
       - '${AETHERA_SQLITE_WEB_PORT:-8081}:8080'
     depends_on:
       - backend
-
-networks:
-  proxy:
-    external: true
-    name: homelab-proxy-net

@@ -101,6 +101,16 @@ class LibraryFileArtifactRepository:
             session.commit()
             return int(result.rowcount or 0)
 
+    async def update_expected_path(self, artifact_id: str, expected_path: str) -> bool:
+        with SessionLocal() as session:
+            result = session.execute(
+                update(LibraryFileArtifactORM)
+                .where(LibraryFileArtifactORM.id == artifact_id)
+                .values(expected_path=expected_path, updated_at=time.time())
+            )
+            session.commit()
+            return bool(result.rowcount)
+
     async def remove_by_library_file_ids(self, library_file_ids: list[str]) -> int:
         if not library_file_ids:
             return 0

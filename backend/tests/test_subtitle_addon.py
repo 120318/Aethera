@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -8,6 +8,7 @@ from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.subtitle import SubtitleInstallRequest
 from app.schemas.media_id import MediaID
+from app.schemas.exception import InvalidRequestException
 from app.services.application.workflows.subtitles.service import (
     SUBTITLE_ARTIFACT_TYPE,
     SubtitleApplicationService,
@@ -121,3 +122,60 @@ async def test_install_writes_jellyfin_language_sidecar_and_records_artifact(
 def test_opensubtitles_client_rejects_missing_api_key():
     with pytest.raises(ValueError, match="API key"):
         OpenSubtitlesClient("")._headers()
+
+
+@pytest.mark.parametrize(
+    ("config", "message_key"),
+    [
+        (SubtitlesAddonConfig(enabled=False), "backendErrors.addonDisabled"),
+        (
+            SubtitlesAddonConfig(enabled=True, provider="opensubtitles", api_key=""),
+            "backendErrors.subtitleProviderNotConfigured",
+        ),
+    ],
+)
+def test_subtitle_readiness_uses_domain_errors(monkeypatch, config, message_key):
+    service = SubtitleApplicationService()
+    monkeypatch.setattr(service, "config", lambda: config)
+
+    with pytest.raises(InvalidRequestException) as exc_info:
+        service._ready_config()
+
+    assert exc_info.value.message_key == message_key
+
+
+@pytest.mark.asyncio
+async def test_opensubtitles_search_preserves_moviehash_match(monkeypatch):
+    response = Mock()
+    response.raise_for_status = Mock()
+    response.json.return_value = {
+        "data": [
+            {
+                "id": "subtitle-1",
+                "attributes": {
+                    "language": "zh-cn",
+                    "moviehash_match": True,
+                    "files": [{"file_id": 123, "file_name": "episode.srt"}],
+                },
+            }
+        ]
+    }
+    client = AsyncMock()
+    client.get.return_value = response
+    context = AsyncMock()
+    context.__aenter__.return_value = client
+    monkeypatch.setattr(
+        "app.services.integration.subtitles.opensubtitles.httpx.AsyncClient",
+        Mock(return_value=context),
+    )
+
+    candidates = await OpenSubtitlesClient("key").search(
+        movie_hash="hash",
+        movie_size=131072,
+        languages=["zh-cn"],
+        season_number=1,
+        episode_number=1,
+    )
+
+    assert candidates[0].hash_matched is True
+    assert candidates[0].match_confidence == 1.0

@@ -329,6 +329,9 @@ class LibraryService:
     async def mark_artifacts_missing_by_paths(self, paths: list[str]) -> int:
         return await self._artifact_repo.mark_missing_by_paths(paths)
 
+    async def update_artifact_expected_path(self, artifact_id: str, expected_path: str) -> bool:
+        return await self._artifact_repo.update_expected_path(artifact_id, expected_path)
+
     # Registration
     async def upsert_media_entry(self, media_id: MediaID) -> None:
         await self._registration.upsert_media_entry(media_id)

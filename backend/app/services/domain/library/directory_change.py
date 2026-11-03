@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from app.schemas.config import DirectoryConfig
-from app.schemas.domain.library import LibraryFile
+from app.schemas.domain.library import LibraryFile, LibraryFileArtifact
 from app.schemas.exception.exceptions import ResourceNotFoundException
 from app.services.config.settings_service import settings_service
 from app.services.domain.download import download_service
@@ -29,6 +30,13 @@ class LibraryFileDirectoryChangePreview(BaseModel):
     source_directory_id: str = ""
     target_directory_id: str = ""
     target_directory_name: str = ""
+
+
+@dataclass(frozen=True)
+class _ArtifactMove:
+    source_path: Path
+    target_path: Path
+    artifact: LibraryFileArtifact
 
 
 class LibraryFileDirectoryChangeService:
@@ -99,6 +107,9 @@ class LibraryFileDirectoryChangeService:
             blockers.append("source_file_missing")
         if self._has_target_conflicts(files, target_directory):
             blockers.append("target_file_exists")
+        artifact_moves = await self._build_artifact_moves(files, target_directory)
+        if any(move.source_path != move.target_path and move.target_path.exists() for move in artifact_moves):
+            blockers.append("target_artifact_exists")
         preview.blockers = blockers
         preview.ok = not blockers
 
@@ -130,10 +141,47 @@ class LibraryFileDirectoryChangeService:
             moves.append((source_path, (target_base / suffix).resolve(strict=False), file))
         return moves
 
+    async def _build_artifact_moves(
+        self,
+        files: list[LibraryFile],
+        target_directory: DirectoryConfig,
+    ) -> list[_ArtifactMove]:
+        file_moves = self._build_moves(files, target_directory)
+        artifacts = await library_service.get_artifacts_by_file_ids([file.id for file in files])
+        artifacts_by_file_id: dict[str, list[LibraryFileArtifact]] = {}
+        for artifact in artifacts:
+            artifacts_by_file_id.setdefault(artifact.library_file_id, []).append(artifact)
+        moves: list[_ArtifactMove] = []
+        for source_video, target_video, library_file in file_moves:
+            for artifact in artifacts_by_file_id.get(library_file.id, []):
+                source_artifact = Path(artifact.expected_path).resolve(strict=False)
+                suffix = self._sidecar_suffix(source_video, source_artifact)
+                if suffix is None:
+                    continue
+                moves.append(
+                    _ArtifactMove(
+                        source_path=source_artifact,
+                        target_path=target_video.with_name(f"{target_video.stem}{suffix}"),
+                        artifact=artifact,
+                    )
+                )
+        return moves
+
+    @staticmethod
+    def _sidecar_suffix(video_path: Path, artifact_path: Path) -> str | None:
+        if artifact_path.parent != video_path.parent:
+            return None
+        if artifact_path == video_path or not artifact_path.name.startswith(video_path.stem):
+            return None
+        suffix = artifact_path.name[len(video_path.stem) :]
+        return suffix if suffix.startswith((".", "-")) else None
+
     async def _move_files(self, files: list[LibraryFile], target_directory: DirectoryConfig) -> bool:
         moves = self._build_moves(files, target_directory)
+        artifact_moves = await self._build_artifact_moves(files, target_directory)
         moved: list[tuple[Path, Path]] = []
         updated: list[LibraryFile] = []
+        updated_artifacts: list[LibraryFileArtifact] = []
         try:
             for source_path, target_path, _file in moves:
                 if source_path == target_path:
@@ -141,6 +189,12 @@ class LibraryFileDirectoryChangeService:
                 ensure_directory(target_path.parent)
                 shutil.move(str(source_path), str(target_path))
                 moved.append((source_path, target_path))
+            for move in artifact_moves:
+                if move.source_path == move.target_path or not move.source_path.exists():
+                    continue
+                ensure_directory(move.target_path.parent)
+                shutil.move(str(move.source_path), str(move.target_path))
+                moved.append((move.source_path, move.target_path))
             for _source_path, target_path, file in moves:
                 next_path, next_name = split_library_storage_path(str(target_path))
                 if not await library_service.update_file_location(
@@ -149,15 +203,30 @@ class LibraryFileDirectoryChangeService:
                     path=next_path,
                     file_name=next_name,
                 ):
-                    await self._rollback(moved, updated)
+                    await self._rollback(moved, updated, updated_artifacts)
                     return False
                 updated.append(file)
+            for move in artifact_moves:
+                if not await library_service.update_artifact_expected_path(
+                    move.artifact.id,
+                    str(move.target_path),
+                ):
+                    await self._rollback(moved, updated, updated_artifacts)
+                    return False
+                updated_artifacts.append(move.artifact)
         except OSError:
-            await self._rollback(moved, updated)
+            await self._rollback(moved, updated, updated_artifacts)
             return False
         return True
 
-    async def _rollback(self, moved: list[tuple[Path, Path]], updated: list[LibraryFile]) -> None:
+    async def _rollback(
+        self,
+        moved: list[tuple[Path, Path]],
+        updated: list[LibraryFile],
+        updated_artifacts: list[LibraryFileArtifact],
+    ) -> None:
+        for artifact in reversed(updated_artifacts):
+            await library_service.update_artifact_expected_path(artifact.id, artifact.expected_path)
         for file in reversed(updated):
             await library_service.update_file_location(
                 file.id,
