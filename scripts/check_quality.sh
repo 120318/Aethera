@@ -32,7 +32,9 @@ LANGUAGE_TOKEN_EXTENSIONS="${LANGUAGE_TOKEN_EXTENSIONS:-.py,.sh,.js,.vue,.json,.
   backend scripts/check_backend_quality.py
 
 mapfile -t QUALITY_TEST_FILES < <(
-  cd "$ROOT_DIR/backend" && rg -l "pytestmark\\s*=.*\\b(drift|health|aggregation)\\b|@pytest\\.mark\\.(drift|health|aggregation)" tests | sort
+  cd "$ROOT_DIR/backend" && git grep -l -E \
+    -- "pytestmark[[:space:]]*=.*(drift|health|aggregation)|@pytest\\.mark\\.(drift|health|aggregation)" \
+    -- tests | sort
 )
 
 "$ROOT_DIR/aethera.sh" test-backend "${QUALITY_TEST_FILES[@]}" -m "drift or health or aggregation"

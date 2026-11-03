@@ -13,7 +13,7 @@ from app.addons.registry import (
     AddonSettingsSectionSpec,
     addon_service,
 )
-from app.addons.descriptors import _notifications_enabled
+from app.addons.descriptors import _danmu_enabled, _notifications_enabled
 from app.schemas.config import AddonsConfig, TelegramNotificationChannelConfig
 from app.services.platform.auth_provider_service import auth_provider_service
 from app.services.platform.notification_channel_service import notification_channel_service
@@ -49,6 +49,12 @@ def build_dummy_addon() -> AddonDescriptor:
 
 
 class TestAddonServiceContracts(unittest.TestCase):
+    def test_danmu_addon_requires_an_output_directory(self):
+        self.assertFalse(_danmu_enabled(AddonsConfig(danmu={"enabled": True})))
+        self.assertTrue(
+            _danmu_enabled(AddonsConfig(danmu={"enabled": True, "directory_ids": ["dir-1"]}))
+        )
+
     def test_descriptor_declares_extension_contributions(self):
         addon = AddonDescriptor(
             name="sample",

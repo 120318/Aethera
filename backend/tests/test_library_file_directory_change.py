@@ -223,19 +223,15 @@ def test_library_resource_change_directory_action_requires_deleted_task(tmp_path
     context = _LibraryActionAvailabilityContext(
         media_server_open_enabled_directory_ids=set(),
         media_server_sync_enabled_directory_ids=set(),
-        danmu_enabled_directory_ids=set(),
-        danmu_media_available=False,
         existing_task_ids={"task-1"},
     )
 
-    assert service._resolve_action_context([library_file], context) == (False, False, False, False)
+    assert service._resolve_action_context([library_file], context) == (False, False, False)
 
     context = _LibraryActionAvailabilityContext(
         media_server_open_enabled_directory_ids=set(),
         media_server_sync_enabled_directory_ids=set(),
-        danmu_enabled_directory_ids=set(),
-        danmu_media_available=False,
         existing_task_ids=set(),
     )
 
-    assert service._resolve_action_context([library_file], context) == (False, False, False, True)
+    assert service._resolve_action_context([library_file], context) == (False, False, True)

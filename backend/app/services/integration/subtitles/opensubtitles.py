@@ -47,7 +47,7 @@ class OpenSubtitlesClient:
         if episode_number is not None:
             params["episode_number"] = episode_number
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 response = await client.get(
                     f"{self.base_url}/subtitles",
                     headers=self._headers(),
@@ -89,7 +89,7 @@ class OpenSubtitlesClient:
 
     async def download(self, file_id: int) -> bytes:
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 response = await client.post(
                     f"{self.base_url}/download",
                     headers=self._headers(),

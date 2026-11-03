@@ -217,9 +217,10 @@ async def test_opensubtitles_search_preserves_moviehash_match(monkeypatch):
     client.get.return_value = response
     context = AsyncMock()
     context.__aenter__.return_value = client
+    client_factory = Mock(return_value=context)
     monkeypatch.setattr(
         "app.services.integration.subtitles.opensubtitles.httpx.AsyncClient",
-        Mock(return_value=context),
+        client_factory,
     )
 
     candidates = await OpenSubtitlesClient("key").search(
@@ -232,3 +233,30 @@ async def test_opensubtitles_search_preserves_moviehash_match(monkeypatch):
 
     assert candidates[0].hash_matched is True
     assert candidates[0].match_confidence == 1.0
+    client_factory.assert_called_once_with(timeout=30.0, follow_redirects=True)
+
+
+@pytest.mark.asyncio
+async def test_opensubtitles_download_follows_redirected_file_link(monkeypatch):
+    download_response = Mock()
+    download_response.raise_for_status = Mock()
+    download_response.json.return_value = {"link": "https://download.opensubtitles.com/subtitle.srt"}
+    subtitle_response = Mock()
+    subtitle_response.raise_for_status = Mock()
+    subtitle_response.content = b"subtitle"
+    client = AsyncMock()
+    client.post.return_value = download_response
+    client.get.return_value = subtitle_response
+    context = AsyncMock()
+    context.__aenter__.return_value = client
+    client_factory = Mock(return_value=context)
+    monkeypatch.setattr(
+        "app.services.integration.subtitles.opensubtitles.httpx.AsyncClient",
+        client_factory,
+    )
+
+    content = await OpenSubtitlesClient("key").download(123)
+
+    assert content == b"subtitle"
+    client_factory.assert_called_once_with(timeout=30.0, follow_redirects=True)
+    client.get.assert_awaited_once_with("https://download.opensubtitles.com/subtitle.srt")

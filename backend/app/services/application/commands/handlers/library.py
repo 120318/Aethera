@@ -10,7 +10,6 @@ from app.schemas.domain.command import (
     CommandResult,
     CommandTargetType,
     CommandType,
-    LibraryFileDanmuGenerateCommandRecordPayload,
     LibraryFileDeleteCommandRecordPayload,
     LibraryFileMediaServerSyncCommandRecordPayload,
     LibraryFileStorageChangeCommandRecordPayload,
@@ -19,7 +18,6 @@ from app.schemas.domain.command import (
 from app.schemas.domain.event import EventActor
 from app.schemas.domain.library import LibraryFile
 from app.schemas.runtime.command_runtime import CommandActionContext
-from app.services.application.workflows.danmu import danmu_application_service
 from app.services.application.workflows.media_resource_deletion import media_resource_deletion_service
 from app.services.application.workflows.media_server_sync.service import media_server_sync_service
 from app.services.application.commands.target_labels import format_media_target_label
@@ -243,55 +241,6 @@ class LibraryFileStorageChangeCommandHandler(_LibraryFileOperationMixin):
         return CommandActionContext(media_id=payload.target.media_id)
 
 
-class LibraryFileDanmuGenerateCommandHandler(_LibraryFileOperationMixin):
-    command_type = CommandType.LIBRARY_FILE_DANMU_GENERATE
-
-    async def build(self, body: CommandCreateRequest) -> CommandRecord:
-        request = body.payload
-        library_file = await self._resolve_library_file(request.file_id)
-        target_id = self._target_id(request)
-        media = await media_service.resolve_execution_snapshot(
-            request.target.media_id,
-            season_number=request.target.season_number,
-        )
-        payload = LibraryFileDanmuGenerateCommandRecordPayload(
-            file_id=library_file.id,
-            target=request.target,
-            package_root=request.package_root,
-        )
-        return CommandRecord(
-            id=str(uuid.uuid4()),
-            type=CommandType.LIBRARY_FILE_DANMU_GENERATE,
-            payload=payload,
-            initiator=body.initiator,
-            media_id=request.target.media_id,
-            target=request.target,
-            uniq_key=f"command:{CommandType.LIBRARY_FILE_DANMU_GENERATE.value}:{target_id}",
-            target_type=CommandTargetType.LIBRARY_FILE,
-            target_id=target_id,
-            target_label=format_media_target_label(media),
-        )
-
-    async def execute(self, command: CommandRecord) -> CommandResult:
-        payload = command.payload
-        files = await self._resolve_library_files(payload.file_id, payload.package_root)
-        count = await danmu_application_service.run_for_library_files(files)
-        return CommandResult(result_count=count)
-
-    def resolve_running_message(self) -> str:
-        return "Regenerating danmu"
-
-    def resolve_success_message(self, result: CommandResult) -> str:
-        return f"Danmu generation completed, processed {result.result_count} files"
-
-    def resolve_failed_message(self) -> str:
-        return "Danmu generation failed"
-
-    def resolve_action_context(self, command: CommandRecord) -> CommandActionContext:
-        payload = command.payload
-        return CommandActionContext(media_id=payload.target.media_id)
-
-
 class MediaDeleteCommandHandler:
     command_type = CommandType.MEDIA_DELETE
 
@@ -364,5 +313,4 @@ def register_library_command_handlers(registry) -> None:
     registry.register(LibraryFileDeleteCommandHandler())
     registry.register(LibraryFileStorageChangeCommandHandler())
     registry.register(LibraryFileMediaServerSyncCommandHandler())
-    registry.register(LibraryFileDanmuGenerateCommandHandler())
     registry.register(MediaDeleteCommandHandler())

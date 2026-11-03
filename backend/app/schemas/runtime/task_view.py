@@ -39,7 +39,6 @@ class TaskAction(str, Enum):
     RESUME = "resume"
     TRANSFER = "transfer"
     MEDIA_SERVER_SYNC = "media_server_sync"
-    DANMU_GENERATE = "danmu_generate"
     CHANGE_DOWNLOADER = "change_downloader"
     DELETE = "delete"
 

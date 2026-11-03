@@ -581,15 +581,7 @@ const hasActiveDeleteCommand = (resource) => {
 }
 
 const hasActiveResourceOperationCommand = (resource) => {
-  return isResourceActionBusy(
-    resource,
-    'media_server_sync',
-    LIBRARY_FILE_COMMAND_TYPES
-  ) || isResourceActionBusy(
-    resource,
-    'danmu_generate',
-    LIBRARY_FILE_COMMAND_TYPES
-  )
+  return !!getActiveLibraryFileCommand(resource, LIBRARY_FILE_COMMAND_TYPES)
 }
 </script>
 

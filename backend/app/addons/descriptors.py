@@ -56,7 +56,7 @@ def _notification_event_patterns() -> list[str]:
 
 
 def _danmu_enabled(config: AddonsConfig) -> bool:
-    return config.danmu.enabled
+    return config.danmu.enabled and bool(config.danmu.directory_ids)
 
 
 def _subtitles_enabled(config: AddonsConfig) -> bool:
@@ -106,7 +106,7 @@ def _danmu_event_patterns() -> list[str]:
 
 def _danmu_jobs() -> list[AddonJobSpec]:
     config = danmu_application_service.config()
-    if not config.enabled or not config.backfill_enabled:
+    if not config.enabled or not config.directory_ids or not config.backfill_enabled:
         return []
     return [
         AddonJobSpec(

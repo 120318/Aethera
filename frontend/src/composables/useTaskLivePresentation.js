@@ -2,7 +2,7 @@ import { formatSizeBytes } from '@/utils/formatters'
 import { useI18n } from 'vue-i18n'
 import { onMounted, reactive } from 'vue'
 import { getAddons } from '@/api/resource'
-import { resolveTaskAddonActions } from '@/addons/resourceActions'
+import { resolveTaskAddonActions } from '@/addons/registry'
 
 function isTaskCreatePlaceholder(task) {
   return !!task?._taskCreatePlaceholder
@@ -94,6 +94,7 @@ export function useTaskLivePresentation(options = {}) {
 
   function isActionVisible(action, task) {
     if (action.id === 'detail') return true
+    if (action.addonAction) return action.supports?.(task) !== false
     const state = resolveActionState(action, task)
     if (state) return state.available !== false
     const actions = Array.isArray(task.actions) ? task.actions : []

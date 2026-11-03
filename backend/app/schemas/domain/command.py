@@ -23,11 +23,9 @@ class CommandType(str, Enum):
     TASK_EPISODE_BATCH_IMPORT = "task.episode_batch_import"
     TASK_STORAGE_CHANGE = "task.storage_change"
     TASK_MEDIA_SERVER_SYNC = "task.media_server_sync"
-    TASK_DANMU_GENERATE = "task.danmu_generate"
     LIBRARY_FILE_DELETE = "library_file.delete"
     LIBRARY_FILE_STORAGE_CHANGE = "library_file.storage_change"
     LIBRARY_FILE_MEDIA_SERVER_SYNC = "library_file.media_server_sync"
-    LIBRARY_FILE_DANMU_GENERATE = "library_file.danmu_generate"
     TASK_DELETE = "task.delete"
     MEDIA_DELETE = "media.delete"
     PROFILE_REFRESH = "profile.refresh"
@@ -109,10 +107,6 @@ class TaskMediaServerSyncCommandRequestPayload(PayloadBase):
     task_id: str
 
 
-class TaskDanmuGenerateCommandRequestPayload(PayloadBase):
-    task_id: str
-
-
 class TaskPauseCommandRequestPayload(PayloadBase):
     task_id: str
 
@@ -136,12 +130,6 @@ class LibraryFileStorageChangeCommandRequestPayload(PayloadBase):
 
 
 class LibraryFileMediaServerSyncCommandRequestPayload(PayloadBase):
-    file_id: str
-    target: MediaTarget
-    package_root: str = ""
-
-
-class LibraryFileDanmuGenerateCommandRequestPayload(PayloadBase):
     file_id: str
     target: MediaTarget
     package_root: str = ""
@@ -186,13 +174,11 @@ CommandRequestPayload = (
     | TaskEpisodeBatchImportCommandRequestPayload
     | TaskStorageChangeCommandRequestPayload
     | TaskMediaServerSyncCommandRequestPayload
-    | TaskDanmuGenerateCommandRequestPayload
     | TaskPauseCommandRequestPayload
     | TaskResumeCommandRequestPayload
     | LibraryFileDeleteCommandRequestPayload
     | LibraryFileStorageChangeCommandRequestPayload
     | LibraryFileMediaServerSyncCommandRequestPayload
-    | LibraryFileDanmuGenerateCommandRequestPayload
     | TaskDeleteCommandRequestPayload
     | ProfileRefreshCommandRequestPayload
     | MediaDeleteCommandRequestPayload
@@ -247,11 +233,6 @@ class TaskMediaServerSyncCommandRecordPayload(PayloadBase):
     target: MediaTarget
 
 
-class TaskDanmuGenerateCommandRecordPayload(PayloadBase):
-    resolved_task_id: str
-    target: MediaTarget
-
-
 class TaskPauseCommandRecordPayload(PayloadBase):
     resolved_task_id: str
     target: MediaTarget
@@ -277,12 +258,6 @@ class LibraryFileStorageChangeCommandRecordPayload(PayloadBase):
 
 
 class LibraryFileMediaServerSyncCommandRecordPayload(PayloadBase):
-    file_id: str
-    target: MediaTarget
-    package_root: str = ""
-
-
-class LibraryFileDanmuGenerateCommandRecordPayload(PayloadBase):
     file_id: str
     target: MediaTarget
     package_root: str = ""
@@ -327,13 +302,11 @@ CommandRecordPayload = (
     | TaskEpisodeBatchImportCommandRecordPayload
     | TaskStorageChangeCommandRecordPayload
     | TaskMediaServerSyncCommandRecordPayload
-    | TaskDanmuGenerateCommandRecordPayload
     | TaskPauseCommandRecordPayload
     | TaskResumeCommandRecordPayload
     | LibraryFileDeleteCommandRecordPayload
     | LibraryFileStorageChangeCommandRecordPayload
     | LibraryFileMediaServerSyncCommandRecordPayload
-    | LibraryFileDanmuGenerateCommandRecordPayload
     | TaskDeleteCommandRecordPayload
     | ProfileRefreshCommandRecordPayload
     | MediaDeleteCommandRecordPayload
@@ -352,13 +325,11 @@ REQUEST_PAYLOAD_BY_TYPE: dict[CommandType, type[PayloadBase]] = {
     CommandType.TASK_EPISODE_BATCH_IMPORT: TaskEpisodeBatchImportCommandRequestPayload,
     CommandType.TASK_STORAGE_CHANGE: TaskStorageChangeCommandRequestPayload,
     CommandType.TASK_MEDIA_SERVER_SYNC: TaskMediaServerSyncCommandRequestPayload,
-    CommandType.TASK_DANMU_GENERATE: TaskDanmuGenerateCommandRequestPayload,
     CommandType.TASK_PAUSE: TaskPauseCommandRequestPayload,
     CommandType.TASK_RESUME: TaskResumeCommandRequestPayload,
     CommandType.LIBRARY_FILE_DELETE: LibraryFileDeleteCommandRequestPayload,
     CommandType.LIBRARY_FILE_STORAGE_CHANGE: LibraryFileStorageChangeCommandRequestPayload,
     CommandType.LIBRARY_FILE_MEDIA_SERVER_SYNC: LibraryFileMediaServerSyncCommandRequestPayload,
-    CommandType.LIBRARY_FILE_DANMU_GENERATE: LibraryFileDanmuGenerateCommandRequestPayload,
     CommandType.TASK_DELETE: TaskDeleteCommandRequestPayload,
     CommandType.MEDIA_DELETE: MediaDeleteCommandRequestPayload,
     CommandType.PROFILE_REFRESH: ProfileRefreshCommandRequestPayload,
@@ -376,13 +347,11 @@ RECORD_PAYLOAD_BY_TYPE: dict[CommandType, type[PayloadBase]] = {
     CommandType.TASK_EPISODE_BATCH_IMPORT: TaskEpisodeBatchImportCommandRecordPayload,
     CommandType.TASK_STORAGE_CHANGE: TaskStorageChangeCommandRecordPayload,
     CommandType.TASK_MEDIA_SERVER_SYNC: TaskMediaServerSyncCommandRecordPayload,
-    CommandType.TASK_DANMU_GENERATE: TaskDanmuGenerateCommandRecordPayload,
     CommandType.TASK_PAUSE: TaskPauseCommandRecordPayload,
     CommandType.TASK_RESUME: TaskResumeCommandRecordPayload,
     CommandType.LIBRARY_FILE_DELETE: LibraryFileDeleteCommandRecordPayload,
     CommandType.LIBRARY_FILE_STORAGE_CHANGE: LibraryFileStorageChangeCommandRecordPayload,
     CommandType.LIBRARY_FILE_MEDIA_SERVER_SYNC: LibraryFileMediaServerSyncCommandRecordPayload,
-    CommandType.LIBRARY_FILE_DANMU_GENERATE: LibraryFileDanmuGenerateCommandRecordPayload,
     CommandType.TASK_DELETE: TaskDeleteCommandRecordPayload,
     CommandType.MEDIA_DELETE: MediaDeleteCommandRecordPayload,
     CommandType.PROFILE_REFRESH: ProfileRefreshCommandRecordPayload,

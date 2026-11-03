@@ -4,7 +4,7 @@ import logging
 import time
 
 from app.schemas.domain.command import CommandRecord, CommandTargetType, CommandType
-from app.schemas.config import DanmuAddonConfig, Tag
+from app.schemas.config import Tag
 from app.schemas.domain.library import LibraryFile, LibraryPackageSummary
 from app.schemas.domain.media import MediaExecutionSnapshot, MediaSimpleInfo
 from app.schemas.domain.media_types import MediaType
@@ -19,8 +19,6 @@ from app.schemas.runtime.library_resource_list import (
     LibraryResourceListItem,
 )
 from app.services.application.commands.service import command_service
-from app.services.application.workflows.danmu import danmu_application_service
-from app.services.application.workflows.danmu.source_resolver import danmu_source_resolver
 from app.services.application.workflows.media_server_sync.config import media_server_sync_config
 from app.services.config.settings_service import settings_service
 from app.services.domain.download import download_service
@@ -37,8 +35,6 @@ logger = logging.getLogger("app.library_resource_list")
 class _LibraryActionAvailabilityContext:
     media_server_open_enabled_directory_ids: set[str]
     media_server_sync_enabled_directory_ids: set[str]
-    danmu_enabled_directory_ids: set[str]
-    danmu_media_available: bool
     existing_task_ids: set[str] = field(default_factory=set)
 
 
@@ -145,11 +141,7 @@ class LibraryResourceListService:
         resources = self._build_resource_list(library_files, tags=tags)
         resource_files_map = self._build_resource_files_map(resources, library_files)
         active_command_map = self._build_active_command_map(active_commands)
-        action_context = await self._build_action_availability_context(
-            library_files,
-            media_id=media_id,
-            season_number=active_season_number,
-        )
+        action_context = await self._build_action_availability_context(library_files)
         action_context_map = await self._resolve_action_context_map(resources, resource_files_map, action_context)
         return LibraryListResponse(
             media_id=media_id,
@@ -278,7 +270,6 @@ class LibraryResourceListService:
             CommandType.LIBRARY_FILE_DELETE,
             CommandType.LIBRARY_FILE_STORAGE_CHANGE,
             CommandType.LIBRARY_FILE_MEDIA_SERVER_SYNC,
-            CommandType.LIBRARY_FILE_DANMU_GENERATE,
             CommandType.ADDON_RUN,
         }
         out: dict[str, CommandRecord] = {}
@@ -297,7 +288,7 @@ class LibraryResourceListService:
         resources: list[LibraryResourceListItem],
         resource_files_map: dict[str, list[LibraryFile]],
         context: _LibraryActionAvailabilityContext,
-    ) -> dict[str, tuple[bool, bool, bool, bool]]:
+    ) -> dict[str, tuple[bool, bool, bool]]:
         return {
             target_id: self._resolve_action_context(resource_files_map.get(target_id, []), context)
             for resource in resources
@@ -307,16 +298,11 @@ class LibraryResourceListService:
     async def _build_action_availability_context(
         self,
         library_files: list[LibraryFile],
-        *,
-        media_id: MediaID,
-        season_number: int | None,
     ) -> _LibraryActionAvailabilityContext:
         if not library_files:
             return _LibraryActionAvailabilityContext(
                 media_server_open_enabled_directory_ids=set(),
                 media_server_sync_enabled_directory_ids=set(),
-                danmu_enabled_directory_ids=set(),
-                danmu_media_available=False,
                 existing_task_ids=set(),
             )
 
@@ -342,59 +328,26 @@ class LibraryResourceListService:
             for directory in settings_service.list_directories()
             if directory.id and directory.enabled and directory.media_server_id in sync_enabled_media_server_ids
         }
-        danmu_config = danmu_application_service.config()
-        danmu_enabled_directory_ids = set(danmu_config.directory_ids or []) if danmu_config.enabled else set()
-        has_danmu_candidate_file = any(
-            library_service.is_primary_file(file) and file.directory_id in danmu_enabled_directory_ids
-            for file in library_files
-        )
-        danmu_media_available = False
-        if has_danmu_candidate_file:
-            danmu_media_available = await self._resolve_danmu_media_available(
-                media_id,
-                season_number=season_number,
-                danmu_enabled_directory_ids=danmu_enabled_directory_ids,
-                danmu_config=danmu_config,
-            )
         return _LibraryActionAvailabilityContext(
             media_server_open_enabled_directory_ids=media_server_open_enabled_directory_ids,
             media_server_sync_enabled_directory_ids=media_server_sync_enabled_directory_ids,
-            danmu_enabled_directory_ids=danmu_enabled_directory_ids,
-            danmu_media_available=danmu_media_available,
             existing_task_ids=set(existing_tasks.keys()),
         )
-
-    async def _resolve_danmu_media_available(
-        self,
-        media_id: MediaID,
-        *,
-        season_number: int | None,
-        danmu_enabled_directory_ids: set[str],
-        danmu_config: DanmuAddonConfig,
-    ) -> bool:
-        if not danmu_enabled_directory_ids:
-            return False
-        resolved = await danmu_source_resolver.media_with_fetchable_source(
-            media_id,
-            season_number=season_number,
-            config=danmu_config,
-        )
-        return bool(resolved and danmu_source_resolver.has_fetchable_vendor(resolved, danmu_config))
 
     def _resolve_action_context(
         self,
         library_files: list[LibraryFile],
         context: _LibraryActionAvailabilityContext,
-    ) -> tuple[bool, bool, bool, bool]:
+    ) -> tuple[bool, bool, bool]:
         if not library_files:
-            return False, False, False, False
+            return False, False, False
         primary_existing_files = [
             library_file
             for library_file in library_files
             if library_service.is_primary_file(library_file)
         ]
         if not primary_existing_files:
-            return False, False, False, False
+            return False, False, False
         media_server_open_available = any(
             library_file.directory_id in context.media_server_open_enabled_directory_ids
             for library_file in primary_existing_files
@@ -403,21 +356,16 @@ class LibraryResourceListService:
             library_file.directory_id in context.media_server_sync_enabled_directory_ids
             for library_file in primary_existing_files
         )
-        danmu_available = bool(
-            context.danmu_media_available
-            and any(library_file.directory_id in context.danmu_enabled_directory_ids for library_file in primary_existing_files)
-        )
         directory_change_available = not any(library_file.task_id in context.existing_task_ids for library_file in library_files)
-        return media_server_open_available, media_server_sync_available, danmu_available, directory_change_available
+        return media_server_open_available, media_server_sync_available, directory_change_available
 
     def _apply_action_states(
         self,
         resource: LibraryResourceListItem,
         active_command: CommandRecord | None,
-        action_context: tuple[bool, bool, bool, bool],
+        action_context: tuple[bool, bool, bool],
     ) -> LibraryResourceListItem:
-        media_server_open_available, media_server_sync_available, danmu_available, *rest = action_context
-        directory_change_available = rest[0] if rest else False
+        media_server_open_available, media_server_sync_available, directory_change_available = action_context
         states = [
             LibraryResourceActionState(action=LibraryResourceAction.VIEW_DETAIL),
             LibraryResourceActionState(action=LibraryResourceAction.DELETE),
@@ -426,8 +374,6 @@ class LibraryResourceListService:
             states.append(LibraryResourceActionState(action=LibraryResourceAction.MEDIA_SERVER_OPEN))
         if media_server_sync_available:
             states.append(LibraryResourceActionState(action=LibraryResourceAction.MEDIA_SERVER_SYNC))
-        if danmu_available:
-            states.append(LibraryResourceActionState(action=LibraryResourceAction.DANMU_GENERATE))
         if directory_change_available:
             states.append(LibraryResourceActionState(action=LibraryResourceAction.CHANGE_DIRECTORY))
         if active_command:

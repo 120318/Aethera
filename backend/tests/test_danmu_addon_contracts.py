@@ -82,7 +82,14 @@ class TestDanmuAddonContracts(unittest.TestCase):
 
     def test_danmu_backfill_job_registered_when_enabled(self):
         config = AddonsConfig.model_validate(
-            {"danmu": {"enabled": True, "backfill_enabled": True, "backfill_interval_seconds": 600}}
+            {
+                "danmu": {
+                    "enabled": True,
+                    "directory_ids": ["dir-1"],
+                    "backfill_enabled": True,
+                    "backfill_interval_seconds": 600,
+                }
+            }
         )
 
         with patch("app.addons.descriptors.danmu_application_service.config", return_value=config.danmu):

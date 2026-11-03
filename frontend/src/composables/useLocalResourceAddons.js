@@ -2,7 +2,7 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { getAddons } from '@/api/resource'
-import { resolveLibraryAddonActions } from '@/addons/resourceActions'
+import { resolveLibraryAddonActions } from '@/addons/registry'
 import { useNotificationStore } from '@/stores/notification'
 import { useOperationsStore } from '@/stores/operations'
 
