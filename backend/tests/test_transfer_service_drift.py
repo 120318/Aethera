@@ -14,7 +14,7 @@ from app.schemas.exception.exceptions import DownloadException, TransferExceptio
 from app.schemas.config import Template, TransferMode
 from app.schemas.media_id import MediaID
 from app.schemas.domain.download import TaskContext, TaskData, TaskStatus, TransferFileResult
-from app.schemas.domain.library import LibraryFile
+from app.schemas.domain.library import LibraryFile, LibraryFileArtifact, LibraryFileArtifactStatus
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
 from app.services.domain.transfer import transfer_service
@@ -154,6 +154,70 @@ async def test_commit_transfer_results_refreshes_tv_profile_with_execution_seaso
     )
 
     refresh_mock.assert_awaited_once_with(task.media_id, 2)
+
+
+@pytest.mark.asyncio
+async def test_commit_transfer_results_cleans_artifacts_from_replaced_file(monkeypatch):
+    task = _task(status=TaskStatus.TRANSFERRING)
+    context = TransferExecutionContext(
+        source_base_path=Path("/downloads"),
+        destination_base_path=Path("/library"),
+        title="Test Show",
+        year=2024,
+        season_number=1,
+    )
+    replaced_file = _library_file("old-file")
+    artifact = LibraryFileArtifact(
+        id="subtitle-artifact",
+        library_file_id=replaced_file.id,
+        artifact_type="subtitle",
+        expected_path="/library/TV/Test Show/Test.Show.S01E01.zh-cn.srt",
+        status=LibraryFileArtifactStatus.succeeded,
+        created_at=1.0,
+        updated_at=1.0,
+    )
+    artifact_lookup = AsyncMock(return_value=[artifact])
+    cleanup_mock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.get_artifacts_by_file_ids",
+        artifact_lookup,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.replace_task_entries",
+        AsyncMock(return_value=[replaced_file]),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.cleanup_replaced_files",
+        cleanup_mock,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.download_service.update_task_state",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.media_service.refresh_profile_safely",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.emit_media_import_completed",
+        AsyncMock(),
+    )
+
+    transfer_result = _transfer_file_result()
+    await commit_transfer_results(
+        task,
+        [transfer_result],
+        [],
+        context,
+        [replaced_file],
+    )
+
+    artifact_lookup.assert_awaited_once_with([replaced_file.id])
+    cleanup_mock.assert_awaited_once_with(
+        [replaced_file],
+        {transfer_result.destination_path},
+        [artifact],
+    )
 
 
 @pytest.mark.asyncio

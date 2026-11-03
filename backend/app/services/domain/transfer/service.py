@@ -9,7 +9,7 @@ from app.schemas.domain.addon_events import ImportedMediaFile, MediaImportComple
 from app.schemas.domain.addon_events import MediaImportFailedEventMeta
 from app.schemas.domain.download import TaskData, TaskErrorStage, TaskStatus, TransferFileResult, TransferResult
 from app.schemas.domain.event import Event, EventEntityRef, EventLevel, EventSource, MediaEventCreate
-from app.schemas.domain.library import LibraryFile
+from app.schemas.domain.library import LibraryFile, LibraryFileArtifact
 from app.schemas.exception.base import AppException
 from app.schemas.exception.exceptions import TransferException
 from app.services.audit.event_service import event_service
@@ -180,11 +180,17 @@ class TransferService:
 async def cleanup_replaced_library_files(
     existing_library_files: list[LibraryFile],
     transfer_results: list[TransferFileResult],
+    artifacts: list[LibraryFileArtifact] | None = None,
 ) -> None:
     if not existing_library_files:
         return
     replacement_paths = {str(Path(result.destination_path)) for result in transfer_results}
-    await library_service.cleanup_replaced_files(existing_library_files, replacement_paths)
+    await library_service.cleanup_replaced_files(existing_library_files, replacement_paths, artifacts)
+
+
+async def load_replacement_artifacts(files: list[LibraryFile]) -> list[LibraryFileArtifact]:
+    file_ids = list({item.id for item in files if item.id})
+    return await library_service.get_artifacts_by_file_ids(file_ids)
 
 
 def _task_import_entities(task: TaskData) -> list[EventEntityRef]:
@@ -284,6 +290,8 @@ async def commit_transfer_results(
     replacement_files: list[LibraryFile] | None = None,
 ) -> None:
     try:
+        replacement_candidates = [*existing_library_files, *(replacement_files or [])]
+        replacement_artifacts = await load_replacement_artifacts(replacement_candidates)
         replaced_library_files = await library_service.replace_task_entries(
             task.id,
             task.context.directory_id,
@@ -293,7 +301,11 @@ async def commit_transfer_results(
             replacement_files,
         )
         await download_service.update_task_state(task.id, TaskStatus.COMPLETED)
-        await cleanup_replaced_library_files(replaced_library_files or existing_library_files, transfer_results)
+        await cleanup_replaced_library_files(
+            replaced_library_files or existing_library_files,
+            transfer_results,
+            replacement_artifacts,
+        )
         try:
             await media_service.refresh_profile_safely(task.media_id, execution_context.season_number)
         except AppException as exc:
@@ -312,6 +324,9 @@ async def commit_episode_batch(
     handled_file_indices: set[int],
 ) -> None:
     try:
+        existing_library_files = await library_service.get_files_by_task(task.id)
+        replacement_candidates = [*existing_library_files, *replacement_files]
+        replacement_artifacts = await load_replacement_artifacts(replacement_candidates)
         completion_event = build_media_import_completed_event(task, transfer_results)
         removed_files = await library_service.replace_task_batch_entries(
             task.id,
@@ -327,7 +342,7 @@ async def commit_episode_batch(
         task.context.imported_file_indices = sorted(
             set(task.context.imported_file_indices) | handled_file_indices
         )
-        await cleanup_replaced_library_files(removed_files, transfer_results)
+        await cleanup_replaced_library_files(removed_files, transfer_results, replacement_artifacts)
         if transfer_results:
             try:
                 await media_service.refresh_profile_safely(task.media_id, execution_context.season_number)

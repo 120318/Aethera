@@ -258,12 +258,4 @@ class AddonRegistry:
             return False
         return addon.is_enabled(settings_service.get_addons_config())
 
-    def should_dispatch_event(self, event_type: str) -> bool:
-        try:
-            normalized = event_type.value
-        except AttributeError:
-            normalized = str(event_type or "")
-        return not str(normalized).startswith("addon.run.")
-
-
 addon_service = AddonRegistry()

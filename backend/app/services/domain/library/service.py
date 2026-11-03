@@ -392,7 +392,16 @@ class LibraryService:
         self,
         files: list[LibraryFile],
         preserved_paths: set[str],
+        artifacts: list[LibraryFileArtifact] | None = None,
     ) -> None:
+        resolved_preserved_paths = {Path(path).resolve(strict=False) for path in preserved_paths}
+        if artifacts:
+            await asyncio.to_thread(
+                self._cleanup.delete_artifact_files,
+                files,
+                artifacts,
+                resolved_preserved_paths,
+            )
         removed_files = [
             item
             for item in files
@@ -402,7 +411,7 @@ class LibraryService:
             await asyncio.to_thread(
                 self._cleanup.delete_files,
                 removed_files,
-                {Path(path) for path in preserved_paths},
+                resolved_preserved_paths,
                 delete_sidecars=False,
             )
 

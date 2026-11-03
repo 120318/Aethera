@@ -17,6 +17,7 @@ from app.schemas.domain.command import (
     CommandCreateRequest,
     CommandInitiator,
     CommandRecord,
+    CommandResult,
     CommandStatus,
     CommandTargetType,
     CommandType,
@@ -203,6 +204,41 @@ def test_addon_operation_validation_uses_domain_errors(
 
     assert exc_info.value.message_key == message_key
     assert exc_info.value.params["addon_id"] == "sample"
+
+
+def test_addon_result_events_are_emitted_only_for_automatic_commands(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    target = MediaTarget(media_id=media_id, season_number=1)
+
+    def command(initiator: CommandInitiator) -> CommandRecord:
+        return CommandRecord(
+            id=f"addon-{initiator.value}",
+            type=CommandType.ADDON_RUN,
+            initiator=initiator,
+            payload=AddonRunCommandRecordPayload(
+                addon_id="subtitles",
+                operation_id="fill_missing",
+                target=target,
+            ),
+            result=CommandResult(result_count=1),
+            media_id=media_id,
+            target=target,
+            target_type=CommandTargetType.MEDIA,
+            target_id=str(media_id),
+        )
+
+    emit_mock = Mock()
+    monkeypatch.setattr(
+        "app.services.application.commands.service.event_service.emit",
+        emit_mock,
+    )
+    service = CommandService()
+
+    service._emit_addon_command_event(command(CommandInitiator.MANUAL), succeeded=True)
+    emit_mock.assert_not_called()
+
+    service._emit_addon_command_event(command(CommandInitiator.SYSTEM), succeeded=True)
+    assert emit_mock.call_count == 1
 
 
 @pytest.mark.asyncio

@@ -1,11 +1,12 @@
 import os
 import uuid
+from unittest.mock import AsyncMock
 
 os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.media_id import MediaID
-from app.schemas.domain.event import EventEntityRef, EventLevel, MediaEventCreate
+from app.schemas.domain.event import EventCreate, EventEntityRef, EventLevel, MediaEventCreate
 from app.schemas.domain.media import MediaIdentity
 from app.services.audit.event_service import EventService
 
@@ -27,6 +28,21 @@ def test_emit_and_list_events_basic():
     total, items = svc.list_events(media_id=media_id, limit=10, offset=0)
     assert total >= 1
     assert any(x.id == ev.id for x in items)
+
+
+def test_automatic_addon_results_enter_business_dispatch(monkeypatch):
+    svc = EventService()
+    enqueue_mock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.audit.event_service.event_dispatch_service.enqueue_event",
+        enqueue_mock,
+    )
+
+    event = svc.emit(EventCreate(type=EventTypes.ADDON_RUN_FAILED, level=EventLevel.error))
+
+    assert event is not None
+    enqueue_mock.assert_awaited_once_with(event.id, EventTypes.ADDON_RUN_FAILED)
+    svc.acknowledge_event(event.id)
 
 
 def test_emit_media_merges_default_and_explicit_message_params():
