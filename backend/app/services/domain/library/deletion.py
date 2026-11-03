@@ -85,6 +85,7 @@ class LibraryDeletionWorker:
         media_id = files[0].media_id if files else None
         delete_events = self._group_delete_event_files(files)
         if files:
+            await self._delete_artifacts_for_files(files)
             await asyncio.to_thread(self.cleanup.delete_files, files)
         try:
             deleted_count = await self.delete_task_library_records(task_id)
@@ -120,6 +121,7 @@ class LibraryDeletionWorker:
                 return True
 
             full_path = str(build_library_file_path(library_file.path, library_file.file_name))
+            await self._delete_artifacts_for_files([library_file])
             await asyncio.to_thread(self.cleanup.delete_files, [library_file])
             await self.episode_repo.remove_by_file_ids([library_file.id])
             await self.artifact_repo.remove_by_library_file_ids([library_file.id])
@@ -146,7 +148,6 @@ class LibraryDeletionWorker:
         file_ids = list({file.id for file in files if file.id})
         if not file_ids:
             return 0
-        await self.artifact_repo.remove_by_library_file_ids(file_ids)
         delete_events = self._group_delete_event_files(files)
         media_roots = {
             directory_id: await self._resolve_media_root_dir_for_files(media_id, event_files)
@@ -155,6 +156,7 @@ class LibraryDeletionWorker:
 
         if files:
             try:
+                await self._delete_artifacts_for_files(files)
                 await asyncio.to_thread(self.cleanup.delete_files, files)
             except OSError as exc:
                 if not force:
@@ -163,6 +165,7 @@ class LibraryDeletionWorker:
 
         if media_id.media_type != MediaType.movie:
             await self.episode_repo.remove_by_file_ids(file_ids)
+        await self.artifact_repo.remove_by_library_file_ids(file_ids)
         deleted_count = await self.file_repo.remove_by_ids(file_ids)
         for directory_id, event_files in delete_events.items():
             deleted_paths = [
@@ -182,6 +185,12 @@ class LibraryDeletionWorker:
                 actor=actor,
             )
         return deleted_count
+
+    async def _delete_artifacts_for_files(self, files: list[LibraryFile]) -> None:
+        file_ids = [file.id for file in files if file.id]
+        artifacts = await self.artifact_repo.find_by_library_file_ids(file_ids)
+        if artifacts:
+            await asyncio.to_thread(self.cleanup.delete_artifact_files, files, artifacts)
 
     async def archive_media_entry(self, media_id: MediaID) -> None:
         await self.meta_repo.archive_by_media_id(media_id)

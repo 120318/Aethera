@@ -21,6 +21,7 @@ from app.schemas.exception.exceptions import (
     SearchMissingImdbException,
     SearchMissingSeasonInfoException,
     SubscriptionStateException,
+    SubtitleFileException,
     ServiceTypeException,
     SetupRequiredException,
     SystemAlreadyInitializedException,

@@ -14,7 +14,7 @@ from app.schemas.domain.subtitle import (
     SubtitleInstallRequest,
     SubtitleInstallResponse,
 )
-from app.schemas.exception import InvalidRequestException, ResourceNotFoundException
+from app.schemas.exception import InvalidRequestException, ResourceNotFoundException, SubtitleFileException
 from app.services.application.workflows.media_server_sync import refresh_library_file
 from app.services.application.workflows.scoped_seasons import library_file_season_number
 from app.services.config.settings_service import settings_service
@@ -62,7 +62,7 @@ class SubtitleApplicationService:
         config = self._ready_config()
         subtitle_format = request.format.lower()
         if subtitle_format not in _SUBTITLE_FORMATS:
-            raise InvalidRequestException(
+            raise SubtitleFileException(
                 "backendErrors.subtitleFormatUnsupported",
                 params={"format": request.format},
             )
@@ -86,6 +86,7 @@ class SubtitleApplicationService:
         return SubtitleInstallResponse(path=str(destination), artifact_type=SUBTITLE_ARTIFACT_TYPE)
 
     async def fill_missing(self, media_id, season_number: int | None = None) -> SubtitleBatchFillResponse:
+        self._ready_config()
         files = await library_service.get_files_by_media(media_id)
         result = SubtitleBatchFillResponse()
         for library_file in files:
@@ -117,7 +118,7 @@ class SubtitleApplicationService:
                     )
                 )
                 result.installed_count += 1
-            except (OSError, RuntimeError, ValueError):
+            except (OSError, RuntimeError, ValueError, ResourceNotFoundException, SubtitleFileException):
                 result.failed_count += 1
         return result
 
@@ -161,7 +162,7 @@ class SubtitleApplicationService:
     def _opensubtitles_hash(path: Path) -> tuple[str, int]:
         size = path.stat().st_size
         if size < _HASH_CHUNK_SIZE * 2:
-            raise InvalidRequestException("backendErrors.subtitleVideoTooSmall")
+            raise SubtitleFileException("backendErrors.subtitleVideoTooSmall")
         value = size
         with path.open("rb") as handle:
             for chunk_offset in (0, size - _HASH_CHUNK_SIZE):

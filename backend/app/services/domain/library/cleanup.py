@@ -4,8 +4,9 @@ import shutil
 from pathlib import Path
 
 from app.core.storage_paths import get_library_root
-from app.schemas.domain.library import LibraryFile
+from app.schemas.domain.library import LibraryFile, LibraryFileArtifact
 from app.services.domain.directory import directory_service
+from app.services.domain.library.artifact_paths import video_sidecar_suffix
 from app.utils.library_paths import build_library_file_path, file_name_looks_like_media_file
 
 logger = logging.getLogger("app.services.library.cleanup")
@@ -18,6 +19,29 @@ LIBRARY_SIDECAR_EXTENSIONS = {
 
 
 class LibraryCleanup:
+    def delete_artifact_files(
+        self,
+        files: list[LibraryFile],
+        artifacts: list[LibraryFileArtifact],
+        preserved_paths: set[Path] | None = None,
+    ) -> None:
+        preserved_paths = preserved_paths or set()
+        files_by_id = {file.id: file for file in files}
+        for artifact in artifacts:
+            library_file = files_by_id.get(artifact.library_file_id)
+            if library_file is None:
+                continue
+            video_path = build_library_file_path(library_file.path, library_file.file_name).resolve(strict=False)
+            artifact_path = Path(artifact.expected_path).resolve(strict=False)
+            if video_sidecar_suffix(video_path, artifact_path) is None or artifact_path in preserved_paths:
+                continue
+            try:
+                if artifact_path.exists() and artifact_path.is_file():
+                    os.remove(str(artifact_path))
+                    logger.debug("Physically removed library artifact file: %s", artifact_path)
+            except OSError as exc:
+                logger.warning("Failed to remove artifact file %s: %s", artifact_path, exc)
+
     def delete_files(
         self,
         files: list[LibraryFile],

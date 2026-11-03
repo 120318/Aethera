@@ -7,17 +7,19 @@ from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
-from app.addons.descriptors import _danmu_jobs, _enqueue_danmu_event
+from app.addons.descriptors import _danmu_jobs, _enqueue_danmu_event, _run_danmu_operation
 from app.core.action_context import action_context
 from app.schemas.config import AddonsConfig
 from app.schemas.domain.addon_events import DanmuGenerationOutcome, ImportedMediaFile, MediaImportCompletedEventMeta
 from app.schemas.domain.action import ActionStatus, ActionTrigger
+from app.schemas.domain.command import AddonRunCommandRecordPayload
 from app.schemas.domain.event import Event, EventType
 from app.schemas.domain.library import LibraryFile, LibraryFileArtifact, LibraryFileArtifactStatus, LibraryFileArtifactType
-from app.schemas.domain.media import MediaFullInfo
+from app.schemas.domain.media import MediaFullInfo, MediaTarget
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.vendor import Vendor
 from app.schemas.media_id import MediaID
+from app.schemas.exception import InvalidRequestException, ResourceNotFoundException
 from app.services.application.workflows.danmu.source_resolver import DanmuSourceResolver
 from app.services.application.workflows.danmu.service import DanmuApplicationService
 from app.services.application.workflows.danmu.duration_guard import danmu_duration_guard
@@ -971,6 +973,36 @@ class TestDanmuAddonContracts(unittest.TestCase):
 
 
 class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _run_payload(**updates) -> AddonRunCommandRecordPayload:
+        values = {
+            "addon_id": "danmu",
+            "operation_id": "generate",
+            "target": MediaTarget(media_id=MediaID.parse("tmdb:movie:1")),
+        }
+        values.update(updates)
+        return AddonRunCommandRecordPayload(**values)
+
+    async def test_run_operation_uses_domain_error_for_missing_event(self):
+        with patch("app.addons.descriptors.event_service.get_event", return_value=None):
+            with self.assertRaises(ResourceNotFoundException) as context:
+                await _run_danmu_operation(self._run_payload(event_id="missing-event"))
+
+        self.assertEqual("backendErrors.eventNotFound", context.exception.message_key)
+
+    async def test_run_operation_uses_domain_error_for_missing_library_file(self):
+        with patch("app.addons.descriptors.library_service.find_file_by_id", new=AsyncMock(return_value=None)):
+            with self.assertRaises(ResourceNotFoundException) as context:
+                await _run_danmu_operation(self._run_payload(file_id="missing-file"))
+
+        self.assertEqual("backendErrors.resourceFileNotFound", context.exception.message_key)
+
+    async def test_run_operation_requires_an_execution_target(self):
+        with self.assertRaises(InvalidRequestException) as context:
+            await _run_danmu_operation(self._run_payload())
+
+        self.assertEqual("backendErrors.addonTargetRequired", context.exception.message_key)
+
     async def test_import_event_command_does_not_require_download_task(self):
         media_id = MediaID.parse("tmdb:movie:1")
         event = Event(

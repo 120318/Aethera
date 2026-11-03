@@ -11,6 +11,7 @@ from app.schemas.domain.library import LibraryFile, LibraryFileArtifact
 from app.schemas.exception.exceptions import ResourceNotFoundException
 from app.services.config.settings_service import settings_service
 from app.services.domain.download import download_service
+from app.services.domain.library.artifact_paths import video_sidecar_suffix
 from app.services.domain.library.service import library_service
 from app.utils.fs_utils import ensure_directory
 from app.utils.library_paths import build_library_file_path, split_library_storage_path
@@ -155,7 +156,7 @@ class LibraryFileDirectoryChangeService:
         for source_video, target_video, library_file in file_moves:
             for artifact in artifacts_by_file_id.get(library_file.id, []):
                 source_artifact = Path(artifact.expected_path).resolve(strict=False)
-                suffix = self._sidecar_suffix(source_video, source_artifact)
+                suffix = video_sidecar_suffix(source_video, source_artifact)
                 if suffix is None:
                     continue
                 moves.append(
@@ -166,15 +167,6 @@ class LibraryFileDirectoryChangeService:
                     )
                 )
         return moves
-
-    @staticmethod
-    def _sidecar_suffix(video_path: Path, artifact_path: Path) -> str | None:
-        if artifact_path.parent != video_path.parent:
-            return None
-        if artifact_path == video_path or not artifact_path.name.startswith(video_path.stem):
-            return None
-        suffix = artifact_path.name[len(video_path.stem) :]
-        return suffix if suffix.startswith((".", "-")) else None
 
     async def _move_files(self, files: list[LibraryFile], target_directory: DirectoryConfig) -> bool:
         moves = self._build_moves(files, target_directory)

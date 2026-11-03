@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import logging
 from datetime import datetime
@@ -8,6 +6,7 @@ from pathlib import Path
 from app.core.action_context import action_context, get_current_action_id
 from app.schemas.config import DanmuAddonConfig
 from app.schemas.media_id import MediaID
+from app.schemas.exception import InvalidRequestException, MediaNotFoundException, ResourceNotFoundException
 from app.schemas.domain.action import (
     ActionActor,
     ActionKind,
@@ -47,6 +46,11 @@ DANMU_GENERATION_TIMEOUT_SECONDS = 900
 
 
 class DanmuApplicationService:
+    @staticmethod
+    def _require_enabled(config: DanmuAddonConfig) -> None:
+        if not config.enabled or not config.directory_ids:
+            raise InvalidRequestException("backendErrors.addonDisabled", params={"addon_id": "danmu"})
+
     def config(self) -> DanmuAddonConfig:
         return settings_service.get_addons_config().danmu
 
@@ -181,8 +185,7 @@ class DanmuApplicationService:
 
     async def run_for_task(self, task_id: str) -> int:
         config = self.config()
-        if not config.enabled or not config.directory_ids:
-            raise ValueError("Danmu addon is not enabled or has no bound directories")
+        self._require_enabled(config)
 
         from app.services.domain.library.service import library_service
 
@@ -191,8 +194,7 @@ class DanmuApplicationService:
 
     async def run_for_library_files(self, library_files: list[LibraryFile], *, task_id: str | None = None) -> int:
         config = self.config()
-        if not config.enabled or not config.directory_ids:
-            raise ValueError("Danmu addon is not enabled or has no bound directories")
+        self._require_enabled(config)
 
         from app.services.domain.library.service import library_service
 
@@ -202,7 +204,7 @@ class DanmuApplicationService:
             if library_service.is_primary_file(library_file) and library_service.file_exists(library_file)
         ]
         if not primary_files:
-            raise ValueError("No imported library files are available for danmu generation")
+            raise ResourceNotFoundException("backendErrors.resourceFileNotFound")
 
         season_number = library_files_season_number(primary_files) if primary_files[0].media_id.media_type.value == "tv" else None
         media = await danmu_source_resolver.media_with_fetchable_source(
@@ -211,9 +213,9 @@ class DanmuApplicationService:
             config=config,
         )
         if not media:
-            raise ValueError("Media info does not exist")
+            raise MediaNotFoundException()
         if not danmu_source_resolver.has_fetchable_vendor(media, config):
-            raise ValueError("Media has no available danmu source")
+            raise InvalidRequestException("backendErrors.danmuSourceUnavailable")
 
         generated = 0
         outcomes: list[DanmuGenerationOutcome] = []
@@ -236,7 +238,7 @@ class DanmuApplicationService:
                 generated += 1
         emit_generation_summary(media, outcomes, actor=EventActor.user)
         if generated == 0:
-            raise ValueError("No danmu files were generated")
+            raise InvalidRequestException("backendErrors.danmuGenerationEmpty")
         return generated
 
     async def can_run_for_library_files(self, library_files: list[LibraryFile], *, media: MediaFullInfo | None = None) -> bool:

@@ -8,7 +8,7 @@ from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.subtitle import SubtitleInstallRequest
 from app.schemas.media_id import MediaID
-from app.schemas.exception import InvalidRequestException
+from app.schemas.exception import InvalidRequestException, SubtitleFileException
 from app.services.application.workflows.subtitles.service import (
     SUBTITLE_ARTIFACT_TYPE,
     SubtitleApplicationService,
@@ -65,12 +65,65 @@ async def test_fill_missing_isolates_subtitle_scan_os_error_per_file(
         "app.services.application.workflows.subtitles.service.library_service.get_files_by_media",
         AsyncMock(return_value=[library_file]),
     )
+    monkeypatch.setattr(
+        service,
+        "_ready_config",
+        lambda: SubtitlesAddonConfig(enabled=True, api_key="key"),
+    )
     monkeypatch.setattr(service, "_has_subtitle", lambda _: (_ for _ in ()).throw(OSError("unavailable")))
 
     result = await service.fill_missing(library_file.media_id, season_number=1)
 
     assert result.processed_count == 1
     assert result.failed_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fill_missing_continues_after_recoverable_subtitle_file_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    first_path = tmp_path / "episode-1.mkv"
+    second_path = tmp_path / "episode-2.mkv"
+    first_path.write_bytes(b"video")
+    second_path.write_bytes(b"video")
+    first_file = _library_file(first_path)
+    second_file = _library_file(second_path).model_copy(update={"id": "file-2"})
+    service = SubtitleApplicationService()
+    monkeypatch.setattr(
+        "app.services.application.workflows.subtitles.service.library_service.get_files_by_media",
+        AsyncMock(return_value=[first_file, second_file]),
+    )
+    monkeypatch.setattr(
+        service,
+        "_ready_config",
+        lambda: SubtitlesAddonConfig(enabled=True, api_key="key"),
+    )
+    monkeypatch.setattr(service, "_has_subtitle", lambda _: False)
+    monkeypatch.setattr(
+        service,
+        "search_for_file",
+        AsyncMock(side_effect=[SubtitleFileException("backendErrors.subtitleVideoTooSmall"), []]),
+    )
+
+    result = await service.fill_missing(first_file.media_id, season_number=1)
+
+    assert result.processed_count == 2
+    assert result.failed_count == 1
+    assert result.skipped_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fill_missing_does_not_swallow_batch_configuration_error(monkeypatch: pytest.MonkeyPatch):
+    service = SubtitleApplicationService()
+    monkeypatch.setattr(
+        service,
+        "_ready_config",
+        Mock(side_effect=InvalidRequestException("backendErrors.subtitleProviderNotConfigured")),
+    )
+
+    with pytest.raises(InvalidRequestException, match="backendErrors.subtitleProviderNotConfigured"):
+        await service.fill_missing(MediaID.parse("tmdb:tv:1"))
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@ from app.schemas.domain.command import (
 from app.schemas.domain.addon_events import MediaImportCompletedEventMeta
 from app.schemas.domain.event import Event
 from app.schemas.domain.media import MediaTarget
+from app.schemas.exception import InvalidRequestException, ResourceNotFoundException
 from app.services.application.commands.service import command_service
 from app.services.audit.event_service import event_service
 from app.services.domain.library.service import library_service
@@ -123,7 +124,7 @@ async def _run_danmu_operation(payload: AddonRunCommandRecordPayload) -> Command
     if payload.event_id:
         event = event_service.get_event(payload.event_id)
         if event is None:
-            raise ValueError("Trigger event does not exist")
+            raise ResourceNotFoundException("backendErrors.eventNotFound")
         await danmu_application_service.handle_event(event)
         return CommandResult()
     if payload.task_id:
@@ -132,7 +133,7 @@ async def _run_danmu_operation(payload: AddonRunCommandRecordPayload) -> Command
     if payload.file_id:
         library_file = await library_service.find_file_by_id(payload.file_id)
         if library_file is None:
-            raise ValueError("Library file does not exist")
+            raise ResourceNotFoundException("backendErrors.resourceFileNotFound")
         files = [library_file]
         if payload.package_root:
             media_files = await library_service.get_files_by_media(library_file.media_id)
@@ -144,7 +145,10 @@ async def _run_danmu_operation(payload: AddonRunCommandRecordPayload) -> Command
             ]
         count = await danmu_application_service.run_for_library_files(files)
         return CommandResult(result_count=count)
-    raise ValueError("Danmu generation requires a task, library file, or event")
+    raise InvalidRequestException(
+        "backendErrors.addonTargetRequired",
+        params={"addon_id": payload.addon_id, "operation_id": payload.operation_id},
+    )
 
 
 async def _enqueue_danmu_event(event: Event) -> None:
