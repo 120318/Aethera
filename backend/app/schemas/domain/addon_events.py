@@ -13,6 +13,8 @@ class AddonRunEventMeta(BaseModel):
     result_count: int = 0
     failed_count: int = 0
     error: str = ""
+    error_key: str | None = None
+    error_params: dict[str, str] = Field(default_factory=dict)
 
 
 class DownloadTaskEventMeta(BaseModel):

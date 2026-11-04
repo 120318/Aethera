@@ -241,6 +241,38 @@ def test_addon_result_events_are_emitted_only_for_automatic_commands(monkeypatch
     assert emit_mock.call_count == 1
 
 
+def test_addon_failure_event_preserves_structured_error(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    target = MediaTarget(media_id=media_id, season_number=1)
+    command = CommandRecord(
+        id="addon-system",
+        type=CommandType.ADDON_RUN,
+        initiator=CommandInitiator.SYSTEM,
+        payload=AddonRunCommandRecordPayload(
+            addon_id="subtitles",
+            operation_id="fill_missing",
+            target=target,
+        ),
+        media_id=media_id,
+        target=target,
+        target_type=CommandTargetType.MEDIA,
+        target_id=str(media_id),
+        error_key="backendErrors.addonDisabled",
+        error_params={"addon_id": "subtitles"},
+    )
+    emit_mock = Mock()
+    monkeypatch.setattr(
+        "app.services.application.commands.service.event_service.emit",
+        emit_mock,
+    )
+
+    CommandService()._emit_addon_command_event(command, succeeded=False)
+
+    meta = emit_mock.call_args.kwargs["meta"]
+    assert meta.error_key == "backendErrors.addonDisabled"
+    assert meta.error_params == {"addon_id": "subtitles"}
+
+
 @pytest.mark.asyncio
 async def test_addon_operation_without_handler_uses_domain_error(monkeypatch):
     handler = AddonRunCommandHandler()

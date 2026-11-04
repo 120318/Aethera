@@ -458,6 +458,8 @@ class CommandService:
                 result_count=result.result_count if result else 0,
                 failed_count=result.failed_count if result else 0,
                 error=command.error or "",
+                error_key=command.error_key,
+                error_params={str(key): str(value) for key, value in command.error_params.items()},
             ),
         )
 

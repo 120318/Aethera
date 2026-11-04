@@ -1,6 +1,7 @@
 from app.schemas.domain.action import ActionKind, ActionName, ActionRecord, ActionStatus
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.addon_events import (
+    AddonRunEventMeta,
     DanmuGenerateEventMeta,
     DownloadTaskEventMeta,
     ImportedMediaFile,
@@ -9,7 +10,7 @@ from app.schemas.domain.addon_events import (
     MediaServerSyncEventMeta,
 )
 from app.schemas.domain.download import TaskStatus
-from app.schemas.domain.event import MediaEventCreate
+from app.schemas.domain.event import EventCreate, MediaEventCreate
 from app.schemas.domain.media import MediaIdentity
 from app.schemas.media_id import MediaID
 from app.services.audit.action_message_i18n import attach_action_message_i18n
@@ -34,6 +35,22 @@ def test_render_message_resolves_nested_error_key_params():
 
     assert "Test Show" in message
     assert "backendErrors.seasonRequired" not in message
+
+
+def test_addon_failure_message_params_preserve_structured_error():
+    event = EventCreate(type=EventTypes.ADDON_RUN_FAILED, addon_name="subtitles")
+    params = event_message_params(
+        event,
+        AddonRunEventMeta(
+            addon_id="subtitles",
+            operation_id="fill_missing",
+            error_key="backendErrors.addonDisabled",
+            error_params={"addon_id": "subtitles"},
+        ),
+    )
+
+    assert params["error_key"] == "backendErrors.addonDisabled"
+    assert params["error_params"] == '{"addon_id": "subtitles"}'
 
 
 def test_action_search_text_includes_rendered_command_message():
