@@ -15,7 +15,11 @@
             <span v-if="candidate.hash_matched" class="text-caption text-success">{{ $t('localResources.subtitles.hashMatched') }}</span>
             <span class="text-caption text-muted">{{ Math.round(candidate.match_confidence * 100) }}%</span>
           </div>
-          <span class="text-caption break-words">{{ candidate.release || candidate.file_name }}</span>
+          <span v-if="candidate.release" class="text-caption break-words">{{ candidate.release }}</span>
+          <span class="text-caption break-words">{{ candidate.file_name }}</span>
+          <span v-if="candidate.release_file_count > 1" class="text-caption text-muted">
+            {{ $t('localResources.subtitles.discPart', { part: candidate.cd_number || '?', count: candidate.release_file_count }) }}
+          </span>
           <span class="text-caption text-muted">
             {{ candidate.provider }} · {{ $t('localResources.subtitles.downloadCount', { count: candidate.download_count }) }}
           </span>

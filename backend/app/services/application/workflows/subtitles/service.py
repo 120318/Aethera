@@ -29,6 +29,10 @@ _SUBTITLE_FORMATS = {"srt", "ass", "ssa", "sub", "vtt"}
 
 
 class SubtitleApplicationService:
+    def __init__(self) -> None:
+        self._provider_client: OpenSubtitlesClient | None = None
+        self._provider_config_key: tuple[str, str, str] | None = None
+
     def config(self) -> SubtitlesAddonConfig:
         return settings_service.get_addons_config().subtitles
 
@@ -39,7 +43,7 @@ class SubtitleApplicationService:
         attrs = library_file.resource_attributes
         seasons = list(attrs.seasons or []) if attrs else []
         episodes = list(attrs.episodes or []) if attrs else []
-        return await OpenSubtitlesClient(config.api_key).search(
+        return await self._client(config).search(
             movie_hash=movie_hash,
             movie_size=movie_size,
             languages=config.languages,
@@ -49,7 +53,7 @@ class SubtitleApplicationService:
 
     async def preview(self, candidate_file_id: int) -> str:
         config = self._ready_config()
-        content = await OpenSubtitlesClient(config.api_key).download(candidate_file_id)
+        content = await self._client(config).download(candidate_file_id)
         for encoding in ("utf-8-sig", "utf-8", "gb18030"):
             try:
                 return content.decode(encoding)[:4000]
@@ -68,7 +72,7 @@ class SubtitleApplicationService:
             )
         language = self._normalize_language(request.language)
         destination = video_path.with_suffix(f".{language}.{subtitle_format}")
-        content = await OpenSubtitlesClient(config.api_key).download(request.candidate_file_id)
+        content = await self._client(config).download(request.candidate_file_id)
         temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
         try:
             await asyncio.to_thread(temporary.write_bytes, content)
@@ -104,8 +108,12 @@ class SubtitleApplicationService:
                 if not candidates:
                     result.skipped_count += 1
                     continue
+                automatic_candidates = [candidate for candidate in candidates if candidate.release_file_count == 1]
+                if not automatic_candidates:
+                    result.skipped_count += 1
+                    continue
                 candidate = sorted(
-                    candidates,
+                    automatic_candidates,
                     key=lambda item: (item.hash_matched, item.match_confidence, item.download_count),
                     reverse=True,
                 )[0]
@@ -138,9 +146,21 @@ class SubtitleApplicationService:
                 "backendErrors.addonDisabled",
                 params={"addon_id": "subtitles"},
             )
-        if config.provider != "opensubtitles" or not config.api_key.strip():
+        if (
+            config.provider != "opensubtitles"
+            or not config.api_key.strip()
+            or not config.username.strip()
+            or not config.password
+        ):
             raise InvalidRequestException("backendErrors.subtitleProviderNotConfigured")
         return config
+
+    def _client(self, config: SubtitlesAddonConfig) -> OpenSubtitlesClient:
+        config_key = (config.api_key.strip(), config.username.strip(), config.password)
+        if self._provider_client is None or self._provider_config_key != config_key:
+            self._provider_client = OpenSubtitlesClient(*config_key)
+            self._provider_config_key = config_key
+        return self._provider_client
 
     @staticmethod
     def _normalize_language(language: str) -> str:

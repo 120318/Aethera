@@ -37,6 +37,7 @@
   "backendErrors.downloadTorrentSeasonMismatch": "The torrent file season does not match target season {season}; download was blocked",
   "backendErrors.taskNotFound": "Task not found",
   "backendErrors.addonDisabled": "Addon is disabled: {addon_id}",
+  "backendErrors.addonOperationFailed": "Addon {addon_id} operation {operation_id} failed for {failed_count} item(s)",
   "backendErrors.addonOperationUnknown": "Unknown addon operation: {addon_id}.{operation_id}",
   "backendErrors.addonOperationHandlerMissing": "Addon operation has no handler: {addon_id}.{operation_id}",
   "backendErrors.addonTargetRequired": "Addon operation requires a target: {addon_id}.{operation_id}",

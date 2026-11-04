@@ -129,6 +129,20 @@ class DanmuGenerationOutcome(BaseModel):
     error: str = ""
 
 
+class DanmuGenerationBatchResult(BaseModel):
+    completed_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+
+    @classmethod
+    def from_outcomes(cls, outcomes: list[DanmuGenerationOutcome]) -> DanmuGenerationBatchResult:
+        return cls(
+            completed_count=sum(item.status == ActionStatus.completed for item in outcomes),
+            skipped_count=sum(item.status == ActionStatus.skipped for item in outcomes),
+            failed_count=sum(item.status == ActionStatus.failed for item in outcomes),
+        )
+
+
 class LibraryFileMissingEventMeta(BaseModel):
     task_id: str
     directory_id: str

@@ -17,7 +17,7 @@ from app.schemas.domain.action import (
     ActionTrigger,
 )
 from app.schemas.domain.action_meta import DanmuGenerateQueuedActionMeta
-from app.schemas.domain.addon_events import DanmuGenerationOutcome, ImportedMediaFile, MediaImportCompletedEventMeta
+from app.schemas.domain.addon_events import DanmuGenerationBatchResult, DanmuGenerationOutcome, ImportedMediaFile, MediaImportCompletedEventMeta
 from app.schemas.domain.event import Event, EventActor, EventType
 from app.schemas.domain.library import LibraryFile, LibraryFileArtifact, LibraryFileArtifactStatus, LibraryFileArtifactType
 from app.schemas.domain.media import MediaFullInfo
@@ -68,21 +68,21 @@ class DanmuApplicationService:
         )
         return bool(media and danmu_source_resolver.has_fetchable_vendor(media, config))
 
-    async def handle_event(self, event: Event) -> None:
+    async def handle_event(self, event: Event) -> DanmuGenerationBatchResult:
         if event.type != EventType.MEDIA_IMPORT_COMPLETED:
-            return
+            return DanmuGenerationBatchResult()
         config = self.config()
         if not config.enabled or not config.directory_ids:
-            return
+            return DanmuGenerationBatchResult()
         try:
             meta = MediaImportCompletedEventMeta.model_validate_json(event.meta)
         except ValueError as exc:
             logger.warning("Danmu skipped: invalid media import meta event=%s error=%s", event.id, exc)
-            return
+            return DanmuGenerationBatchResult()
         if not meta.media_id:
-            return
+            return DanmuGenerationBatchResult()
         if meta.directory_id not in config.directory_ids:
-            return
+            return DanmuGenerationBatchResult()
         from app.services.domain.library.service import library_service
 
         library_files = await library_service.get_files_by_task(meta.task_id)
@@ -91,7 +91,7 @@ class DanmuApplicationService:
             season_number = library_files_season_number(library_files)
         if meta.media_id.media_type.value == "tv" and season_number is None:
             logger.warning("Danmu skipped: missing season media=%s", meta.media_id)
-            return
+            return DanmuGenerationBatchResult()
         media = await danmu_source_resolver.media_with_fetchable_source(
             meta.media_id,
             season_number=season_number,
@@ -99,7 +99,7 @@ class DanmuApplicationService:
         )
         if not media:
             logger.warning("Danmu skipped: media info unavailable media=%s", meta.media_id)
-            return
+            return DanmuGenerationBatchResult()
         library_files_by_path = {
             str(build_library_file_path(library_file.path, library_file.file_name)): library_file
             for library_file in library_files
@@ -125,6 +125,7 @@ class DanmuApplicationService:
                 )
             )
         emit_generation_summary(media, outcomes)
+        return DanmuGenerationBatchResult.from_outcomes(outcomes)
 
     async def run_backfill(self) -> None:
         config = self.config()

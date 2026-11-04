@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 class OpenSubtitlesFile(BaseModel):
     file_id: int
     file_name: str = ""
+    cd_number: int | None = None
 
 
 class OpenSubtitlesUploader(BaseModel):
@@ -34,6 +35,11 @@ class OpenSubtitlesDownloadPayload(BaseModel):
     link: str
 
 
+class OpenSubtitlesLoginPayload(BaseModel):
+    token: str
+    base_url: str
+
+
 class SubtitleSearchRequest(BaseModel):
     file_id: str
 
@@ -46,6 +52,8 @@ class SubtitleCandidate(BaseModel):
     format: str
     release: str = ""
     file_name: str = ""
+    cd_number: int | None = None
+    release_file_count: int = Field(default=1, ge=1)
     uploader: str = ""
     download_count: int = 0
     match_confidence: float = Field(default=0.0, ge=0.0, le=1.0)

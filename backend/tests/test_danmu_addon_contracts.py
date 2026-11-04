@@ -10,7 +10,12 @@ from unittest.mock import AsyncMock, patch
 from app.addons.descriptors import _danmu_jobs, _enqueue_danmu_event, _run_danmu_operation
 from app.core.action_context import action_context
 from app.schemas.config import AddonsConfig
-from app.schemas.domain.addon_events import DanmuGenerationOutcome, ImportedMediaFile, MediaImportCompletedEventMeta
+from app.schemas.domain.addon_events import (
+    DanmuGenerationBatchResult,
+    DanmuGenerationOutcome,
+    ImportedMediaFile,
+    MediaImportCompletedEventMeta,
+)
 from app.schemas.domain.action import ActionStatus, ActionTrigger
 from app.schemas.domain.command import AddonRunCommandRecordPayload
 from app.schemas.domain.event import Event, EventType
@@ -1004,6 +1009,27 @@ class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("backendErrors.resourceFileNotFound", context.exception.message_key)
 
+    async def test_run_operation_returns_import_event_generation_counts(self):
+        event = Event(id="event-1", type=EventType.MEDIA_IMPORT_COMPLETED)
+        with (
+            patch("app.addons.descriptors.event_service.get_event", return_value=event),
+            patch.object(
+                DanmuApplicationService,
+                "handle_event",
+                new=AsyncMock(
+                    return_value=DanmuGenerationBatchResult(
+                        completed_count=2,
+                        skipped_count=1,
+                        failed_count=1,
+                    )
+                ),
+            ),
+        ):
+            result = await _run_danmu_operation(self._run_payload(event_id=event.id))
+
+        self.assertEqual(2, result.result_count)
+        self.assertEqual(1, result.failed_count)
+
     async def test_run_operation_requires_an_execution_target(self):
         with self.assertRaises(InvalidRequestException) as context:
             await _run_danmu_operation(self._run_payload())
@@ -1253,10 +1279,11 @@ class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
                 ),
                 patch("app.services.domain.library.service.library_service.get_files_by_task", new=AsyncMock(return_value=[library_file])),
             ):
-                await service.handle_event(event)
+                result = await service.handle_event(event)
 
         generate_mock.assert_awaited_once()
         self.assertEqual(library_file, generate_mock.await_args.kwargs["library_file"])
+        self.assertEqual(1, result.skipped_count)
 
     async def test_backfill_policy_generates_when_recent_configured_sidecar_missing(self):
         service = DanmuApplicationService()

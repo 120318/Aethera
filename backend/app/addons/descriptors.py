@@ -60,7 +60,14 @@ def _danmu_enabled(config: AddonsConfig) -> bool:
 
 
 def _subtitles_enabled(config: AddonsConfig) -> bool:
-    return config.subtitles.enabled and config.subtitles.provider == "opensubtitles" and bool(config.subtitles.api_key.strip())
+    subtitles = config.subtitles
+    return (
+        subtitles.enabled
+        and subtitles.provider == "opensubtitles"
+        and bool(subtitles.api_key.strip())
+        and bool(subtitles.username.strip())
+        and bool(subtitles.password)
+    )
 
 
 async def _enqueue_subtitle_event(event: Event) -> None:
@@ -125,8 +132,11 @@ async def _run_danmu_operation(payload: AddonRunCommandRecordPayload) -> Command
         event = event_service.get_event(payload.event_id)
         if event is None:
             raise ResourceNotFoundException("backendErrors.eventNotFound")
-        await danmu_application_service.handle_event(event)
-        return CommandResult()
+        result = await danmu_application_service.handle_event(event)
+        return CommandResult(
+            result_count=result.completed_count,
+            failed_count=result.failed_count,
+        )
     if payload.task_id:
         count = await danmu_application_service.run_for_task(payload.task_id)
         return CommandResult(result_count=count)

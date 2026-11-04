@@ -33,6 +33,8 @@ const BUILTIN_ADDONS = {
       enabled: false,
       provider: 'opensubtitles',
       api_key: '',
+      username: '',
+      password: '',
       languages: ['zh-cn', 'zh-tw', 'en'],
       auto_fill_enabled: false,
     }),

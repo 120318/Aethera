@@ -483,6 +483,8 @@ class SubtitlesAddonConfig(BaseModel):
     enabled: bool = False
     provider: str = "opensubtitles"
     api_key: str = ""
+    username: str = ""
+    password: str = ""
     languages: list[str] = Field(default_factory=lambda: ["zh-cn", "zh-tw", "en"])
     auto_fill_enabled: bool = False
 

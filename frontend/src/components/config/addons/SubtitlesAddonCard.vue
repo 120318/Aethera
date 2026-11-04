@@ -21,6 +21,14 @@
           <Password v-model="subtitleConfig.api_key" input-id="subtitles-api-key" :feedback="false" toggle-mask class="w-full" input-class="w-full" />
         </div>
         <div class="ui-dialog-section">
+          <label for="subtitles-username" class="ui-dialog-item-title block">{{ $t('settings.addons.subtitles.username') }}</label>
+          <InputText v-model="subtitleConfig.username" input-id="subtitles-username" class="w-full" />
+        </div>
+        <div class="ui-dialog-section">
+          <label for="subtitles-password" class="ui-dialog-item-title block">{{ $t('settings.addons.subtitles.password') }}</label>
+          <Password v-model="subtitleConfig.password" input-id="subtitles-password" :feedback="false" toggle-mask class="w-full" input-class="w-full" />
+        </div>
+        <div class="ui-dialog-section">
           <label class="ui-dialog-item-title block">{{ $t('settings.addons.subtitles.languages') }}</label>
           <MultiSelect v-model="subtitleConfig.languages" :options="languageOptions" option-label="label" option-value="value" display="chip" class="w-full" />
         </div>
@@ -43,6 +51,7 @@
 <script setup>
 import { toRef } from 'vue'
 import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
 import MultiSelect from 'primevue/multiselect'
 import Password from 'primevue/password'
 import ToggleSwitch from 'primevue/toggleswitch'

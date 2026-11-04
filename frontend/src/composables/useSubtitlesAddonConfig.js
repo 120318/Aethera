@@ -8,6 +8,8 @@ const DEFAULT_SUBTITLE_CONFIG = {
   enabled: false,
   provider: 'opensubtitles',
   api_key: '',
+  username: '',
+  password: '',
   languages: ['zh-cn', 'zh-tw', 'en'],
   auto_fill_enabled: false,
 }

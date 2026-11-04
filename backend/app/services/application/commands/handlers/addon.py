@@ -106,7 +106,17 @@ class AddonRunCommandHandler:
                     "operation_id": payload.operation_id,
                 },
             )
-        return await operation.handler(payload)
+        result = await operation.handler(payload)
+        if result.failed_count > 0 and result.result_count == 0:
+            raise InvalidRequestException(
+                "backendErrors.addonOperationFailed",
+                params={
+                    "addon_id": payload.addon_id,
+                    "operation_id": payload.operation_id,
+                    "failed_count": str(result.failed_count),
+                },
+            )
+        return result
 
     def resolve_running_message(self) -> str:
         return "Running addon operation"

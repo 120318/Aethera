@@ -299,6 +299,37 @@ async def test_addon_operation_without_handler_uses_domain_error(monkeypatch):
     assert exc_info.value.params == {"addon_id": "sample", "operation_id": "generate"}
 
 
+@pytest.mark.asyncio
+async def test_addon_operation_fails_when_every_item_failed(monkeypatch):
+    handler = AddonRunCommandHandler()
+    media_id = MediaID.parse("tmdb:tv:1")
+    operation_handler = AsyncMock(return_value=CommandResult(failed_count=2))
+    monkeypatch.setattr(
+        handler,
+        "_resolve_operation",
+        Mock(return_value=Mock(handler=operation_handler)),
+    )
+    command = CommandRecord(
+        id="command-addon",
+        type=CommandType.ADDON_RUN,
+        payload=AddonRunCommandRecordPayload(
+            addon_id="danmu",
+            operation_id="generate",
+            target=MediaTarget(media_id=media_id, season_number=1),
+        ),
+        media_id=media_id,
+        target=MediaTarget(media_id=media_id, season_number=1),
+        target_type=CommandTargetType.MEDIA,
+        target_id=str(media_id),
+    )
+
+    with pytest.raises(InvalidRequestException) as exc_info:
+        await handler.execute(command)
+
+    assert exc_info.value.message_key == "backendErrors.addonOperationFailed"
+    assert exc_info.value.params["failed_count"] == "2"
+
+
 def test_pilot_episode_action_preserves_media_snapshot_for_notification_navigation():
     service = CommandService()
     command = _pilot_episode_command("cmd-pilot-action", season_number=2)

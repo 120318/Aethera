@@ -6,7 +6,7 @@ import pytest
 from app.schemas.config import SubtitlesAddonConfig
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.resource_attributes import ResourceAttributes
-from app.schemas.domain.subtitle import SubtitleInstallRequest
+from app.schemas.domain.subtitle import SubtitleCandidate, SubtitleInstallRequest
 from app.schemas.media_id import MediaID
 from app.schemas.exception import InvalidRequestException, SubtitleFileException
 from app.services.application.workflows.subtitles.service import (
@@ -14,6 +14,15 @@ from app.services.application.workflows.subtitles.service import (
     SubtitleApplicationService,
 )
 from app.services.integration.subtitles.opensubtitles import OpenSubtitlesClient
+
+
+def _subtitle_config() -> SubtitlesAddonConfig:
+    return SubtitlesAddonConfig(
+        enabled=True,
+        api_key="key",
+        username="user",
+        password="password",
+    )
 
 
 def _library_file(video_path: Path) -> LibraryFile:
@@ -68,7 +77,7 @@ async def test_fill_missing_isolates_subtitle_scan_os_error_per_file(
     monkeypatch.setattr(
         service,
         "_ready_config",
-        lambda: SubtitlesAddonConfig(enabled=True, api_key="key"),
+        _subtitle_config,
     )
     monkeypatch.setattr(service, "_has_subtitle", lambda _: (_ for _ in ()).throw(OSError("unavailable")))
 
@@ -97,7 +106,7 @@ async def test_fill_missing_continues_after_recoverable_subtitle_file_error(
     monkeypatch.setattr(
         service,
         "_ready_config",
-        lambda: SubtitlesAddonConfig(enabled=True, api_key="key"),
+        _subtitle_config,
     )
     monkeypatch.setattr(service, "_has_subtitle", lambda _: False)
     monkeypatch.setattr(
@@ -127,6 +136,48 @@ async def test_fill_missing_does_not_swallow_batch_configuration_error(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_fill_missing_skips_ambiguous_multi_file_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    video_path = tmp_path / "episode.mkv"
+    video_path.write_bytes(bytes(131072))
+    library_file = _library_file(video_path)
+    service = SubtitleApplicationService()
+    monkeypatch.setattr(
+        "app.services.application.workflows.subtitles.service.library_service.get_files_by_media",
+        AsyncMock(return_value=[library_file]),
+    )
+    monkeypatch.setattr(service, "_ready_config", _subtitle_config)
+    monkeypatch.setattr(service, "_has_subtitle", lambda _: False)
+    monkeypatch.setattr(
+        service,
+        "search_for_file",
+        AsyncMock(
+            return_value=[
+                SubtitleCandidate(
+                    id="subtitle-1:123",
+                    file_id=123,
+                    provider="opensubtitles",
+                    language="zh-cn",
+                    format="srt",
+                    release_file_count=2,
+                    cd_number=1,
+                )
+            ]
+        ),
+    )
+    install_mock = AsyncMock()
+    monkeypatch.setattr(service, "install", install_mock)
+
+    result = await service.fill_missing(library_file.media_id, season_number=1)
+
+    assert result.processed_count == 1
+    assert result.skipped_count == 1
+    install_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_install_writes_jellyfin_language_sidecar_and_records_artifact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -142,7 +193,7 @@ async def test_install_writes_jellyfin_language_sidecar_and_records_artifact(
     monkeypatch.setattr(
         service,
         "_ready_config",
-        lambda: SubtitlesAddonConfig(enabled=True, api_key="key"),
+        _subtitle_config,
     )
     monkeypatch.setattr(OpenSubtitlesClient, "download", AsyncMock(return_value=b"subtitle"))
     monkeypatch.setattr(
@@ -183,6 +234,10 @@ def test_opensubtitles_client_rejects_missing_api_key():
         (SubtitlesAddonConfig(enabled=False), "backendErrors.addonDisabled"),
         (
             SubtitlesAddonConfig(enabled=True, provider="opensubtitles", api_key=""),
+            "backendErrors.subtitleProviderNotConfigured",
+        ),
+        (
+            SubtitlesAddonConfig(enabled=True, provider="opensubtitles", api_key="key"),
             "backendErrors.subtitleProviderNotConfigured",
         ),
     ],
@@ -233,11 +288,58 @@ async def test_opensubtitles_search_preserves_moviehash_match(monkeypatch):
 
     assert candidates[0].hash_matched is True
     assert candidates[0].match_confidence == 1.0
+    assert candidates[0].id == "subtitle-1:123"
     client_factory.assert_called_once_with(timeout=30.0, follow_redirects=True)
 
 
 @pytest.mark.asyncio
+async def test_opensubtitles_search_preserves_every_release_file(monkeypatch):
+    response = Mock()
+    response.raise_for_status = Mock()
+    response.json.return_value = {
+        "data": [
+            {
+                "id": "subtitle-1",
+                "attributes": {
+                    "language": "zh-cn",
+                    "files": [
+                        {"file_id": 124, "file_name": "episode.cd2.srt", "cd_number": 2},
+                        {"file_id": 123, "file_name": "episode.cd1.srt", "cd_number": 1},
+                    ],
+                },
+            }
+        ]
+    }
+    client = AsyncMock()
+    client.get.return_value = response
+    context = AsyncMock()
+    context.__aenter__.return_value = client
+    monkeypatch.setattr(
+        "app.services.integration.subtitles.opensubtitles.httpx.AsyncClient",
+        Mock(return_value=context),
+    )
+
+    candidates = await OpenSubtitlesClient("key").search(
+        movie_hash="hash",
+        movie_size=131072,
+        languages=["zh-cn"],
+        season_number=1,
+        episode_number=1,
+    )
+
+    assert [(item.file_id, item.cd_number) for item in candidates] == [(124, 2), (123, 1)]
+    assert [item.release_file_count for item in candidates] == [2, 2]
+    assert len({item.id for item in candidates}) == 2
+
+
+@pytest.mark.asyncio
 async def test_opensubtitles_download_follows_redirected_file_link(monkeypatch):
+    login_response = Mock()
+    login_response.raise_for_status = Mock()
+    login_response.json.return_value = {
+        "token": "user-token",
+        "base_url": "api.opensubtitles.com",
+    }
     download_response = Mock()
     download_response.raise_for_status = Mock()
     download_response.json.return_value = {"link": "https://download.opensubtitles.com/subtitle.srt"}
@@ -245,7 +347,7 @@ async def test_opensubtitles_download_follows_redirected_file_link(monkeypatch):
     subtitle_response.raise_for_status = Mock()
     subtitle_response.content = b"subtitle"
     client = AsyncMock()
-    client.post.return_value = download_response
+    client.post.side_effect = [login_response, download_response]
     client.get.return_value = subtitle_response
     context = AsyncMock()
     context.__aenter__.return_value = client
@@ -255,8 +357,10 @@ async def test_opensubtitles_download_follows_redirected_file_link(monkeypatch):
         client_factory,
     )
 
-    content = await OpenSubtitlesClient("key").download(123)
+    content = await OpenSubtitlesClient("key", "user", "password").download(123)
 
     assert content == b"subtitle"
     client_factory.assert_called_once_with(timeout=30.0, follow_redirects=True)
+    assert client.post.await_args_list[0].kwargs["json"] == {"username": "user", "password": "password"}
+    assert client.post.await_args_list[1].kwargs["headers"]["Authorization"] == "Bearer user-token"
     client.get.assert_awaited_once_with("https://download.opensubtitles.com/subtitle.srt")
