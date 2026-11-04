@@ -15,6 +15,7 @@ from app.schemas.exception.exceptions import DownloadException
 from app.schemas.media_id import MediaID
 from app.services.audit.event_service import event_service
 from app.services.domain.library.cleanup import LibraryCleanup
+from app.services.domain.library.operation_lock import library_file_operation_coordinator
 from app.services.domain.library.service_types import LibraryQueryProtocol
 from app.services.platform.domain_lock_service import domain_lock_service
 from app.utils.library_paths import build_library_file_path
@@ -62,6 +63,13 @@ class LibraryDeletionWorker:
 
     async def delete_task_library_records(self, task_id: str) -> int:
         library_files = await self.file_repo.find_by_task_id(task_id)
+        async with library_file_operation_coordinator.lock(
+            [file.id for file in library_files if file.id]
+        ):
+            return await self._delete_task_library_records(task_id)
+
+    async def _delete_task_library_records(self, task_id: str) -> int:
+        library_files = await self.file_repo.find_by_task_id(task_id)
         file_ids = [file.id for file in library_files if file.id]
         await self.artifact_repo.remove_by_library_file_ids(file_ids)
         episodes_deleted = await self.episode_repo.remove_by_file_ids(file_ids)
@@ -82,13 +90,30 @@ class LibraryDeletionWorker:
         actor: EventActor = EventActor.system,
     ) -> int:
         files = await self.query.get_files_by_task(task_id)
+        async with library_file_operation_coordinator.lock(
+            [file.id for file in files if file.id]
+        ):
+            return await self._delete_task_library_files_locked(
+                task_id,
+                force=force,
+                actor=actor,
+            )
+
+    async def _delete_task_library_files_locked(
+        self,
+        task_id: str,
+        force: bool,
+        *,
+        actor: EventActor,
+    ) -> int:
+        files = await self.query.get_files_by_task(task_id)
         media_id = files[0].media_id if files else None
         delete_events = self._group_delete_event_files(files)
         if files:
             await self._delete_artifacts_for_files(files)
             await asyncio.to_thread(self.cleanup.delete_files, files)
         try:
-            deleted_count = await self.delete_task_library_records(task_id)
+            deleted_count = await self._delete_task_library_records(task_id)
         except AppException:
             if force:
                 return 0
@@ -116,25 +141,26 @@ class LibraryDeletionWorker:
             if not acquired:
                 raise DownloadException("backendErrors.fileBusy")
 
-            library_file = await self.query.find_file_by_id(file_id)
-            if not library_file:
-                return True
+            async with library_file_operation_coordinator.lock([file_id]):
+                library_file = await self.query.find_file_by_id(file_id)
+                if not library_file:
+                    return True
 
-            full_path = str(build_library_file_path(library_file.path, library_file.file_name))
-            await self._delete_artifacts_for_files([library_file])
-            await asyncio.to_thread(self.cleanup.delete_files, [library_file])
-            await self.episode_repo.remove_by_file_ids([library_file.id])
-            await self.artifact_repo.remove_by_library_file_ids([library_file.id])
-            await self.file_repo.remove_by_ids([library_file.id])
-            await self._emit_media_delete_event(
-                library_file.media_id,
-                [full_path],
-                directory_id=library_file.directory_id,
-                delete_scope="file",
-                season_number=self._library_files_season_number([library_file]),
-                actor=actor,
-            )
-            return True
+                full_path = str(build_library_file_path(library_file.path, library_file.file_name))
+                await self._delete_artifacts_for_files([library_file])
+                await asyncio.to_thread(self.cleanup.delete_files, [library_file])
+                await self.episode_repo.remove_by_file_ids([library_file.id])
+                await self.artifact_repo.remove_by_library_file_ids([library_file.id])
+                await self.file_repo.remove_by_ids([library_file.id])
+                await self._emit_media_delete_event(
+                    library_file.media_id,
+                    [full_path],
+                    directory_id=library_file.directory_id,
+                    delete_scope="file",
+                    season_number=self._library_files_season_number([library_file]),
+                    actor=actor,
+                )
+                return True
 
     async def delete_media_library_files(
         self,
@@ -143,6 +169,26 @@ class LibraryDeletionWorker:
         force: bool = False,
         season: int | None = None,
         actor: EventActor = EventActor.system,
+    ) -> int:
+        files = await self.query.get_files_by_media(media_id, season=season)
+        file_ids = list({file.id for file in files if file.id})
+        if not file_ids:
+            return 0
+        async with library_file_operation_coordinator.lock(file_ids):
+            return await self._delete_media_library_files_locked(
+                media_id,
+                force=force,
+                season=season,
+                actor=actor,
+            )
+
+    async def _delete_media_library_files_locked(
+        self,
+        media_id: MediaID,
+        *,
+        force: bool,
+        season: int | None,
+        actor: EventActor,
     ) -> int:
         files = await self.query.get_files_by_media(media_id, season=season)
         file_ids = list({file.id for file in files if file.id})
