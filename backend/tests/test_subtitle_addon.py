@@ -223,6 +223,58 @@ async def test_install_writes_jellyfin_language_sidecar_and_records_artifact(
     assert mark_artifact.await_args.kwargs["artifact_type"] == SUBTITLE_ARTIFACT_TYPE
 
 
+@pytest.mark.asyncio
+async def test_install_resolves_video_location_again_after_download(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    old_video = tmp_path / "old" / "episode.mkv"
+    new_video = tmp_path / "new" / "episode.mkv"
+    old_video.parent.mkdir()
+    new_video.parent.mkdir()
+    old_video.write_bytes(bytes(131072))
+    new_video.write_bytes(bytes(131072))
+    old_file = _library_file(old_video)
+    new_file = old_file.model_copy(
+        update={"directory_id": "directory-2", "path": str(new_video.parent)}
+    )
+    service = SubtitleApplicationService()
+    mark_artifact = AsyncMock()
+    refresh_library_file = AsyncMock()
+
+    monkeypatch.setattr(
+        service,
+        "_resolve_video",
+        AsyncMock(side_effect=[(old_file, old_video), (new_file, new_video)]),
+    )
+    monkeypatch.setattr(service, "_ready_config", _subtitle_config)
+    monkeypatch.setattr(OpenSubtitlesClient, "download", AsyncMock(return_value=b"subtitle"))
+    monkeypatch.setattr(
+        "app.services.application.workflows.subtitles.service.library_service.mark_artifact",
+        mark_artifact,
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.subtitles.service.refresh_library_file",
+        refresh_library_file,
+    )
+
+    result = await service.install(
+        SubtitleInstallRequest(
+            file_id=old_file.id,
+            candidate_file_id=123,
+            language="zh_CN",
+            format="srt",
+        )
+    )
+
+    expected_path = new_video.with_suffix(".zh-cn.srt")
+    assert result.path == str(expected_path)
+    assert expected_path.read_bytes() == b"subtitle"
+    assert not old_video.with_suffix(".zh-cn.srt").exists()
+    assert mark_artifact.await_args.kwargs["expected_path"] == str(expected_path)
+    refresh_library_file.assert_awaited_once_with(new_file, str(new_video))
+
+
 def test_opensubtitles_client_rejects_missing_api_key():
     with pytest.raises(ValueError, match="API key"):
         OpenSubtitlesClient("")._headers()

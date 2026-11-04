@@ -18,6 +18,7 @@ from app.schemas.exception import InvalidRequestException, ResourceNotFoundExcep
 from app.services.application.workflows.media_server_sync import refresh_library_file
 from app.services.application.workflows.scoped_seasons import library_file_season_number
 from app.services.config.settings_service import settings_service
+from app.services.domain.library.operation_lock import library_file_operation_coordinator
 from app.services.domain.library.service import library_service
 from app.services.integration.subtitles.opensubtitles import OpenSubtitlesClient
 from app.utils.library_paths import build_library_file_path
@@ -62,7 +63,7 @@ class SubtitleApplicationService:
         return content.decode("utf-8", errors="replace")[:4000]
 
     async def install(self, request: SubtitleInstallRequest) -> SubtitleInstallResponse:
-        library_file, video_path = await self._resolve_video(request.file_id)
+        await self._resolve_video(request.file_id)
         config = self._ready_config()
         subtitle_format = request.format.lower()
         if subtitle_format not in _SUBTITLE_FORMATS:
@@ -71,22 +72,24 @@ class SubtitleApplicationService:
                 params={"format": request.format},
             )
         language = self._normalize_language(request.language)
-        destination = video_path.with_suffix(f".{language}.{subtitle_format}")
         content = await self._client(config).download(request.candidate_file_id)
-        temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
-        try:
-            await asyncio.to_thread(temporary.write_bytes, content)
-            await asyncio.to_thread(os.replace, temporary, destination)
-        finally:
-            if temporary.exists():
-                temporary.unlink(missing_ok=True)
-        await library_service.mark_artifact(
-            library_file_id=library_file.id,
-            artifact_type=SUBTITLE_ARTIFACT_TYPE,
-            expected_path=str(destination),
-            status=LibraryFileArtifactStatus.succeeded,
-        )
-        await refresh_library_file(library_file, str(video_path))
+        async with library_file_operation_coordinator.lock([request.file_id]):
+            library_file, video_path = await self._resolve_video(request.file_id)
+            destination = video_path.with_suffix(f".{language}.{subtitle_format}")
+            temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                await asyncio.to_thread(temporary.write_bytes, content)
+                await asyncio.to_thread(os.replace, temporary, destination)
+            finally:
+                if temporary.exists():
+                    temporary.unlink(missing_ok=True)
+            await library_service.mark_artifact(
+                library_file_id=library_file.id,
+                artifact_type=SUBTITLE_ARTIFACT_TYPE,
+                expected_path=str(destination),
+                status=LibraryFileArtifactStatus.succeeded,
+            )
+            await refresh_library_file(library_file, str(video_path))
         return SubtitleInstallResponse(path=str(destination), artifact_type=SUBTITLE_ARTIFACT_TYPE)
 
     async def fill_missing(self, media_id, season_number: int | None = None) -> SubtitleBatchFillResponse:

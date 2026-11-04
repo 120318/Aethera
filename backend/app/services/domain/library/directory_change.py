@@ -12,6 +12,7 @@ from app.schemas.exception.exceptions import ResourceNotFoundException
 from app.services.config.settings_service import settings_service
 from app.services.domain.download import download_service
 from app.services.domain.library.artifact_paths import video_sidecar_suffix
+from app.services.domain.library.operation_lock import library_file_operation_coordinator
 from app.services.domain.library.service import library_service
 from app.utils.fs_utils import ensure_directory
 from app.utils.library_paths import build_library_file_path, split_library_storage_path
@@ -169,6 +170,10 @@ class LibraryFileDirectoryChangeService:
         return moves
 
     async def _move_files(self, files: list[LibraryFile], target_directory: DirectoryConfig) -> bool:
+        async with library_file_operation_coordinator.lock([file.id for file in files]):
+            return await self._move_files_locked(files, target_directory)
+
+    async def _move_files_locked(self, files: list[LibraryFile], target_directory: DirectoryConfig) -> bool:
         moves = self._build_moves(files, target_directory)
         artifact_moves = await self._build_artifact_moves(files, target_directory)
         moved: list[tuple[Path, Path]] = []
