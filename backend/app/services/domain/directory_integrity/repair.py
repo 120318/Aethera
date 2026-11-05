@@ -11,6 +11,7 @@ from app.db.repositories.library_file_repository import LibraryFileRepository
 from app.schemas.exception.base import AppException
 from app.schemas.runtime.directory_integrity import DirectoryIntegrityIssueType, DirectoryIntegrityItem, DirectoryIntegrityRepairResult
 from app.services.domain.download import download_service as default_download_service
+from app.services.domain.library.operation_lock import library_file_operation_coordinator
 from app.services.domain.transfer import transfer_service as default_transfer_service
 
 logger = logging.getLogger("app.services.directory_integrity.repair")
@@ -53,9 +54,10 @@ class DirectoryIntegrityRepairExecutor:
             await asyncio.to_thread(self._delete_path, Path(item.path))
             return
         if self._should_remove_library_record(item):
-            await self.episode_repo.remove_by_file_ids([item.library_file_id])
-            await self.artifact_repo.remove_by_library_file_ids([item.library_file_id])
-            await self.library_repo.remove_by_ids([item.library_file_id])
+            async with library_file_operation_coordinator.lock([item.library_file_id]):
+                await self.episode_repo.remove_by_file_ids([item.library_file_id])
+                await self.artifact_repo.remove_by_library_file_ids([item.library_file_id])
+                await self.library_repo.remove_by_ids([item.library_file_id])
             return
         if item.issue_type == DirectoryIntegrityIssueType.task_missing_library_file and item.task_id:
             await self.transfer_service.perform_transfer_by_task_id(item.task_id)

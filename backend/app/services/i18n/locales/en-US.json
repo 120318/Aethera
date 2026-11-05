@@ -47,6 +47,7 @@
   "backendErrors.subtitleProviderNotConfigured": "OpenSubtitles is not configured",
   "backendErrors.subtitleFormatUnsupported": "Unsupported subtitle format: {format}",
   "backendErrors.subtitleVideoTooSmall": "The video is too small for OpenSubtitles hashing",
+  "backendErrors.subtitleVideoChanged": "The video was replaced while the subtitle was downloading. Please search again.",
   "backendErrors.transferFailed": "Transfer failed: {reason}",
   "backendErrors.transferTargetPathCollision": "Multiple source files resolve to the same target path; transfer was blocked: {path}",
   "runtimeReasons.danmuDurationMismatch": "Video duration mismatch",

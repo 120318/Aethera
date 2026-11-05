@@ -15,6 +15,7 @@ from app.schemas.exception.exceptions import TransferException
 from app.services.audit.event_service import event_service
 from app.services.domain.download import download_service
 from app.services.domain.download.task_runtime_service import event_actor_for_task
+from app.services.domain.library.operation_lock import library_file_operation_coordinator
 from app.services.domain.library.service import library_service
 from app.services.domain.media import media_service
 from app.services.platform.domain_lock_service import domain_lock_service
@@ -115,14 +116,18 @@ class TransferService:
                     raise TransferException("backendErrors.transferProtectedEpisodePathConflict")
                 logger.info("Episode batch deferred due to protected target path: task=%s", task.id)
                 return TransferResult(transferred_files=[])
-            transfer_results = await execution.execute_transfer_plan(task, context, transfer_plan)
-            await commit_episode_batch(
-                task,
-                transfer_results,
-                context,
-                replacement_plan.replace_files,
-                handled_file_indices=file_indices,
-            )
+            existing_library_files = await library_service.get_files_by_task(task.id)
+            async with library_file_operation_coordinator.lock(
+                _replacement_file_ids(existing_library_files, replacement_plan.replace_files)
+            ):
+                transfer_results = await execution.execute_transfer_plan(task, context, transfer_plan)
+                await commit_episode_batch(
+                    task,
+                    transfer_results,
+                    context,
+                    replacement_plan.replace_files,
+                    handled_file_indices=file_indices,
+                )
             if completes_task and not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
                 raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})
             return TransferResult(transferred_files=transfer_results)
@@ -151,14 +156,17 @@ class TransferService:
                 replacement_plan.replace_files,
             ):
                 raise TransferException("backendErrors.transferProtectedEpisodePathConflict")
-            transfer_results = await execution.execute_transfer_plan(task, execution_context, transfer_plan)
-            await commit_transfer_results(
-                task,
-                transfer_results,
-                existing_library_files,
-                execution_context,
-                replacement_plan.replace_files,
-            )
+            async with library_file_operation_coordinator.lock(
+                _replacement_file_ids(existing_library_files, replacement_plan.replace_files)
+            ):
+                transfer_results = await execution.execute_transfer_plan(task, execution_context, transfer_plan)
+                await commit_transfer_results(
+                    task,
+                    transfer_results,
+                    existing_library_files,
+                    execution_context,
+                    replacement_plan.replace_files,
+                )
             logger.info("Transfer completed: task=%s files=%d", task.id, len(transfer_results))
             return TransferResult(transferred_files=transfer_results)
         except AppException as exc:
@@ -186,6 +194,10 @@ async def cleanup_replaced_library_files(
         return
     replacement_paths = {str(Path(result.destination_path)) for result in transfer_results}
     await library_service.cleanup_replaced_files(existing_library_files, replacement_paths, artifacts)
+
+
+def _replacement_file_ids(*groups: list[LibraryFile]) -> list[str]:
+    return sorted({item.id for group in groups for item in group if item.id})
 
 
 async def load_replacement_artifacts(files: list[LibraryFile]) -> list[LibraryFileArtifact]:

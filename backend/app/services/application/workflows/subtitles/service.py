@@ -4,6 +4,7 @@ import asyncio
 import os
 import struct
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.schemas.config import SubtitlesAddonConfig
@@ -27,6 +28,15 @@ from app.utils.media_sidecars import is_danmu_sidecar_path
 SUBTITLE_ARTIFACT_TYPE = "subtitle"
 _HASH_CHUNK_SIZE = 65536
 _SUBTITLE_FORMATS = {"srt", "ass", "ssa", "sub", "vtt"}
+
+
+@dataclass(frozen=True)
+class _LibraryFileVersion:
+    id: str
+    task_id: str
+    file_size: int | None
+    file_index: int | None
+    created_at: float
 
 
 class SubtitleApplicationService:
@@ -63,7 +73,8 @@ class SubtitleApplicationService:
         return content.decode("utf-8", errors="replace")[:4000]
 
     async def install(self, request: SubtitleInstallRequest) -> SubtitleInstallResponse:
-        await self._resolve_video(request.file_id)
+        initial_file, _initial_video_path = await self._resolve_video(request.file_id)
+        initial_version = self._file_version(initial_file)
         config = self._ready_config()
         subtitle_format = request.format.lower()
         if subtitle_format not in _SUBTITLE_FORMATS:
@@ -75,6 +86,8 @@ class SubtitleApplicationService:
         content = await self._client(config).download(request.candidate_file_id)
         async with library_file_operation_coordinator.lock([request.file_id]):
             library_file, video_path = await self._resolve_video(request.file_id)
+            if self._file_version(library_file) != initial_version:
+                raise SubtitleFileException("backendErrors.subtitleVideoChanged")
             destination = video_path.with_suffix(f".{language}.{subtitle_format}")
             temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
             try:
@@ -169,6 +182,16 @@ class SubtitleApplicationService:
     def _normalize_language(language: str) -> str:
         value = language.strip().lower().replace("_", "-")
         return value or "und"
+
+    @staticmethod
+    def _file_version(library_file: LibraryFile) -> _LibraryFileVersion:
+        return _LibraryFileVersion(
+            id=library_file.id,
+            task_id=library_file.task_id,
+            file_size=library_file.file_size,
+            file_index=library_file.file_index,
+            created_at=library_file.created_at,
+        )
 
     @staticmethod
     def _has_subtitle(video_path: Path) -> bool:

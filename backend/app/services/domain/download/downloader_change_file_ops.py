@@ -8,6 +8,7 @@ from app.schemas.domain.download import TaskData
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.task_storage_migration import TaskStorageMigration
 from app.services.config.settings_service import settings_service
+from app.services.domain.library.operation_lock import library_file_operation_coordinator
 from app.services.domain.library.service import library_service
 from app.utils.fs_utils import ensure_directory
 from app.utils.library_paths import build_library_file_path, split_library_storage_path
@@ -46,6 +47,23 @@ def rollback_content_move_if_needed(migration: TaskStorageMigration) -> bool:
 
 
 async def move_task_library_files(
+    task: TaskData,
+    library_files: list[LibraryFile],
+    source_directory: DirectoryConfig,
+    target_directory: DirectoryConfig,
+) -> bool:
+    async with library_file_operation_coordinator.lock(
+        [library_file.id for library_file in library_files if library_file.id]
+    ):
+        return await _move_task_library_files_locked(
+            task,
+            library_files,
+            source_directory,
+            target_directory,
+        )
+
+
+async def _move_task_library_files_locked(
     task: TaskData,
     library_files: list[LibraryFile],
     source_directory: DirectoryConfig,

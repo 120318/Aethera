@@ -275,6 +275,47 @@ async def test_install_resolves_video_location_again_after_download(
     refresh_library_file.assert_awaited_once_with(new_file, str(new_video))
 
 
+@pytest.mark.asyncio
+async def test_install_rejects_video_replaced_during_download(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    video_path = tmp_path / "episode.mkv"
+    video_path.write_bytes(bytes(131072))
+    original_file = _library_file(video_path)
+    replaced_file = original_file.model_copy(
+        update={"task_id": "task-2", "created_at": original_file.created_at + 1}
+    )
+    service = SubtitleApplicationService()
+    mark_artifact = AsyncMock()
+
+    monkeypatch.setattr(
+        service,
+        "_resolve_video",
+        AsyncMock(side_effect=[(original_file, video_path), (replaced_file, video_path)]),
+    )
+    monkeypatch.setattr(service, "_ready_config", _subtitle_config)
+    monkeypatch.setattr(OpenSubtitlesClient, "download", AsyncMock(return_value=b"subtitle"))
+    monkeypatch.setattr(
+        "app.services.application.workflows.subtitles.service.library_service.mark_artifact",
+        mark_artifact,
+    )
+
+    with pytest.raises(SubtitleFileException) as exc_info:
+        await service.install(
+            SubtitleInstallRequest(
+                file_id=original_file.id,
+                candidate_file_id=123,
+                language="zh_CN",
+                format="srt",
+            )
+        )
+
+    assert exc_info.value.message_key == "backendErrors.subtitleVideoChanged"
+    assert not video_path.with_suffix(".zh-cn.srt").exists()
+    mark_artifact.assert_not_awaited()
+
+
 def test_opensubtitles_client_rejects_missing_api_key():
     with pytest.raises(ValueError, match="API key"):
         OpenSubtitlesClient("")._headers()

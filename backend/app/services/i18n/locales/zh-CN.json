@@ -47,6 +47,7 @@
   "backendErrors.subtitleProviderNotConfigured": "OpenSubtitles 尚未正确配置",
   "backendErrors.subtitleFormatUnsupported": "不支持的字幕格式：{format}",
   "backendErrors.subtitleVideoTooSmall": "视频文件过小，无法计算 OpenSubtitles 哈希",
+  "backendErrors.subtitleVideoChanged": "字幕下载期间视频已被替换，请重新搜索。",
   "backendErrors.transferFailed": "转移失败：{reason}",
   "backendErrors.transferTargetPathCollision": "多个源文件会转移到同一目标路径，已阻止转移：{path}",
   "runtimeReasons.danmuDurationMismatch": "视频时长不匹配",
