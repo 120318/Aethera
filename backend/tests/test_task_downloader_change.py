@@ -1,13 +1,14 @@
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.schemas.config import DirectoryConfig, QBittorrentConfig
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.download import DownloadInfo, TaskContext, TaskData, TaskStatus
-from app.schemas.domain.library import LibraryFile
+from app.schemas.domain.library import LibraryFile, LibraryFileArtifact, LibraryFileArtifactStatus
 from app.schemas.domain.media import MediaExecutionSnapshot
 from app.schemas.domain.task_storage_migration import TaskStorageMigrationStatus
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
@@ -243,7 +244,7 @@ async def test_change_task_downloader_pauses_source_and_updates_task(monkeypatch
         ],
     )
     monkeypatch.setattr(
-        "app.services.domain.download.downloader_change.settings_service.get_directory_by_id",
+        "app.services.domain.library.relocation.settings_service.get_directory_by_id",
         lambda directory_id: DirectoryConfig(
             id=directory_id,
             name="Target",
@@ -1312,7 +1313,7 @@ async def test_finalize_migration_succeeds_when_source_torrent_cleanup_fails(mon
         task_library_files,
     )
     monkeypatch.setattr(
-        "app.services.domain.download.downloader_change.library_service.update_file_location",
+        "app.services.domain.library.relocation.library_service.update_file_location",
         update_file_location,
     )
     monkeypatch.setattr(
@@ -1384,7 +1385,7 @@ async def test_change_task_downloader_does_not_move_content_when_target_add_fail
         ],
     )
     monkeypatch.setattr(
-        "app.services.domain.download.downloader_change.settings_service.get_directory_by_id",
+        "app.services.domain.library.relocation.settings_service.get_directory_by_id",
         lambda directory_id: DirectoryConfig(
             id=directory_id,
             name="Target",
@@ -1813,7 +1814,7 @@ async def test_move_task_library_files_updates_directory_when_paths_match(monkey
         return True
 
     monkeypatch.setattr(
-        "app.services.domain.download.downloader_change.library_service.update_file_location",
+        "app.services.domain.library.relocation.library_service.update_file_location",
         update_file_location,
     )
 
@@ -1874,3 +1875,169 @@ async def test_move_task_library_files_rolls_back_physical_move_when_db_update_f
     assert await move_task_library_files(task, [library_file], source_directory, target_directory) is False
     assert source_file.exists()
     assert not (library_root / "new" / "Honey" / "Honey.mkv").exists()
+
+
+@pytest.mark.asyncio
+async def test_move_task_library_files_moves_tracked_subtitle_and_updates_artifact(
+    monkeypatch,
+    tmp_path,
+):
+    library_root = tmp_path / "library"
+    source_dir = library_root / "old" / "Honey"
+    source_dir.mkdir(parents=True)
+    source_video = source_dir / "Honey.mkv"
+    source_subtitle = source_dir / "Honey.zh-cn.srt"
+    source_video.write_text("movie", encoding="utf-8")
+    source_subtitle.write_text("subtitle", encoding="utf-8")
+    source_directory = DirectoryConfig(
+        id="dir-old",
+        name="Movie",
+        path=str(library_root / "old"),
+        download_path=str(tmp_path / "download-old"),
+        downloader_id="old",
+    )
+    target_directory = DirectoryConfig(
+        id="dir-new",
+        name="Movie New",
+        path=str(library_root / "new"),
+        download_path=str(tmp_path / "download-new"),
+        downloader_id="new",
+    )
+    library_file = LibraryFile(
+        id="file-1",
+        task_id="task-1",
+        directory_id="dir-old",
+        media_id=MediaID.parse("tmdb:movie:1"),
+        path="old/Honey",
+        file_name="Honey.mkv",
+        created_at=1.0,
+    )
+    artifact = LibraryFileArtifact(
+        id="artifact-1",
+        library_file_id=library_file.id,
+        artifact_type="subtitle",
+        expected_path=str(source_subtitle),
+        status=LibraryFileArtifactStatus.succeeded,
+        created_at=1.0,
+        updated_at=1.0,
+    )
+    artifact_updates = []
+
+    monkeypatch.setattr("app.utils.library_paths.get_library_root", lambda: library_root)
+    monkeypatch.setattr(
+        "app.services.domain.library.relocation.settings_service.get_directory_by_id",
+        lambda directory_id: source_directory if directory_id == source_directory.id else target_directory,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.library.relocation.library_service.get_artifacts_by_file_ids",
+        AsyncMock(return_value=[artifact]),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.library.relocation.library_service.update_file_location",
+        AsyncMock(return_value=True),
+    )
+
+    async def update_artifact_expected_path(artifact_id, expected_path):
+        artifact_updates.append((artifact_id, expected_path))
+        return True
+
+    monkeypatch.setattr(
+        "app.services.domain.library.relocation.library_service.update_artifact_expected_path",
+        update_artifact_expected_path,
+    )
+
+    task = make_task(str(tmp_path / "download-old"))
+    assert await move_task_library_files(task, [library_file], source_directory, target_directory) is True
+
+    target_video = library_root / "new" / "Honey" / "Honey.mkv"
+    target_subtitle = library_root / "new" / "Honey" / "Honey.zh-cn.srt"
+    assert target_video.read_text(encoding="utf-8") == "movie"
+    assert target_subtitle.read_text(encoding="utf-8") == "subtitle"
+    assert not source_video.exists()
+    assert not source_subtitle.exists()
+    assert artifact_updates == [(artifact.id, str(target_subtitle))]
+
+
+@pytest.mark.asyncio
+async def test_move_task_library_files_rolls_back_video_subtitle_and_ledgers_when_artifact_update_fails(
+    monkeypatch,
+    tmp_path,
+):
+    library_root = tmp_path / "library"
+    source_dir = library_root / "old" / "Honey"
+    source_dir.mkdir(parents=True)
+    source_video = source_dir / "Honey.mkv"
+    source_subtitle = source_dir / "Honey.zh-cn.srt"
+    source_video.write_text("movie", encoding="utf-8")
+    source_subtitle.write_text("subtitle", encoding="utf-8")
+    source_directory = DirectoryConfig(
+        id="dir-old",
+        name="Movie",
+        path=str(library_root / "old"),
+        download_path=str(tmp_path / "download-old"),
+        downloader_id="old",
+    )
+    target_directory = DirectoryConfig(
+        id="dir-new",
+        name="Movie New",
+        path=str(library_root / "new"),
+        download_path=str(tmp_path / "download-new"),
+        downloader_id="new",
+    )
+    library_file = LibraryFile(
+        id="file-1",
+        task_id="task-1",
+        directory_id=source_directory.id,
+        media_id=MediaID.parse("tmdb:movie:1"),
+        path="old/Honey",
+        file_name=source_video.name,
+        created_at=1.0,
+    )
+    artifact = LibraryFileArtifact(
+        id="artifact-1",
+        library_file_id=library_file.id,
+        artifact_type="subtitle",
+        expected_path=str(source_subtitle),
+        status=LibraryFileArtifactStatus.succeeded,
+        created_at=1.0,
+        updated_at=1.0,
+    )
+    file_updates = []
+
+    monkeypatch.setattr("app.utils.library_paths.get_library_root", lambda: library_root)
+    monkeypatch.setattr(
+        "app.services.domain.library.relocation.settings_service.get_directory_by_id",
+        lambda directory_id: source_directory if directory_id == source_directory.id else target_directory,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.library.relocation.library_service.get_artifacts_by_file_ids",
+        AsyncMock(return_value=[artifact]),
+    )
+
+    async def update_file_location(file_id, *, directory_id, path, file_name):
+        file_updates.append((file_id, directory_id, path, file_name))
+        return True
+
+    monkeypatch.setattr(
+        "app.services.domain.library.relocation.library_service.update_file_location",
+        update_file_location,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.library.relocation.library_service.update_artifact_expected_path",
+        AsyncMock(return_value=False),
+    )
+
+    task = make_task(str(tmp_path / "download-old"))
+    assert await move_task_library_files(task, [library_file], source_directory, target_directory) is False
+
+    assert source_video.read_text(encoding="utf-8") == "movie"
+    assert source_subtitle.read_text(encoding="utf-8") == "subtitle"
+    assert not (library_root / "new" / "Honey" / source_video.name).exists()
+    assert not (library_root / "new" / "Honey" / source_subtitle.name).exists()
+    assert file_updates[0][1] == target_directory.id
+    assert file_updates[-1] == (
+        library_file.id,
+        source_directory.id,
+        library_file.path,
+        library_file.file_name,
+    )
