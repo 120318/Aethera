@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from collections import OrderedDict
 from urllib.parse import urlparse
 
 import httpx
@@ -18,6 +20,8 @@ from app.schemas.domain.subtitle import (
 class OpenSubtitlesClient:
     base_url = "https://api.opensubtitles.com/api/v1"
     _allowed_api_hosts = {"api.opensubtitles.com", "vip-api.opensubtitles.com"}
+    _download_cache_ttl_seconds = 600.0
+    _download_cache_max_entries = 16
 
     def __init__(self, api_key: str, username: str = "", password: str = "") -> None:
         self.api_key = api_key.strip()
@@ -26,6 +30,8 @@ class OpenSubtitlesClient:
         self._token = ""
         self._authenticated_base_url = self.base_url
         self._login_lock = asyncio.Lock()
+        self._download_by_file_id: OrderedDict[int, tuple[float, bytes]] = OrderedDict()
+        self._download_lock = asyncio.Lock()
 
     def _headers(self, *, authenticated: bool = False) -> dict[str, str]:
         if not self.api_key:
@@ -155,6 +161,18 @@ class OpenSubtitlesClient:
         return candidates
 
     async def download(self, file_id: int) -> bytes:
+        cached = self._cached_download(file_id)
+        if cached is not None:
+            return cached
+        async with self._download_lock:
+            cached = self._cached_download(file_id)
+            if cached is not None:
+                return cached
+            content = await self._download_uncached(file_id)
+            self._cache_download(file_id, content)
+            return content
+
+    async def _download_uncached(self, file_id: int) -> bytes:
         try:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 response = None
@@ -180,6 +198,22 @@ class OpenSubtitlesClient:
                 return subtitle_response.content
         except httpx.HTTPError as exc:
             raise ValueError(f"OpenSubtitles download failed: {exc}") from exc
+
+    def _cached_download(self, file_id: int) -> bytes | None:
+        if file_id not in self._download_by_file_id:
+            return None
+        expires_at, content = self._download_by_file_id[file_id]
+        if expires_at <= time.monotonic():
+            self._download_by_file_id.pop(file_id, None)
+            return None
+        self._download_by_file_id.move_to_end(file_id)
+        return content
+
+    def _cache_download(self, file_id: int, content: bytes) -> None:
+        self._download_by_file_id[file_id] = (time.monotonic() + self._download_cache_ttl_seconds, content)
+        self._download_by_file_id.move_to_end(file_id)
+        while len(self._download_by_file_id) > self._download_cache_max_entries:
+            self._download_by_file_id.popitem(last=False)
 
     @staticmethod
     def _format_from_name(file_name: str) -> str:

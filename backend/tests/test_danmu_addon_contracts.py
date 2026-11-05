@@ -1204,10 +1204,22 @@ class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
         media = self._media(
             vendors=[Vendor(id="youku", name="Youku", url="http://v.youku.com/v_show/id_XNDQ1.html")],
         )
+        library_file = LibraryFile(
+            id="file-1",
+            task_id="task-1",
+            directory_id="dir-1",
+            media_id=media.media_id,
+            path="/library",
+            file_name="Movie.mkv",
+            created_at=1,
+        )
 
         with (
             patch.object(service, "_resolve_generation_action", return_value=("action-1", False)),
-            patch.object(service, "_mark_danmu_artifacts", new=AsyncMock()),
+            patch(
+                "app.services.application.workflows.danmu.service.danmu_artifact_committer.mark_status",
+                new=AsyncMock(),
+            ),
             patch(
                 "app.services.application.workflows.danmu.service.danmu_provider_service.fetch",
                 new=AsyncMock(return_value=None),
@@ -1221,10 +1233,74 @@ class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
                 trigger=ActionTrigger.scheduler,
                 event=None,
                 config=config,
+                library_file=library_file,
             )
 
         self.assertEqual(ActionStatus.skipped, outcome.status)
         emit_mock.assert_not_called()
+
+    async def test_generation_does_not_write_sidecars_after_library_file_is_deleted(self):
+        service = DanmuApplicationService()
+        config = AddonsConfig.model_validate(
+            {"danmu": {"enabled": True, "output_xml": True, "output_ass": True}}
+        ).danmu
+        media = self._media(
+            vendors=[Vendor(id="youku", name="Youku", url="http://v.youku.com/v_show/id_XNDQ1.html")],
+        )
+        result = DanmuFetchResult(
+            provider="youku",
+            source_id="source-1",
+            comments=[DanmuComment(time_seconds=1, text="hello")],
+        )
+
+        with TemporaryDirectory() as tmp_dir:
+            video_path = Path(tmp_dir) / "Movie.mkv"
+            video_path.write_text("video")
+            library_file = LibraryFile(
+                id="file-1",
+                task_id="task-1",
+                directory_id="dir-1",
+                media_id=media.media_id,
+                path=str(video_path.parent),
+                file_name=video_path.name,
+                file_size=video_path.stat().st_size,
+                created_at=1,
+            )
+            find_file = AsyncMock(side_effect=[library_file, None, None])
+            mark_artifact = AsyncMock()
+
+            with (
+                patch.object(service, "_resolve_generation_action", return_value=("action-1", False)),
+                patch(
+                    "app.services.application.workflows.danmu.artifact_commit.library_service.find_file_by_id",
+                    find_file,
+                ),
+                patch(
+                    "app.services.application.workflows.danmu.artifact_commit.library_service.mark_artifact",
+                    mark_artifact,
+                ),
+                patch(
+                    "app.services.application.workflows.danmu.service.danmu_provider_service.fetch",
+                    new=AsyncMock(return_value=result),
+                ),
+                patch("app.services.application.workflows.danmu.artifact_commit.write_outputs") as write_mock,
+            ):
+                outcome = await service._generate_for_video(
+                    media,
+                    video_path,
+                    None,
+                    trigger=ActionTrigger.manual,
+                    event=None,
+                    config=config,
+                    library_file=library_file,
+                )
+
+        self.assertEqual(ActionStatus.failed, outcome.status)
+        write_mock.assert_not_called()
+        self.assertTrue(mark_artifact.await_args_list)
+        self.assertTrue(
+            all(call.kwargs["status"] == LibraryFileArtifactStatus.pending for call in mark_artifact.await_args_list)
+        )
 
     async def test_import_event_generation_passes_library_file_for_artifacts(self):
         service = DanmuApplicationService()

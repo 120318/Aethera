@@ -457,3 +457,39 @@ async def test_opensubtitles_download_follows_redirected_file_link(monkeypatch):
     assert client.post.await_args_list[0].kwargs["json"] == {"username": "user", "password": "password"}
     assert client.post.await_args_list[1].kwargs["headers"]["Authorization"] == "Bearer user-token"
     client.get.assert_awaited_once_with("https://download.opensubtitles.com/subtitle.srt")
+
+
+@pytest.mark.asyncio
+async def test_opensubtitles_download_reuses_cached_content(monkeypatch):
+    login_response = Mock()
+    login_response.raise_for_status = Mock()
+    login_response.json.return_value = {
+        "token": "user-token",
+        "base_url": "api.opensubtitles.com",
+    }
+    download_response = Mock()
+    download_response.raise_for_status = Mock()
+    download_response.json.return_value = {"link": "https://download.opensubtitles.com/subtitle.srt"}
+    subtitle_response = Mock()
+    subtitle_response.raise_for_status = Mock()
+    subtitle_response.content = b"subtitle"
+    http_client = AsyncMock()
+    http_client.post.side_effect = [login_response, download_response]
+    http_client.get.return_value = subtitle_response
+    context = AsyncMock()
+    context.__aenter__.return_value = http_client
+    client_factory = Mock(return_value=context)
+    monkeypatch.setattr(
+        "app.services.integration.subtitles.opensubtitles.httpx.AsyncClient",
+        client_factory,
+    )
+    client = OpenSubtitlesClient("key", "user", "password")
+
+    preview_content = await client.download(123)
+    install_content = await client.download(123)
+
+    assert preview_content == b"subtitle"
+    assert install_content == b"subtitle"
+    client_factory.assert_called_once_with(timeout=30.0, follow_redirects=True)
+    assert http_client.post.await_count == 2
+    http_client.get.assert_awaited_once_with("https://download.opensubtitles.com/subtitle.srt")
