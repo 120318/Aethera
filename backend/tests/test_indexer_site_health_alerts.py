@@ -882,7 +882,13 @@ def test_reopen_unhealthy_events_reopens_only_latest_matching_event():
     )
 
     with SessionLocal() as session:
-        acknowledged_ids = set(session.execute(select(EventAcknowledgementORM.event_id)).scalars().all())
+        acknowledged_ids = set(
+            session.execute(
+                select(EventAcknowledgementORM.event_id).where(
+                    EventAcknowledgementORM.event_id.in_(["indexer-old-warning", "indexer-current-warning"])
+                )
+            ).scalars().all()
+        )
 
     assert applied is True
     assert reopened_count == 1
@@ -1077,7 +1083,13 @@ def test_emit_unhealthy_event_acknowledges_previous_matching_alert():
     applied = repo.emit_unhealthy_event_if_current(status, current_event, [], checked_at)
 
     with SessionLocal.begin() as session:
-        acknowledged_ids = set(session.execute(select(EventAcknowledgementORM.event_id)).scalars().all())
+        acknowledged_ids = set(
+            session.execute(
+                select(EventAcknowledgementORM.event_id).where(
+                    EventAcknowledgementORM.event_id.in_([previous_event.id, current_event.id])
+                )
+            ).scalars().all()
+        )
         persisted_current = session.get(EventORM, current_event.id)
         session.execute(
             delete(EventAcknowledgementORM).where(EventAcknowledgementORM.event_id == previous_event.id)

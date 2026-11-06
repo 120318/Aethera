@@ -7,6 +7,16 @@ from app.schemas.domain.action import ActionStatus
 from app.schemas.domain.download import TaskStatus
 
 
+class AddonRunEventMeta(BaseModel):
+    addon_id: str
+    operation_id: str
+    result_count: int = 0
+    failed_count: int = 0
+    error: str = ""
+    error_key: str | None = None
+    error_params: dict[str, str] = Field(default_factory=dict)
+
+
 class DownloadTaskEventMeta(BaseModel):
     task_id: str
     media_id: MediaID
@@ -117,6 +127,20 @@ class DanmuGenerationOutcome(BaseModel):
     xml_path: str | None = None
     ass_path: str | None = None
     error: str = ""
+
+
+class DanmuGenerationBatchResult(BaseModel):
+    completed_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+
+    @classmethod
+    def from_outcomes(cls, outcomes: list[DanmuGenerationOutcome]) -> DanmuGenerationBatchResult:
+        return cls(
+            completed_count=sum(item.status == ActionStatus.completed for item in outcomes),
+            skipped_count=sum(item.status == ActionStatus.skipped for item in outcomes),
+            failed_count=sum(item.status == ActionStatus.failed for item in outcomes),
+        )
 
 
 class LibraryFileMissingEventMeta(BaseModel):

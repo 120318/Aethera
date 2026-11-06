@@ -39,7 +39,6 @@ class TaskAction(str, Enum):
     RESUME = "resume"
     TRANSFER = "transfer"
     MEDIA_SERVER_SYNC = "media_server_sync"
-    DANMU_GENERATE = "danmu_generate"
     CHANGE_DOWNLOADER = "change_downloader"
     DELETE = "delete"
 
@@ -89,6 +88,7 @@ class TaskViewItem(BaseModel):
     directory_name: str | None = None
     media_type: str | None = None
     media_id: str | None = None
+    season_number: int | None = None
     torrent_hash: str
     downloader_id: str | None = None
     download_client: str | None = None

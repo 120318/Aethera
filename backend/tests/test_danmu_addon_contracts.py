@@ -7,17 +7,24 @@ from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
 
-from app.addons.descriptors import _danmu_jobs
+from app.addons.descriptors import _danmu_jobs, _enqueue_danmu_event, _run_danmu_operation
 from app.core.action_context import action_context
 from app.schemas.config import AddonsConfig
-from app.schemas.domain.addon_events import DanmuGenerationOutcome, ImportedMediaFile, MediaImportCompletedEventMeta
+from app.schemas.domain.addon_events import (
+    DanmuGenerationBatchResult,
+    DanmuGenerationOutcome,
+    ImportedMediaFile,
+    MediaImportCompletedEventMeta,
+)
 from app.schemas.domain.action import ActionStatus, ActionTrigger
+from app.schemas.domain.command import AddonRunCommandRecordPayload
 from app.schemas.domain.event import Event, EventType
 from app.schemas.domain.library import LibraryFile, LibraryFileArtifact, LibraryFileArtifactStatus, LibraryFileArtifactType
-from app.schemas.domain.media import MediaFullInfo
+from app.schemas.domain.media import MediaFullInfo, MediaTarget
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.vendor import Vendor
 from app.schemas.media_id import MediaID
+from app.schemas.exception import InvalidRequestException, ResourceNotFoundException
 from app.services.application.workflows.danmu.source_resolver import DanmuSourceResolver
 from app.services.application.workflows.danmu.service import DanmuApplicationService
 from app.services.application.workflows.danmu.duration_guard import danmu_duration_guard
@@ -80,7 +87,14 @@ class TestDanmuAddonContracts(unittest.TestCase):
 
     def test_danmu_backfill_job_registered_when_enabled(self):
         config = AddonsConfig.model_validate(
-            {"danmu": {"enabled": True, "backfill_enabled": True, "backfill_interval_seconds": 600}}
+            {
+                "danmu": {
+                    "enabled": True,
+                    "directory_ids": ["dir-1"],
+                    "backfill_enabled": True,
+                    "backfill_interval_seconds": 600,
+                }
+            }
         )
 
         with patch("app.addons.descriptors.danmu_application_service.config", return_value=config.danmu):
@@ -971,6 +985,81 @@ class TestDanmuAddonContracts(unittest.TestCase):
 
 
 class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _run_payload(**updates) -> AddonRunCommandRecordPayload:
+        values = {
+            "addon_id": "danmu",
+            "operation_id": "generate",
+            "target": MediaTarget(media_id=MediaID.parse("tmdb:movie:1")),
+        }
+        values.update(updates)
+        return AddonRunCommandRecordPayload(**values)
+
+    async def test_run_operation_uses_domain_error_for_missing_event(self):
+        with patch("app.addons.descriptors.event_service.get_event", return_value=None):
+            with self.assertRaises(ResourceNotFoundException) as context:
+                await _run_danmu_operation(self._run_payload(event_id="missing-event"))
+
+        self.assertEqual("backendErrors.eventNotFound", context.exception.message_key)
+
+    async def test_run_operation_uses_domain_error_for_missing_library_file(self):
+        with patch("app.addons.descriptors.library_service.find_file_by_id", new=AsyncMock(return_value=None)):
+            with self.assertRaises(ResourceNotFoundException) as context:
+                await _run_danmu_operation(self._run_payload(file_id="missing-file"))
+
+        self.assertEqual("backendErrors.resourceFileNotFound", context.exception.message_key)
+
+    async def test_run_operation_returns_import_event_generation_counts(self):
+        event = Event(id="event-1", type=EventType.MEDIA_IMPORT_COMPLETED)
+        with (
+            patch("app.addons.descriptors.event_service.get_event", return_value=event),
+            patch.object(
+                DanmuApplicationService,
+                "handle_event",
+                new=AsyncMock(
+                    return_value=DanmuGenerationBatchResult(
+                        completed_count=2,
+                        skipped_count=1,
+                        failed_count=1,
+                    )
+                ),
+            ),
+        ):
+            result = await _run_danmu_operation(self._run_payload(event_id=event.id))
+
+        self.assertEqual(2, result.result_count)
+        self.assertEqual(1, result.failed_count)
+
+    async def test_run_operation_requires_an_execution_target(self):
+        with self.assertRaises(InvalidRequestException) as context:
+            await _run_danmu_operation(self._run_payload())
+
+        self.assertEqual("backendErrors.addonTargetRequired", context.exception.message_key)
+
+    async def test_import_event_command_does_not_require_download_task(self):
+        media_id = MediaID.parse("tmdb:movie:1")
+        event = Event(
+            id="event-1",
+            type=EventType.MEDIA_IMPORT_COMPLETED,
+            meta=MediaImportCompletedEventMeta(
+                task_id="deleted-task",
+                directory_id="dir-1",
+                media_id=media_id,
+                file_path="/library/Movie.mkv",
+            ).model_dump_json(),
+        )
+
+        with patch(
+            "app.addons.descriptors.command_service.create_command_with_uniq_key",
+            new=AsyncMock(),
+        ) as create_mock:
+            await _enqueue_danmu_event(event)
+
+        body = create_mock.await_args.args[0]
+        self.assertIsNone(body.payload.task_id)
+        self.assertEqual(event.id, body.payload.event_id)
+        self.assertEqual(media_id, body.payload.target.media_id)
+
     def _media(
         self,
         *,
@@ -1115,10 +1204,22 @@ class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
         media = self._media(
             vendors=[Vendor(id="youku", name="Youku", url="http://v.youku.com/v_show/id_XNDQ1.html")],
         )
+        library_file = LibraryFile(
+            id="file-1",
+            task_id="task-1",
+            directory_id="dir-1",
+            media_id=media.media_id,
+            path="/library",
+            file_name="Movie.mkv",
+            created_at=1,
+        )
 
         with (
             patch.object(service, "_resolve_generation_action", return_value=("action-1", False)),
-            patch.object(service, "_mark_danmu_artifacts", new=AsyncMock()),
+            patch(
+                "app.services.application.workflows.danmu.service.danmu_artifact_committer.mark_status",
+                new=AsyncMock(),
+            ),
             patch(
                 "app.services.application.workflows.danmu.service.danmu_provider_service.fetch",
                 new=AsyncMock(return_value=None),
@@ -1132,10 +1233,74 @@ class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
                 trigger=ActionTrigger.scheduler,
                 event=None,
                 config=config,
+                library_file=library_file,
             )
 
         self.assertEqual(ActionStatus.skipped, outcome.status)
         emit_mock.assert_not_called()
+
+    async def test_generation_does_not_write_sidecars_after_library_file_is_deleted(self):
+        service = DanmuApplicationService()
+        config = AddonsConfig.model_validate(
+            {"danmu": {"enabled": True, "output_xml": True, "output_ass": True}}
+        ).danmu
+        media = self._media(
+            vendors=[Vendor(id="youku", name="Youku", url="http://v.youku.com/v_show/id_XNDQ1.html")],
+        )
+        result = DanmuFetchResult(
+            provider="youku",
+            source_id="source-1",
+            comments=[DanmuComment(time_seconds=1, text="hello")],
+        )
+
+        with TemporaryDirectory() as tmp_dir:
+            video_path = Path(tmp_dir) / "Movie.mkv"
+            video_path.write_text("video")
+            library_file = LibraryFile(
+                id="file-1",
+                task_id="task-1",
+                directory_id="dir-1",
+                media_id=media.media_id,
+                path=str(video_path.parent),
+                file_name=video_path.name,
+                file_size=video_path.stat().st_size,
+                created_at=1,
+            )
+            find_file = AsyncMock(side_effect=[library_file, None, None])
+            mark_artifact = AsyncMock()
+
+            with (
+                patch.object(service, "_resolve_generation_action", return_value=("action-1", False)),
+                patch(
+                    "app.services.application.workflows.danmu.artifact_commit.library_service.find_file_by_id",
+                    find_file,
+                ),
+                patch(
+                    "app.services.application.workflows.danmu.artifact_commit.library_service.mark_artifact",
+                    mark_artifact,
+                ),
+                patch(
+                    "app.services.application.workflows.danmu.service.danmu_provider_service.fetch",
+                    new=AsyncMock(return_value=result),
+                ),
+                patch("app.services.application.workflows.danmu.artifact_commit.write_outputs") as write_mock,
+            ):
+                outcome = await service._generate_for_video(
+                    media,
+                    video_path,
+                    None,
+                    trigger=ActionTrigger.manual,
+                    event=None,
+                    config=config,
+                    library_file=library_file,
+                )
+
+        self.assertEqual(ActionStatus.failed, outcome.status)
+        write_mock.assert_not_called()
+        self.assertTrue(mark_artifact.await_args_list)
+        self.assertTrue(
+            all(call.kwargs["status"] == LibraryFileArtifactStatus.pending for call in mark_artifact.await_args_list)
+        )
 
     async def test_import_event_generation_passes_library_file_for_artifacts(self):
         service = DanmuApplicationService()
@@ -1190,10 +1355,11 @@ class TestDanmuApplicationService(unittest.IsolatedAsyncioTestCase):
                 ),
                 patch("app.services.domain.library.service.library_service.get_files_by_task", new=AsyncMock(return_value=[library_file])),
             ):
-                await service.handle_event(event)
+                result = await service.handle_event(event)
 
         generate_mock.assert_awaited_once()
         self.assertEqual(library_file, generate_mock.await_args.kwargs["library_file"])
+        self.assertEqual(1, result.skipped_count)
 
     async def test_backfill_policy_generates_when_recent_configured_sidecar_missing(self):
         service = DanmuApplicationService()

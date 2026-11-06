@@ -29,6 +29,16 @@ class LibraryFile(BaseModel):
     resource_attributes: ResourceAttributes = Field(default_factory=ResourceAttributes)
 
 
+class LibraryFileVersion(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    task_id: str
+    file_size: int | None = None
+    file_index: int | None = None
+    created_at: float
+
+
 class LibraryFileArtifactType(str, Enum):
     nfo = "nfo"
     danmu_xml = "danmu_xml"
@@ -50,7 +60,7 @@ class LibraryFileArtifact(BaseModel):
 
     id: str
     library_file_id: str
-    artifact_type: LibraryFileArtifactType
+    artifact_type: str
     expected_path: str
     status: LibraryFileArtifactStatus = LibraryFileArtifactStatus.pending
     last_success_at: float | None = None

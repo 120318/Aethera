@@ -1,5 +1,8 @@
 import { formatSizeBytes } from '@/utils/formatters'
 import { useI18n } from 'vue-i18n'
+import { onMounted, reactive } from 'vue'
+import { getAddons } from '@/api/resource'
+import { resolveTaskAddonActions } from '@/addons/registry'
 
 function isTaskCreatePlaceholder(task) {
   return !!task?._taskCreatePlaceholder
@@ -24,16 +27,28 @@ export function useTaskLivePresentation(options = {}) {
     isTaskPending,
   } = options
 
-  const TASK_ACTIONS_CONFIG = [
+  const TASK_ACTIONS_CONFIG = reactive([
     { id: 'detail', icon: 'pi pi-info-circle', tooltip: t('taskLive.actions.detail'), handler: (event, task) => showTaskDetail(task) },
     { id: 'pause', icon: 'pi pi-pause', severity: 'warn', tooltip: t('taskLive.actions.pause'), commandTypes: ['task.pause'], handler: (event, task) => handlePause(task) },
     { id: 'resume', icon: 'pi pi-play', severity: 'primary', tooltip: t('taskLive.actions.resume'), commandTypes: ['task.resume'], handler: (event, task) => handleResume(task) },
     { id: 'transfer', icon: 'pi pi-sync', severity: 'success', tooltip: t('taskLive.actions.transfer'), commandTypes: ['task.transfer', 'task.episode_batch_import'], handler: (event, task) => handleManualTransfer(task) },
     { id: 'media_server_sync', icon: 'pi pi-database', severity: 'secondary', label: t('taskLive.actions.mediaServerSync'), tooltip: t('taskLive.actions.mediaServerSync'), commandTypes: ['task.media_server_sync'], menuOnly: true, handler: (event, task) => handleMediaServerSync(task) },
-    { id: 'danmu_generate', icon: 'pi pi-comments', severity: 'secondary', label: t('taskLive.actions.danmuGenerate'), tooltip: t('taskLive.actions.danmuGenerate'), commandTypes: ['task.danmu_generate'], menuOnly: true, handler: (event, task) => handleDanmuGenerate(task) },
     { id: 'change_downloader', icon: 'pi pi-arrow-right-arrow-left', severity: 'secondary', label: t('taskLive.actions.changeDownloader'), tooltip: t('taskLive.actions.changeDownloader'), commandTypes: ['task.storage_change'], menuOnly: true, handler: (event, task) => handleChangeDownloader(task) },
     { id: 'delete', icon: 'pi pi-trash', severity: 'danger', tooltip: t('taskLive.actions.delete'), commandTypes: ['task.delete'], handler: (event, task) => confirmDelete(task) },
-  ]
+  ])
+
+  onMounted(async () => {
+    try {
+      const response = await getAddons()
+      TASK_ACTIONS_CONFIG.splice(
+        TASK_ACTIONS_CONFIG.length - 2,
+        0,
+        ...resolveTaskAddonActions(response?.items || [], { t, handleDanmuGenerate }),
+      )
+    } catch {
+      // Core task actions remain available when addon discovery is unavailable.
+    }
+  })
 
   function resolveActionState(action, task) {
     const actionId = action.id === 'detail' ? 'view_detail' : action.id
@@ -79,6 +94,7 @@ export function useTaskLivePresentation(options = {}) {
 
   function isActionVisible(action, task) {
     if (action.id === 'detail') return true
+    if (action.addonAction) return action.supports?.(task) !== false
     const state = resolveActionState(action, task)
     if (state) return state.available !== false
     const actions = Array.isArray(task.actions) ? task.actions : []

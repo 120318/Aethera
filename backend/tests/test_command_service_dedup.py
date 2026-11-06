@@ -12,9 +12,12 @@ pytestmark = [pytest.mark.drift, pytest.mark.health]
 os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
 from app.schemas.domain.command import (
+    AddonRunCommandRequestPayload,
+    AddonRunCommandRecordPayload,
     CommandCreateRequest,
     CommandInitiator,
     CommandRecord,
+    CommandResult,
     CommandStatus,
     CommandTargetType,
     CommandType,
@@ -29,6 +32,7 @@ from app.schemas.domain.command import (
     TaskDeleteCommandRecordPayload,
     TaskTransferCommandRecordPayload,
 )
+from app.addons.registry import addon_service
 from app.schemas.constants.event_types import EventTypes
 from app.schemas.domain.media import MediaExecutionSnapshot, MediaIdentity, MediaTarget
 from app.schemas.exception import InvalidRequestException
@@ -39,6 +43,7 @@ from app.db.sql.models import ActionORM, CommandORM
 from app.db.sql.session import SessionLocal
 from app.services.audit.event_message_i18n import event_message_key, event_message_params
 from app.services.application.commands.service import CommandService
+from app.services.application.commands.handlers.addon import AddonRunCommandHandler
 from app.schemas.domain.action import (
     ActionActor,
     ActionKind,
@@ -139,6 +144,190 @@ def _pilot_episode_command(command_id: str, *, season_number: int) -> CommandRec
         target_label="Sample (2026)",
         created_at=datetime.now(),
     )
+
+
+@pytest.mark.asyncio
+async def test_media_addon_command_deduplication_is_scoped_by_season(monkeypatch):
+    handler = AddonRunCommandHandler()
+    media_id = MediaID.parse("tmdb:tv:1")
+    monkeypatch.setattr(handler, "_resolve_operation", Mock())
+    monkeypatch.setattr(
+        "app.services.application.commands.handlers.addon.media_service.resolve_execution_snapshot",
+        AsyncMock(
+            side_effect=lambda _, season_number: MediaExecutionSnapshot(
+                media_id=media_id,
+                title="Sample",
+                year=2026,
+                season_number=season_number,
+            )
+        ),
+    )
+
+    async def build(season_number: int) -> CommandRecord:
+        return await handler.build(
+            CommandCreateRequest(
+                type=CommandType.ADDON_RUN,
+                payload=AddonRunCommandRequestPayload(
+                    addon_id="danmu",
+                    operation_id="generate",
+                    target=MediaTarget(media_id=media_id, season_number=season_number),
+                ),
+            )
+        )
+
+    season_one = await build(1)
+    season_two = await build(2)
+
+    assert season_one.uniq_key == "command:addon.run:danmu:generate:media:tmdb:tv:1:season=1"
+    assert season_two.uniq_key == "command:addon.run:danmu:generate:media:tmdb:tv:1:season=2"
+
+
+@pytest.mark.parametrize(
+    ("enabled", "operation", "message_key"),
+    [
+        (False, Mock(), "backendErrors.addonDisabled"),
+        (True, None, "backendErrors.addonOperationUnknown"),
+    ],
+)
+def test_addon_operation_validation_uses_domain_errors(
+    monkeypatch,
+    enabled,
+    operation,
+    message_key,
+):
+    monkeypatch.setattr(addon_service, "discover_and_register", Mock())
+    monkeypatch.setattr(addon_service, "is_addon_enabled", Mock(return_value=enabled))
+    monkeypatch.setattr(addon_service, "get_command", Mock(return_value=operation))
+
+    with pytest.raises(InvalidRequestException) as exc_info:
+        AddonRunCommandHandler._resolve_operation("sample", "generate")
+
+    assert exc_info.value.message_key == message_key
+    assert exc_info.value.params["addon_id"] == "sample"
+
+
+def test_addon_result_events_are_emitted_only_for_automatic_commands(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    target = MediaTarget(media_id=media_id, season_number=1)
+
+    def command(initiator: CommandInitiator) -> CommandRecord:
+        return CommandRecord(
+            id=f"addon-{initiator.value}",
+            type=CommandType.ADDON_RUN,
+            initiator=initiator,
+            payload=AddonRunCommandRecordPayload(
+                addon_id="subtitles",
+                operation_id="fill_missing",
+                target=target,
+            ),
+            result=CommandResult(result_count=1),
+            media_id=media_id,
+            target=target,
+            target_type=CommandTargetType.MEDIA,
+            target_id=str(media_id),
+        )
+
+    emit_mock = Mock()
+    monkeypatch.setattr(
+        "app.services.application.commands.service.event_service.emit",
+        emit_mock,
+    )
+    service = CommandService()
+
+    service._emit_addon_command_event(command(CommandInitiator.MANUAL), succeeded=True)
+    emit_mock.assert_not_called()
+
+    service._emit_addon_command_event(command(CommandInitiator.SYSTEM), succeeded=True)
+    assert emit_mock.call_count == 1
+
+
+def test_addon_failure_event_preserves_structured_error(monkeypatch):
+    media_id = MediaID.parse("tmdb:tv:1")
+    target = MediaTarget(media_id=media_id, season_number=1)
+    command = CommandRecord(
+        id="addon-system",
+        type=CommandType.ADDON_RUN,
+        initiator=CommandInitiator.SYSTEM,
+        payload=AddonRunCommandRecordPayload(
+            addon_id="subtitles",
+            operation_id="fill_missing",
+            target=target,
+        ),
+        media_id=media_id,
+        target=target,
+        target_type=CommandTargetType.MEDIA,
+        target_id=str(media_id),
+        error_key="backendErrors.addonDisabled",
+        error_params={"addon_id": "subtitles"},
+    )
+    emit_mock = Mock()
+    monkeypatch.setattr(
+        "app.services.application.commands.service.event_service.emit",
+        emit_mock,
+    )
+
+    CommandService()._emit_addon_command_event(command, succeeded=False)
+
+    meta = emit_mock.call_args.kwargs["meta"]
+    assert meta.error_key == "backendErrors.addonDisabled"
+    assert meta.error_params == {"addon_id": "subtitles"}
+
+
+@pytest.mark.asyncio
+async def test_addon_operation_without_handler_uses_domain_error(monkeypatch):
+    handler = AddonRunCommandHandler()
+    media_id = MediaID.parse("tmdb:tv:1")
+    monkeypatch.setattr(handler, "_resolve_operation", Mock(return_value=Mock(handler=None)))
+    command = CommandRecord(
+        id="command-addon",
+        type=CommandType.ADDON_RUN,
+        payload=AddonRunCommandRecordPayload(
+            addon_id="sample",
+            operation_id="generate",
+            target=MediaTarget(media_id=media_id, season_number=1),
+        ),
+        media_id=media_id,
+        target=MediaTarget(media_id=media_id, season_number=1),
+        target_type=CommandTargetType.MEDIA,
+        target_id=str(media_id),
+    )
+
+    with pytest.raises(InvalidRequestException) as exc_info:
+        await handler.execute(command)
+
+    assert exc_info.value.message_key == "backendErrors.addonOperationHandlerMissing"
+    assert exc_info.value.params == {"addon_id": "sample", "operation_id": "generate"}
+
+
+@pytest.mark.asyncio
+async def test_addon_operation_fails_when_every_item_failed(monkeypatch):
+    handler = AddonRunCommandHandler()
+    media_id = MediaID.parse("tmdb:tv:1")
+    operation_handler = AsyncMock(return_value=CommandResult(failed_count=2))
+    monkeypatch.setattr(
+        handler,
+        "_resolve_operation",
+        Mock(return_value=Mock(handler=operation_handler)),
+    )
+    command = CommandRecord(
+        id="command-addon",
+        type=CommandType.ADDON_RUN,
+        payload=AddonRunCommandRecordPayload(
+            addon_id="danmu",
+            operation_id="generate",
+            target=MediaTarget(media_id=media_id, season_number=1),
+        ),
+        media_id=media_id,
+        target=MediaTarget(media_id=media_id, season_number=1),
+        target_type=CommandTargetType.MEDIA,
+        target_id=str(media_id),
+    )
+
+    with pytest.raises(InvalidRequestException) as exc_info:
+        await handler.execute(command)
+
+    assert exc_info.value.message_key == "backendErrors.addonOperationFailed"
+    assert exc_info.value.params["failed_count"] == "2"
 
 
 def test_pilot_episode_action_preserves_media_snapshot_for_notification_navigation():
@@ -788,6 +977,58 @@ async def test_atomic_claim_prevents_mapping_finalizer_from_cancelling_worker_co
     assert claimed_saved.status == CommandStatus.RUNNING
     assert replacement_saved is not None
     assert replacement_saved.status == CommandStatus.READY
+
+
+@pytest.mark.asyncio
+async def test_command_claim_filters_keep_addon_work_out_of_core_worker():
+    repo = CommandRepository()
+    media_id = MediaID.parse("tmdb:tv:1")
+    target = MediaTarget(media_id=media_id, season_number=1)
+    addon_command = CommandRecord(
+        id="cmd-addon-filter",
+        type=CommandType.ADDON_RUN,
+        payload=AddonRunCommandRecordPayload(
+            addon_id="danmu",
+            operation_id="generate",
+            target=target,
+            task_id="task-1",
+        ),
+        media_id=media_id,
+        target=target,
+        target_type=CommandTargetType.TASK,
+        target_id="task-1",
+        created_at=datetime.now() - timedelta(seconds=2),
+    )
+    core_command = _media_command(
+        "cmd-core-filter",
+        CommandType.PROFILE_REFRESH,
+        season_number=1,
+    )
+    core_command.created_at = datetime.now() - timedelta(seconds=1)
+    await repo.insert(addon_command)
+    await repo.insert(core_command)
+
+    try:
+        core_claim = await repo.claim_next_queued(
+            datetime.now().isoformat(),
+            excluded_command_types=[CommandType.ADDON_RUN],
+        )
+        addon_claim = await repo.claim_next_queued(
+            datetime.now().isoformat(),
+            command_types=[CommandType.ADDON_RUN],
+        )
+    finally:
+        with SessionLocal.begin() as session:
+            session.execute(
+                delete(CommandORM).where(
+                    CommandORM.id.in_([addon_command.id, core_command.id])
+                )
+            )
+
+    assert core_claim is not None
+    assert core_claim.id == core_command.id
+    assert addon_claim is not None
+    assert addon_claim.id == addon_command.id
 
 
 @pytest.mark.asyncio

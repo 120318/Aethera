@@ -10,7 +10,7 @@ alembic>=1.13,<2
 bencodepy
 apscheduler
 libtorrent
-pytest-asyncio
+pytest-asyncio==1.4.0
 qbittorrent-api>=2025.11
 diskcache
 PyYAML

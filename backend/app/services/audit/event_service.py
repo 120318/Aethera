@@ -32,7 +32,6 @@ from pydantic import BaseModel
 logger = logging.getLogger("app.services.event")
 NON_BUSINESS_EVENT_PREFIXES = (
     "command.",
-    "addon.run.",
     "notification.",
     "scheduler.",
 )

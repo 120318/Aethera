@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
-
 from pydantic import BaseModel, Field
 
 from app.schemas.config import DirectoryConfig
@@ -10,9 +7,9 @@ from app.schemas.domain.library import LibraryFile
 from app.schemas.exception.exceptions import ResourceNotFoundException
 from app.services.config.settings_service import settings_service
 from app.services.domain.download import download_service
+from app.services.domain.library.relocation import library_file_relocation_service
 from app.services.domain.library.service import library_service
-from app.utils.fs_utils import ensure_directory
-from app.utils.library_paths import build_library_file_path, split_library_storage_path
+from app.utils.library_paths import build_library_file_path
 
 
 class LibraryFileDirectoryChangeRequest(BaseModel):
@@ -61,7 +58,7 @@ class LibraryFileDirectoryChangeService:
             return preview
         files = await self._resolve_files(file_id, request.package_root)
         target_directory = self._load_directory(request.target_directory_id)
-        if not await self._move_files(files, target_directory):
+        if not await library_file_relocation_service.move_files(files, target_directory):
             preview.ok = False
             preview.blockers.append("library_file_move_failed")
         return preview
@@ -99,6 +96,12 @@ class LibraryFileDirectoryChangeService:
             blockers.append("source_file_missing")
         if self._has_target_conflicts(files, target_directory):
             blockers.append("target_file_exists")
+        artifact_moves = await library_file_relocation_service.build_artifact_moves(
+            files,
+            target_directory,
+        )
+        if any(move.source_path != move.target_path and move.target_path.exists() for move in artifact_moves):
+            blockers.append("target_artifact_exists")
         preview.blockers = blockers
         preview.ok = not blockers
 
@@ -113,62 +116,8 @@ class LibraryFileDirectoryChangeService:
         return any(not build_library_file_path(file.path, file.file_name).exists() for file in files)
 
     def _has_target_conflicts(self, files: list[LibraryFile], target_directory: DirectoryConfig) -> bool:
-        target_paths = self._build_moves(files, target_directory)
+        target_paths = library_file_relocation_service.build_file_moves(files, target_directory)
         return any(source != target and target.exists() for source, target, _file in target_paths)
-
-    def _build_moves(self, files: list[LibraryFile], target_directory: DirectoryConfig) -> list[tuple[Path, Path, LibraryFile]]:
-        target_base = build_library_file_path(target_directory.path).resolve(strict=False)
-        moves: list[tuple[Path, Path, LibraryFile]] = []
-        for file in files:
-            source_directory = self._load_directory(file.directory_id)
-            source_base = build_library_file_path(source_directory.path).resolve(strict=False)
-            source_path = build_library_file_path(file.path, file.file_name).resolve(strict=False)
-            try:
-                suffix = source_path.relative_to(source_base)
-            except ValueError:
-                suffix = Path(file.file_name or source_path.name)
-            moves.append((source_path, (target_base / suffix).resolve(strict=False), file))
-        return moves
-
-    async def _move_files(self, files: list[LibraryFile], target_directory: DirectoryConfig) -> bool:
-        moves = self._build_moves(files, target_directory)
-        moved: list[tuple[Path, Path]] = []
-        updated: list[LibraryFile] = []
-        try:
-            for source_path, target_path, _file in moves:
-                if source_path == target_path:
-                    continue
-                ensure_directory(target_path.parent)
-                shutil.move(str(source_path), str(target_path))
-                moved.append((source_path, target_path))
-            for _source_path, target_path, file in moves:
-                next_path, next_name = split_library_storage_path(str(target_path))
-                if not await library_service.update_file_location(
-                    file.id,
-                    directory_id=target_directory.id,
-                    path=next_path,
-                    file_name=next_name,
-                ):
-                    await self._rollback(moved, updated)
-                    return False
-                updated.append(file)
-        except OSError:
-            await self._rollback(moved, updated)
-            return False
-        return True
-
-    async def _rollback(self, moved: list[tuple[Path, Path]], updated: list[LibraryFile]) -> None:
-        for file in reversed(updated):
-            await library_service.update_file_location(
-                file.id,
-                directory_id=file.directory_id,
-                path=file.path,
-                file_name=file.file_name,
-            )
-        for source_path, target_path in reversed(moved):
-            if target_path.exists() and not source_path.exists():
-                ensure_directory(source_path.parent)
-                shutil.move(str(target_path), str(source_path))
 
     def _load_directory(self, directory_id: str) -> DirectoryConfig:
         directory = settings_service.get_directory_by_id(directory_id)

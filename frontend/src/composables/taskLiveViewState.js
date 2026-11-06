@@ -6,7 +6,7 @@ function normalizeTorrentState(value) {
   return value ? String(value).toLowerCase() : ''
 }
 
-const ACTION_ORDER = ['view_detail', 'pause', 'resume', 'transfer', 'media_server_sync', 'danmu_generate', 'change_downloader', 'delete']
+const ACTION_ORDER = ['view_detail', 'pause', 'resume', 'transfer', 'media_server_sync', 'change_downloader', 'delete']
 
 function shouldApplyRealtimeOverlay(task) {
   const status = normalizeTaskStatus(task?.status)
@@ -92,9 +92,11 @@ function applyActiveCommandToActionStates(actionStates, activeCommand) {
 }
 
 function sortActionStates(actionStates) {
-  return [...actionStates].sort((a, b) => (
-    ACTION_ORDER.indexOf(a.action) - ACTION_ORDER.indexOf(b.action)
-  ))
+  const order = action => {
+    const index = ACTION_ORDER.indexOf(action)
+    return index === -1 ? ACTION_ORDER.length : index
+  }
+  return [...actionStates].sort((a, b) => order(a.action) - order(b.action))
 }
 
 function resolveOverlayActionStates(task, realtimeState, activeCommand) {

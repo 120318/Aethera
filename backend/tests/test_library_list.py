@@ -262,149 +262,6 @@ async def test_library_list_fetches_season_execution_snapshot(monkeypatch):
     assert len(response.resources) == 1
 
 
-@pytest.mark.asyncio
-async def test_library_list_uses_movie_media_for_danmu_actions(monkeypatch):
-    media_id = MediaID.parse("tmdb:movie:1")
-    simple_media = MediaSimpleInfo(
-        media_id=media_id,
-        provider=media_id.provider,
-        media_type=MediaType.movie,
-        id=media_id.id,
-        title="Test Movie",
-        year=2026,
-    )
-    library_file = LibraryFile(
-        id="file-1",
-        task_id="task-1",
-        directory_id="dir-1",
-        media_id=media_id,
-        path="/library/test-movie.mkv",
-        file_name="test-movie.mkv",
-        file_size=1024,
-        created_at=1.0,
-    )
-
-    async def fake_simple_info(requested_media_id):
-        assert requested_media_id == media_id
-        return simple_media
-
-    async def fake_library_files(requested_media_id, season=None):
-        assert requested_media_id == media_id
-        assert season is None
-        return [library_file]
-
-    async def fake_active_commands(*args, **kwargs):
-        return []
-
-    async def fake_action_context(self, library_files, **context):
-        assert library_files == [library_file]
-        assert context["media_id"] == media_id
-        assert context["season_number"] is None
-        return _LibraryActionAvailabilityContext(
-            media_server_open_enabled_directory_ids=set(),
-            media_server_sync_enabled_directory_ids=set(),
-            danmu_enabled_directory_ids={"dir-1"},
-            danmu_media_available=True,
-        )
-
-    monkeypatch.setattr("app.services.application.views.library.resource_list.media_service.simple_info", fake_simple_info)
-    monkeypatch.setattr("app.services.application.views.library.resource_list.library_service.get_files_by_media", fake_library_files)
-    monkeypatch.setattr(
-        "app.services.application.views.library.resource_list.command_service.list_media_active_commands",
-        fake_active_commands,
-    )
-    monkeypatch.setattr(
-        "app.services.application.views.library.resource_list.LibraryResourceListService._build_action_availability_context",
-        fake_action_context,
-    )
-
-    response = await list_library_resources(media_id)
-
-    assert len(response.resources) == 1
-    assert LibraryResourceAction.DANMU_GENERATE in response.resources[0].actions
-
-
-@pytest.mark.asyncio
-async def test_library_list_resolves_movie_danmu_actions_from_simple_media(monkeypatch):
-    media_id = MediaID.parse("tmdb:movie:1")
-    service = LibraryResourceListService()
-    files = [
-        LibraryFile(
-            id="file-1",
-            task_id="task-1",
-            directory_id="dir-1",
-            media_id=media_id,
-            path="/library/test-movie.mkv",
-            file_name="test-movie.mkv",
-            file_size=1024,
-            created_at=1.0,
-        )
-    ]
-
-    monkeypatch.setattr("app.services.application.views.library.resource_list.settings_service.list_media_servers", lambda: [])
-    monkeypatch.setattr("app.services.application.views.library.resource_list.settings_service.list_directories", lambda: [])
-    monkeypatch.setattr("app.services.application.views.library.resource_list.settings_service.list_tags", lambda: [])
-    monkeypatch.setattr(
-        "app.services.application.views.library.resource_list.download_service.get_tasks_by_ids",
-        AsyncMock(return_value={}),
-    )
-    monkeypatch.setattr(
-        "app.services.application.views.library.resource_list.danmu_application_service.config",
-        lambda: type("DanmuConfig", (), {"enabled": True, "directory_ids": ["dir-1"], "providers": []})(),
-    )
-    monkeypatch.setattr(
-        "app.services.application.views.library.resource_list.danmu_source_resolver.media_with_fetchable_source",
-        AsyncMock(return_value=MediaFullInfo(
-            media_id=media_id,
-            provider=media_id.provider,
-            media_type=MediaType.movie,
-            id=media_id.id,
-            title="Test Movie",
-            year=2026,
-            vendors=[],
-        )),
-    )
-    monkeypatch.setattr(
-        "app.services.application.views.library.resource_list.danmu_source_resolver.has_fetchable_vendor",
-        lambda _media, _config: True,
-    )
-
-    response = await service._build_response(
-        media_id=media_id,
-        active_season_number=None,
-        total_episodes=0,
-        active_commands=[],
-        library_files=files,
-    )
-
-    assert LibraryResourceAction.DANMU_GENERATE in response.resources[0].actions
-
-
-@pytest.mark.asyncio
-async def test_library_list_skips_danmu_resolution_without_library_files(monkeypatch):
-    media_id = MediaID.parse("tmdb:tv:94997")
-    service = LibraryResourceListService()
-    resolver_mock = AsyncMock()
-
-    monkeypatch.setattr(
-        "app.services.application.views.library.resource_list.danmu_source_resolver.media_with_fetchable_source",
-        resolver_mock,
-    )
-    monkeypatch.setattr(
-        "app.services.application.views.library.resource_list.download_service.get_tasks_by_ids",
-        AsyncMock(),
-    )
-
-    context = await service._build_action_availability_context(
-        [],
-        media_id=media_id,
-        season_number=3,
-    )
-
-    assert context.danmu_media_available is False
-    resolver_mock.assert_not_awaited()
-
-
 def test_library_list_groups_original_disc_internal_files():
     media_id = MediaID.parse("tmdb:movie:1")
     attrs = ResourceAttributes(resource_form="BluRay Disc", package_layout="BDMV", disc_number=1, disc_total=2)
@@ -575,8 +432,6 @@ async def test_library_list_resolves_actions_per_resource_file_set(monkeypatch):
     context = _LibraryActionAvailabilityContext(
         media_server_open_enabled_directory_ids={"dir-1"},
         media_server_sync_enabled_directory_ids={"dir-1"},
-        danmu_enabled_directory_ids={"dir-2"},
-        danmu_media_available=True,
     )
 
     resources = service._build_resource_list(files, tags=[])
@@ -590,10 +445,8 @@ async def test_library_list_resolves_actions_per_resource_file_set(monkeypatch):
 
     assert LibraryResourceAction.MEDIA_SERVER_OPEN in actions_by_id["file-sync"]
     assert LibraryResourceAction.MEDIA_SERVER_SYNC in actions_by_id["file-sync"]
-    assert LibraryResourceAction.DANMU_GENERATE not in actions_by_id["file-sync"]
     assert LibraryResourceAction.MEDIA_SERVER_OPEN in actions_by_id["file-danmu"]
     assert LibraryResourceAction.MEDIA_SERVER_SYNC in actions_by_id["file-danmu"]
-    assert LibraryResourceAction.DANMU_GENERATE not in actions_by_id["file-danmu"]
 
 
 @pytest.mark.asyncio
@@ -631,8 +484,6 @@ async def test_library_list_resolves_package_actions_from_package_files(monkeypa
     context = _LibraryActionAvailabilityContext(
         media_server_open_enabled_directory_ids={"dir-1"},
         media_server_sync_enabled_directory_ids={"dir-1"},
-        danmu_enabled_directory_ids=set(),
-        danmu_media_available=False,
     )
 
     resources = service._build_resource_list(files, tags=[])
@@ -644,7 +495,6 @@ async def test_library_list_resolves_package_actions_from_package_files(monkeypa
     assert package.is_package is True
     assert LibraryResourceAction.MEDIA_SERVER_OPEN in updated.actions
     assert LibraryResourceAction.MEDIA_SERVER_SYNC in updated.actions
-    assert LibraryResourceAction.DANMU_GENERATE not in updated.actions
 
 
 def test_library_list_action_states_mark_resource_busy_for_active_command():

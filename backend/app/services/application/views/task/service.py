@@ -20,7 +20,6 @@ from app.schemas.runtime.task_view import (
 )
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
 from app.services.application.commands.service import command_service
-from app.services.application.workflows.danmu import danmu_application_service
 from app.services.application.workflows.media_server_sync.service import media_server_sync_service
 from app.services.config.settings_service import settings_service
 from app.services.domain.download import download_service
@@ -105,14 +104,7 @@ class TaskViewService:
                 for task_id, library_files in library_files_by_task.items()
             ],
         )
-        media_server_sync_available = {
-            task_id: media_server_sync
-            for task_id, media_server_sync, _danmu in action_contexts
-        }
-        danmu_generate_available = {
-            task_id: danmu
-            for task_id, _media_server_sync, danmu in action_contexts
-        }
+        media_server_sync_available = {task_id: available for task_id, available in action_contexts}
         items: list[TaskViewItem] = []
         for task in tasks:
             realtime = realtime_map[task.id] if task.id in realtime_map else None
@@ -129,7 +121,6 @@ class TaskViewService:
                     active_command,
                     has_primary_library_files,
                     can_media_server_sync=media_server_sync_available.get(task.id, False),
-                    can_danmu_generate=danmu_generate_available.get(task.id, False),
                     tags=tags,
                 )
             )
@@ -139,12 +130,9 @@ class TaskViewService:
         self,
         task_id: str,
         library_files: list,
-    ) -> tuple[str, bool, bool]:
-        media_server_sync_available, danmu_available = await asyncio.gather(
-            media_server_sync_service.can_rerun_for_library_files(library_files),
-            danmu_application_service.can_run_for_library_files(library_files),
-        )
-        return task_id, media_server_sync_available, danmu_available
+    ) -> tuple[str, bool]:
+        available = await media_server_sync_service.can_rerun_for_library_files(library_files)
+        return task_id, available
 
     def _build_task_view(
         self,
@@ -154,7 +142,6 @@ class TaskViewService:
         has_primary_library_files: bool,
         *,
         can_media_server_sync: bool = False,
-        can_danmu_generate: bool = False,
         tags: list[Tag] | None = None,
     ) -> TaskViewItem:
         context = task.context
@@ -179,7 +166,6 @@ class TaskViewService:
             active_command,
             has_primary_library_files,
             can_media_server_sync=can_media_server_sync,
-            can_danmu_generate=can_danmu_generate,
         )
         actions = [item.action for item in action_states if item.available]
         indexer = context.indexer if context else None
@@ -209,6 +195,7 @@ class TaskViewService:
             directory_name=self._directory_name(directory_id),
             media_type=task.media_id.media_type.value if task.media_id else None,
             media_id=str(task.media_id) if task.media_id else None,
+            season_number=context.media.season_number if context and context.media else None,
             torrent_hash=task.torrent_hash,
             downloader_id=task.downloader_id,
             download_client=task.download_client,
@@ -420,7 +407,6 @@ class TaskViewService:
         has_primary_library_files: bool,
         *,
         can_media_server_sync: bool = False,
-        can_danmu_generate: bool = False,
     ) -> list[TaskActionState]:
         action_states = [TaskActionState(action=TaskAction.VIEW_DETAIL)]
 
@@ -430,7 +416,6 @@ class TaskViewService:
                 for action in (
                     TaskAction.TRANSFER,
                     TaskAction.MEDIA_SERVER_SYNC,
-                    TaskAction.DANMU_GENERATE,
                     TaskAction.CHANGE_DOWNLOADER,
                     TaskAction.DELETE,
                 )
@@ -454,8 +439,6 @@ class TaskViewService:
 
         if has_primary_library_files and can_media_server_sync:
             action_states.append(TaskActionState(action=TaskAction.MEDIA_SERVER_SYNC))
-        if has_primary_library_files and can_danmu_generate:
-            action_states.append(TaskActionState(action=TaskAction.DANMU_GENERATE))
 
         if task.status != TaskStatus.MIGRATING and task.downloader_id and task.torrent_hash and task.save_path:
             action_states.append(TaskActionState(action=TaskAction.CHANGE_DOWNLOADER))

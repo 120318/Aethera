@@ -41,17 +41,18 @@ class LibraryFileArtifactRepository:
         self,
         *,
         library_file_id: str,
-        artifact_type: LibraryFileArtifactType,
+        artifact_type: str,
         expected_path: str,
         status: LibraryFileArtifactStatus,
         last_error: str | None = None,
     ) -> LibraryFileArtifact:
         now = time.time()
+        artifact_type_value = artifact_type.value if isinstance(artifact_type, LibraryFileArtifactType) else artifact_type
         with SessionLocal() as session:
             row = session.execute(
                 select(LibraryFileArtifactORM).where(
                     LibraryFileArtifactORM.library_file_id == library_file_id,
-                    LibraryFileArtifactORM.artifact_type == artifact_type.value,
+                    LibraryFileArtifactORM.artifact_type == artifact_type_value,
                     LibraryFileArtifactORM.expected_path == expected_path,
                 )
             ).scalars().first()
@@ -59,7 +60,7 @@ class LibraryFileArtifactRepository:
                 row = LibraryFileArtifactORM(
                     id=str(uuid.uuid4()),
                     library_file_id=library_file_id,
-                    artifact_type=artifact_type.value,
+                    artifact_type=artifact_type_value,
                     expected_path=expected_path,
                     status=status.value,
                     last_success_at=now if status == LibraryFileArtifactStatus.succeeded else None,
@@ -99,6 +100,16 @@ class LibraryFileArtifactRepository:
             )
             session.commit()
             return int(result.rowcount or 0)
+
+    async def update_expected_path(self, artifact_id: str, expected_path: str) -> bool:
+        with SessionLocal() as session:
+            result = session.execute(
+                update(LibraryFileArtifactORM)
+                .where(LibraryFileArtifactORM.id == artifact_id)
+                .values(expected_path=expected_path, updated_at=time.time())
+            )
+            session.commit()
+            return bool(result.rowcount)
 
     async def remove_by_library_file_ids(self, library_file_ids: list[str]) -> int:
         if not library_file_ids:

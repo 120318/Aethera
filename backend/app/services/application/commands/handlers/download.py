@@ -14,7 +14,6 @@ from app.schemas.domain.command import (
     CommandType,
     PilotEpisodeCommandRecordPayload,
     TaskCreateCommandRecordPayload,
-    TaskDanmuGenerateCommandRecordPayload,
     TaskDeleteCommandRecordPayload,
     TaskMediaServerSyncCommandRecordPayload,
     TaskPauseCommandRecordPayload,
@@ -29,7 +28,6 @@ from app.schemas.domain.download import DownloadTaskCreateInput, TaskData, TaskS
 from app.schemas.domain.event import EventActor
 from app.services.domain.download.downloader_change import TaskDownloaderChangeRequest
 from app.services.application.commands.target_labels import format_media_target_label
-from app.services.application.workflows.danmu import danmu_application_service
 from app.services.application.workflows.media_server_sync.service import media_server_sync_service
 from app.services.application.workflows.resource_search import resource_search_service
 from app.services.application.workflows.subscription.pilot import pilot_download_application_service
@@ -392,41 +390,6 @@ class TaskMediaServerSyncCommandHandler(TaskCommandSupport):
         return self._resolve_task_action_context(command)
 
 
-class TaskDanmuGenerateCommandHandler(TaskCommandSupport):
-    command_type = CommandType.TASK_DANMU_GENERATE
-
-    async def build(self, body: CommandCreateRequest) -> CommandRecord:
-        request = body.payload
-        task = await self._resolve_task(request.task_id)
-        payload = TaskDanmuGenerateCommandRecordPayload(
-            resolved_task_id=task.id,
-            target=_task_media_target(task),
-        )
-        return self._build_task_command_record(
-            body=body,
-            task=task,
-            payload=payload,
-            uniq_key=f"command:{CommandType.TASK_DANMU_GENERATE.value}:{task.id}",
-        )
-
-    async def execute(self, command: CommandRecord) -> CommandResult:
-        payload = command.payload
-        count = await danmu_application_service.run_for_task(payload.resolved_task_id)
-        return CommandResult(result_count=count)
-
-    def resolve_running_message(self) -> str:
-        return "Regenerating danmu"
-
-    def resolve_success_message(self, result: CommandResult) -> str:
-        return f"Danmu generation completed, processed {result.result_count} files"
-
-    def resolve_failed_message(self) -> str:
-        return "Danmu generation failed"
-
-    def resolve_action_context(self, command: CommandRecord) -> CommandActionContext:
-        return self._resolve_task_action_context(command)
-
-
 class TaskPauseCommandHandler(TaskCommandSupport):
     command_type = CommandType.TASK_PAUSE
 
@@ -567,5 +530,4 @@ def register_download_command_handlers(registry) -> None:
     registry.register(TaskEpisodeBatchImportCommandHandler())
     registry.register(TaskStorageChangeCommandHandler())
     registry.register(TaskMediaServerSyncCommandHandler())
-    registry.register(TaskDanmuGenerateCommandHandler())
     registry.register(TaskDeleteCommandHandler())

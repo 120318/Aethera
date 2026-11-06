@@ -313,7 +313,7 @@ class LibraryService:
         self,
         *,
         library_file_id: str,
-        artifact_type: LibraryFileArtifactType,
+        artifact_type: str,
         expected_path: str,
         status: LibraryFileArtifactStatus,
         last_error: str | None = None,
@@ -328,6 +328,9 @@ class LibraryService:
 
     async def mark_artifacts_missing_by_paths(self, paths: list[str]) -> int:
         return await self._artifact_repo.mark_missing_by_paths(paths)
+
+    async def update_artifact_expected_path(self, artifact_id: str, expected_path: str) -> bool:
+        return await self._artifact_repo.update_expected_path(artifact_id, expected_path)
 
     # Registration
     async def upsert_media_entry(self, media_id: MediaID) -> None:
@@ -389,7 +392,16 @@ class LibraryService:
         self,
         files: list[LibraryFile],
         preserved_paths: set[str],
+        artifacts: list[LibraryFileArtifact] | None = None,
     ) -> None:
+        resolved_preserved_paths = {Path(path).resolve(strict=False) for path in preserved_paths}
+        if artifacts:
+            await asyncio.to_thread(
+                self._cleanup.delete_artifact_files,
+                files,
+                artifacts,
+                resolved_preserved_paths,
+            )
         removed_files = [
             item
             for item in files
@@ -399,7 +411,7 @@ class LibraryService:
             await asyncio.to_thread(
                 self._cleanup.delete_files,
                 removed_files,
-                {Path(path) for path in preserved_paths},
+                resolved_preserved_paths,
                 delete_sidecars=False,
             )
 
