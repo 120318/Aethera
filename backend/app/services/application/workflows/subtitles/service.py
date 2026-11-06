@@ -10,9 +10,9 @@ from app.schemas.config import SubtitlesAddonConfig
 from app.schemas.domain.library import LibraryFile, LibraryFileArtifactStatus
 from app.schemas.domain.subtitle import (
     SubtitleBatchFillResponse,
-    SubtitleCandidate,
     SubtitleInstallRequest,
     SubtitleInstallResponse,
+    SubtitleSearchItem,
 )
 from app.schemas.exception import InvalidRequestException, ResourceNotFoundException, SubtitleFileException
 from app.services.application.workflows.media_server_sync import refresh_library_file
@@ -38,20 +38,28 @@ class SubtitleApplicationService:
     def config(self) -> SubtitlesAddonConfig:
         return settings_service.get_addons_config().subtitles
 
-    async def search_for_file(self, file_id: str) -> list[SubtitleCandidate]:
+    async def search_for_file(self, file_id: str) -> list[SubtitleSearchItem]:
         library_file, video_path = await self._resolve_video(file_id)
+        version = library_file_version(library_file)
         config = self._ready_config()
         movie_hash, movie_size = await asyncio.to_thread(self._opensubtitles_hash, video_path)
         attrs = library_file.resource_attributes
         seasons = list(attrs.seasons or []) if attrs else []
         episodes = list(attrs.episodes or []) if attrs else []
-        return await self._client(config).search(
+        candidates = await self._client(config).search(
             movie_hash=movie_hash,
             movie_size=movie_size,
             languages=config.languages,
             season_number=int(seasons[0]) if len(seasons) == 1 else None,
             episode_number=int(episodes[0]) if len(episodes) == 1 else None,
         )
+        return [
+            SubtitleSearchItem(
+                **candidate.model_dump(),
+                library_file_version=version,
+            )
+            for candidate in candidates
+        ]
 
     async def preview(self, candidate_file_id: int) -> str:
         config = self._ready_config()
@@ -65,7 +73,8 @@ class SubtitleApplicationService:
 
     async def install(self, request: SubtitleInstallRequest) -> SubtitleInstallResponse:
         initial_file, _initial_video_path = await self._resolve_video(request.file_id)
-        initial_version = library_file_version(initial_file)
+        if library_file_version(initial_file) != request.library_file_version:
+            raise SubtitleFileException("backendErrors.subtitleVideoChanged")
         config = self._ready_config()
         subtitle_format = request.format.lower()
         if subtitle_format not in _SUBTITLE_FORMATS:
@@ -77,7 +86,7 @@ class SubtitleApplicationService:
         content = await self._client(config).download(request.candidate_file_id)
         async with library_file_operation_coordinator.lock([request.file_id]):
             library_file, video_path = await self._resolve_video(request.file_id)
-            if library_file_version(library_file) != initial_version:
+            if library_file_version(library_file) != request.library_file_version:
                 raise SubtitleFileException("backendErrors.subtitleVideoChanged")
             destination = video_path.with_suffix(f".{language}.{subtitle_format}")
             temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
@@ -130,6 +139,7 @@ class SubtitleApplicationService:
                         candidate_file_id=candidate.file_id,
                         language=candidate.language,
                         format=candidate.format,
+                        library_file_version=candidate.library_file_version,
                     )
                 )
                 result.installed_count += 1

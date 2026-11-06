@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from app.schemas.domain.library import LibraryFileVersion
+
 
 class OpenSubtitlesFile(BaseModel):
     file_id: int
@@ -62,8 +64,12 @@ class SubtitleCandidate(BaseModel):
     machine_translated: bool = False
 
 
+class SubtitleSearchItem(SubtitleCandidate):
+    library_file_version: LibraryFileVersion
+
+
 class SubtitleSearchResponse(BaseModel):
-    items: list[SubtitleCandidate] = Field(default_factory=list)
+    items: list[SubtitleSearchItem] = Field(default_factory=list)
 
 
 class SubtitlePreviewRequest(BaseModel):
@@ -79,6 +85,7 @@ class SubtitleInstallRequest(BaseModel):
     candidate_file_id: int
     language: str
     format: str = "srt"
+    library_file_version: LibraryFileVersion
 
 
 class SubtitleInstallResponse(BaseModel):

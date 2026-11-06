@@ -6,13 +6,14 @@ import pytest
 from app.schemas.config import SubtitlesAddonConfig
 from app.schemas.domain.library import LibraryFile
 from app.schemas.domain.resource_attributes import ResourceAttributes
-from app.schemas.domain.subtitle import SubtitleCandidate, SubtitleInstallRequest
+from app.schemas.domain.subtitle import SubtitleCandidate, SubtitleInstallRequest, SubtitleSearchItem
 from app.schemas.media_id import MediaID
 from app.schemas.exception import InvalidRequestException, SubtitleFileException
 from app.services.application.workflows.subtitles.service import (
     SUBTITLE_ARTIFACT_TYPE,
     SubtitleApplicationService,
 )
+from app.services.domain.library.file_version import library_file_version
 from app.services.integration.subtitles.opensubtitles import OpenSubtitlesClient
 
 
@@ -59,6 +60,37 @@ def test_danmu_sidecar_does_not_satisfy_dialogue_subtitle_check(tmp_path: Path):
     video_path.with_name("episode.zh-cn.srt").write_text("subtitle")
 
     assert SubtitleApplicationService._has_subtitle(video_path) is True
+
+
+@pytest.mark.asyncio
+async def test_search_attaches_library_file_version_to_candidates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    video_path = tmp_path / "episode.mkv"
+    video_path.write_bytes(bytes(131072))
+    library_file = _library_file(video_path)
+    provider = Mock()
+    provider.search = AsyncMock(
+        return_value=[
+            SubtitleCandidate(
+                id="subtitle-1:123",
+                file_id=123,
+                provider="opensubtitles",
+                language="zh-cn",
+                format="srt",
+            )
+        ]
+    )
+    service = SubtitleApplicationService()
+    monkeypatch.setattr(service, "_resolve_video", AsyncMock(return_value=(library_file, video_path)))
+    monkeypatch.setattr(service, "_ready_config", _subtitle_config)
+    monkeypatch.setattr(service, "_client", lambda _config: provider)
+
+    candidates = await service.search_for_file(library_file.id)
+
+    assert len(candidates) == 1
+    assert candidates[0].library_file_version == library_file_version(library_file)
 
 
 @pytest.mark.asyncio
@@ -155,7 +187,7 @@ async def test_fill_missing_skips_ambiguous_multi_file_release(
         "search_for_file",
         AsyncMock(
             return_value=[
-                SubtitleCandidate(
+                SubtitleSearchItem(
                     id="subtitle-1:123",
                     file_id=123,
                     provider="opensubtitles",
@@ -163,6 +195,7 @@ async def test_fill_missing_skips_ambiguous_multi_file_release(
                     format="srt",
                     release_file_count=2,
                     cd_number=1,
+                    library_file_version=library_file_version(library_file),
                 )
             ]
         ),
@@ -211,6 +244,7 @@ async def test_install_writes_jellyfin_language_sidecar_and_records_artifact(
             candidate_file_id=123,
             language="zh_CN",
             format="srt",
+            library_file_version=library_file_version(library_file),
         )
     )
 
@@ -264,6 +298,7 @@ async def test_install_resolves_video_location_again_after_download(
             candidate_file_id=123,
             language="zh_CN",
             format="srt",
+            library_file_version=library_file_version(old_file),
         )
     )
 
@@ -308,12 +343,46 @@ async def test_install_rejects_video_replaced_during_download(
                 candidate_file_id=123,
                 language="zh_CN",
                 format="srt",
+                library_file_version=library_file_version(original_file),
             )
         )
 
     assert exc_info.value.message_key == "backendErrors.subtitleVideoChanged"
     assert not video_path.with_suffix(".zh-cn.srt").exists()
     mark_artifact.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_install_rejects_candidate_from_replaced_video_before_download(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    video_path = tmp_path / "episode.mkv"
+    video_path.write_bytes(bytes(131072))
+    searched_file = _library_file(video_path)
+    replaced_file = searched_file.model_copy(
+        update={"task_id": "task-2", "created_at": searched_file.created_at + 1}
+    )
+    service = SubtitleApplicationService()
+    download = AsyncMock(return_value=b"subtitle")
+
+    monkeypatch.setattr(service, "_resolve_video", AsyncMock(return_value=(replaced_file, video_path)))
+    monkeypatch.setattr(service, "_ready_config", _subtitle_config)
+    monkeypatch.setattr(OpenSubtitlesClient, "download", download)
+
+    with pytest.raises(SubtitleFileException) as exc_info:
+        await service.install(
+            SubtitleInstallRequest(
+                file_id=searched_file.id,
+                candidate_file_id=123,
+                language="zh_CN",
+                format="srt",
+                library_file_version=library_file_version(searched_file),
+            )
+        )
+
+    assert exc_info.value.message_key == "backendErrors.subtitleVideoChanged"
+    download.assert_not_awaited()
 
 
 def test_opensubtitles_client_rejects_missing_api_key():

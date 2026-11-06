@@ -1,17 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from app.schemas.domain.library import LibraryFile
-
-
-@dataclass(frozen=True)
-class LibraryFileVersion:
-    id: str
-    task_id: str
-    file_size: int | None
-    file_index: int | None
-    created_at: float
+from app.schemas.domain.library import LibraryFile, LibraryFileVersion
 
 
 def library_file_version(library_file: LibraryFile) -> LibraryFileVersion:

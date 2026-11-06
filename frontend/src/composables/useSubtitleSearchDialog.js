@@ -66,6 +66,7 @@ export function useSubtitleSearchDialog(visible, resource) {
         candidate_file_id: candidate.file_id,
         language: candidate.language,
         format: candidate.format,
+        library_file_version: candidate.library_file_version,
       })
       return isCurrent(requestGeneration, fileId)
     } finally {
