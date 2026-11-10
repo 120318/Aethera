@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
-from collections import OrderedDict
+import hashlib
 from urllib.parse import urlparse
 
 import httpx
@@ -15,23 +14,30 @@ from app.schemas.domain.subtitle import (
     OpenSubtitlesSearchPayload,
     SubtitleCandidate,
 )
+from app.services.platform.runtime_cache import RuntimeCache, runtime_cache
 
 
 class OpenSubtitlesClient:
     base_url = "https://api.opensubtitles.com/api/v1"
     _allowed_api_hosts = {"api.opensubtitles.com", "vip-api.opensubtitles.com"}
-    _download_cache_ttl_seconds = 600.0
-    _download_cache_max_entries = 16
+    _download_cache_ttl_seconds = 600
+    _download_lock_ttl_seconds = 180
 
-    def __init__(self, api_key: str, username: str = "", password: str = "") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        username: str = "",
+        password: str = "",
+        *,
+        cache: RuntimeCache | None = None,
+    ) -> None:
         self.api_key = api_key.strip()
         self.username = username.strip()
         self.password = password
         self._token = ""
         self._authenticated_base_url = self.base_url
         self._login_lock = asyncio.Lock()
-        self._download_by_file_id: OrderedDict[int, tuple[float, bytes]] = OrderedDict()
-        self._download_lock = asyncio.Lock()
+        self._cache = cache or runtime_cache
 
     def _headers(self, *, authenticated: bool = False) -> dict[str, str]:
         if not self.api_key:
@@ -161,16 +167,12 @@ class OpenSubtitlesClient:
         return candidates
 
     async def download(self, file_id: int) -> bytes:
-        cached = self._cached_download(file_id)
-        if cached is not None:
-            return cached
-        async with self._download_lock:
-            cached = self._cached_download(file_id)
-            if cached is not None:
-                return cached
-            content = await self._download_uncached(file_id)
-            self._cache_download(file_id, content)
-            return content
+        return await self._cache.read_or_create(
+            self._download_cache_key(file_id),
+            lambda: self._download_uncached(file_id),
+            ttl=self._download_cache_ttl_seconds,
+            lock_ttl=self._download_lock_ttl_seconds,
+        )
 
     async def _download_uncached(self, file_id: int) -> bytes:
         try:
@@ -199,21 +201,10 @@ class OpenSubtitlesClient:
         except httpx.HTTPError as exc:
             raise ValueError(f"OpenSubtitles download failed: {exc}") from exc
 
-    def _cached_download(self, file_id: int) -> bytes | None:
-        if file_id not in self._download_by_file_id:
-            return None
-        expires_at, content = self._download_by_file_id[file_id]
-        if expires_at <= time.monotonic():
-            self._download_by_file_id.pop(file_id, None)
-            return None
-        self._download_by_file_id.move_to_end(file_id)
-        return content
-
-    def _cache_download(self, file_id: int, content: bytes) -> None:
-        self._download_by_file_id[file_id] = (time.monotonic() + self._download_cache_ttl_seconds, content)
-        self._download_by_file_id.move_to_end(file_id)
-        while len(self._download_by_file_id) > self._download_cache_max_entries:
-            self._download_by_file_id.popitem(last=False)
+    def _download_cache_key(self, file_id: int) -> str:
+        credential = "\0".join((self.api_key, self.username, self.password)).encode()
+        credential_fingerprint = hashlib.sha256(credential).hexdigest()
+        return f"subtitle:opensubtitles:download:{credential_fingerprint}:{file_id}"
 
     @staticmethod
     def _format_from_name(file_name: str) -> str:

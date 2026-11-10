@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
@@ -15,6 +16,7 @@ from app.services.application.workflows.subtitles.service import (
 )
 from app.services.domain.library.file_version import library_file_version
 from app.services.integration.subtitles.opensubtitles import OpenSubtitlesClient
+from app.services.platform.runtime_cache import RuntimeCache
 
 
 def _subtitle_config() -> SubtitlesAddonConfig:
@@ -529,7 +531,7 @@ async def test_opensubtitles_download_follows_redirected_file_link(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_opensubtitles_download_reuses_cached_content(monkeypatch):
+async def test_opensubtitles_download_reuses_cached_content_across_clients(monkeypatch, tmp_path):
     login_response = Mock()
     login_response.raise_for_status = Mock()
     login_response.json.return_value = {
@@ -552,13 +554,58 @@ async def test_opensubtitles_download_reuses_cached_content(monkeypatch):
         "app.services.integration.subtitles.opensubtitles.httpx.AsyncClient",
         client_factory,
     )
-    client = OpenSubtitlesClient("key", "user", "password")
+    preview_client = OpenSubtitlesClient(
+        "key",
+        "user",
+        "password",
+        cache=RuntimeCache(tmp_path),
+    )
+    install_client = OpenSubtitlesClient(
+        "key",
+        "user",
+        "password",
+        cache=RuntimeCache(tmp_path),
+    )
 
-    preview_content = await client.download(123)
-    install_content = await client.download(123)
+    preview_content = await preview_client.download(123)
+    install_content = await install_client.download(123)
 
     assert preview_content == b"subtitle"
     assert install_content == b"subtitle"
     client_factory.assert_called_once_with(timeout=30.0, follow_redirects=True)
     assert http_client.post.await_count == 2
     http_client.get.assert_awaited_once_with("https://download.opensubtitles.com/subtitle.srt")
+
+
+@pytest.mark.asyncio
+async def test_opensubtitles_download_cache_is_isolated_by_credentials(tmp_path):
+    first = OpenSubtitlesClient("key", "user-a", "password", cache=RuntimeCache(tmp_path))
+    second = OpenSubtitlesClient("key", "user-b", "password", cache=RuntimeCache(tmp_path))
+    first._download_uncached = AsyncMock(return_value=b"first")
+    second._download_uncached = AsyncMock(return_value=b"second")
+
+    assert await first.download(123) == b"first"
+    assert await second.download(123) == b"second"
+
+    first._download_uncached.assert_awaited_once_with(123)
+    second._download_uncached.assert_awaited_once_with(123)
+
+
+@pytest.mark.asyncio
+async def test_opensubtitles_download_deduplicates_concurrent_clients(tmp_path):
+    first = OpenSubtitlesClient("key", "user", "password", cache=RuntimeCache(tmp_path))
+    second = OpenSubtitlesClient("key", "user", "password", cache=RuntimeCache(tmp_path))
+
+    async def download_once(_file_id: int) -> bytes:
+        await asyncio.sleep(0.05)
+        return b"subtitle"
+
+    first._download_uncached = AsyncMock(side_effect=download_once)
+    second._download_uncached = AsyncMock(return_value=b"duplicate")
+
+    assert await asyncio.gather(first.download(123), second.download(123)) == [
+        b"subtitle",
+        b"subtitle",
+    ]
+    first._download_uncached.assert_awaited_once_with(123)
+    second._download_uncached.assert_not_awaited()

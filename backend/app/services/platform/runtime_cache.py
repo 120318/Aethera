@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
-from typing import TypeVar, cast
+from typing import Awaitable, Callable, TypeVar, cast
+from uuid import uuid4
 
 from diskcache import Cache
 from pydantic import BaseModel
@@ -34,6 +36,34 @@ class RuntimeCache:
 
     def set(self, key: str, value, ttl: int | None) -> None:
         self._cache.set(key, to_jsonable(value), expire=ttl)
+
+    async def read_or_create(
+        self,
+        key: str,
+        create: Callable[[], Awaitable[CacheValue]],
+        *,
+        ttl: int,
+        lock_ttl: int,
+    ) -> CacheValue:
+        cached = self.read(key)
+        if cached is not None:
+            return cast(CacheValue, cached)
+
+        lock_key = f"{key}:lock"
+        lock_token = uuid4().hex
+        while not self._cache.add(lock_key, lock_token, expire=lock_ttl, retry=True):
+            await asyncio.sleep(0.01)
+        try:
+            cached = self.read(key)
+            if cached is not None:
+                return cast(CacheValue, cached)
+            value = await create()
+            self.set(key, value, ttl)
+            return value
+        finally:
+            with self._cache.transact():
+                if lock_key in self._cache and self._cache[lock_key] == lock_token:
+                    del self._cache[lock_key]
 
     def delete(self, key: str) -> bool:
         return bool(self._cache.pop(key, default=None) is not None)
