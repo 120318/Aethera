@@ -235,6 +235,34 @@ class QBittorrentClient(DownloadClient):
                 message="Failed to resolve torrent hash for file priority synchronization",
             )
 
+        try:
+            torrent_preexisted = bool(info_hash) and await self._torrent_exists(info_hash)
+        except (
+            qbittorrentapi.LoginFailed,
+            qbittorrentapi.APIConnectionError,
+            qbittorrentapi.APIError,
+            OSError,
+            ValueError,
+            TypeError,
+        ) as exc:
+            logger.error("Failed to inspect torrent before adding %s: %s", info_hash, exc)
+            return ClientOperationResult(
+                success=False,
+                message="Failed to inspect existing torrent before adding",
+                id=info_hash,
+            )
+
+        if torrent_preexisted:
+            if file_priorities and info_hash:
+                priorities_synced = await self._apply_file_priorities_after_add(info_hash, file_priorities)
+                if not priorities_synced:
+                    return ClientOperationResult(
+                        success=False,
+                        message="Failed to synchronize existing torrent file priorities",
+                        id=info_hash,
+                    )
+            return ClientOperationResult(success=True, id=info_hash)
+
         pause_for_priority_sync = bool(file_priorities) and is_paused is not True
         result = await asyncio.to_thread(
             self._qb_add_torrent_file,
@@ -306,6 +334,12 @@ class QBittorrentClient(DownloadClient):
         except (qbittorrentapi.LoginFailed, qbittorrentapi.APIConnectionError, qbittorrentapi.APIError, OSError, ValueError, TypeError) as e:
             logger.error(f"Failed to parse torrents: {e}")
             return []
+
+    async def _torrent_exists(self, torrent_hash: str) -> bool:
+        torrents = await self._call_with_reauth(
+            lambda client: asyncio.to_thread(self._qb_get_torrents, client, [torrent_hash])
+        )
+        return bool(torrents)
 
     async def get_torrent_info(self, torrent_hash: str) -> Optional[DownloadInfo]:
         try:
