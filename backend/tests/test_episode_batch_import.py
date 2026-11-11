@@ -165,6 +165,21 @@ async def test_command_recheck_does_not_expand_beyond_captured_inspection(monkey
 
 
 @pytest.mark.asyncio
+async def test_episode_batch_finishes_remaining_files_when_download_completed_before_execution(monkeypatch):
+    task = _task(TaskStatus.FINISHED)
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.download_service.find_task_by_id",
+        AsyncMock(return_value=task),
+    )
+    finish = AsyncMock(return_value=SimpleNamespace(transferred_files=[]))
+    monkeypatch.setattr(transfer_service, "_finish_episode_batches", finish)
+
+    await transfer_service.import_episode_batch(task.id, [2, 5])
+
+    finish.assert_awaited_once_with(task)
+
+
+@pytest.mark.asyncio
 async def test_finished_task_only_imports_remaining_selected_files(monkeypatch):
     task = _task(TaskStatus.FINISHED)
     task.context.imported_file_indices = [2]
