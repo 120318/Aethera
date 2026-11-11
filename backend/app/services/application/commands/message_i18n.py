@@ -4,6 +4,7 @@ from app.schemas.domain.command import CommandRecord, CommandResult, CommandStat
 
 
 COMMAND_KEY_BY_TYPE = {
+    CommandType.ADDON_RUN: "addonRun",
     CommandType.RESOURCE_SEARCH: "resourceSearch",
     CommandType.SUBSCRIPTION_RUN: "subscriptionRun",
     CommandType.TASK_CREATE: "taskCreate",
@@ -14,11 +15,9 @@ COMMAND_KEY_BY_TYPE = {
     CommandType.TASK_EPISODE_BATCH_IMPORT: "taskTransfer",
     CommandType.TASK_STORAGE_CHANGE: "taskStorageChange",
     CommandType.TASK_MEDIA_SERVER_SYNC: "taskMediaServerSync",
-    CommandType.TASK_DANMU_GENERATE: "taskDanmuGenerate",
     CommandType.LIBRARY_FILE_DELETE: "libraryFileDelete",
     CommandType.LIBRARY_FILE_STORAGE_CHANGE: "libraryFileStorageChange",
     CommandType.LIBRARY_FILE_MEDIA_SERVER_SYNC: "libraryFileMediaServerSync",
-    CommandType.LIBRARY_FILE_DANMU_GENERATE: "libraryFileDanmuGenerate",
     CommandType.TASK_DELETE: "taskDelete",
     CommandType.MEDIA_DELETE: "mediaDelete",
     CommandType.PROFILE_REFRESH: "profileRefresh",

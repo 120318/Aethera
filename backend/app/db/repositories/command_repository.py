@@ -283,13 +283,18 @@ class CommandRepository:
             ).scalars().all()
             return [self._to_model(row) for row in rows]
 
-    async def find_running(self) -> list[CommandRecord]:
+    async def find_running(
+        self,
+        command_types: list[CommandType] | None = None,
+        excluded_command_types: list[CommandType] | None = None,
+    ) -> list[CommandRecord]:
         with SessionLocal() as session:
-            rows = session.execute(
-                select(CommandORM)
-                .where(CommandORM.status == CommandStatus.RUNNING.value)
-                .order_by(desc(CommandORM.created_at))
-            ).scalars().all()
+            stmt = select(CommandORM).where(CommandORM.status == CommandStatus.RUNNING.value)
+            if command_types:
+                stmt = stmt.where(CommandORM.type.in_([item.value for item in command_types]))
+            if excluded_command_types:
+                stmt = stmt.where(CommandORM.type.not_in([item.value for item in excluded_command_types]))
+            rows = session.execute(stmt.order_by(desc(CommandORM.created_at))).scalars().all()
             return [self._to_model(row) for row in rows]
 
     async def find_next_queued(self) -> CommandRecord | None:
@@ -302,14 +307,21 @@ class CommandRepository:
             ).scalars().first()
             return self._to_model(row) if row else None
 
-    async def claim_next_queued(self, started_at_iso: str) -> CommandRecord | None:
+    async def claim_next_queued(
+        self,
+        started_at_iso: str,
+        command_types: list[CommandType] | None = None,
+        excluded_command_types: list[CommandType] | None = None,
+    ) -> CommandRecord | None:
         with SessionLocal() as session:
             session.execute(text("BEGIN IMMEDIATE"))
+            stmt = select(CommandORM).where(CommandORM.status == CommandStatus.QUEUED.value)
+            if command_types:
+                stmt = stmt.where(CommandORM.type.in_([item.value for item in command_types]))
+            if excluded_command_types:
+                stmt = stmt.where(CommandORM.type.not_in([item.value for item in excluded_command_types]))
             row = session.execute(
-                select(CommandORM)
-                .where(CommandORM.status == CommandStatus.QUEUED.value)
-                .order_by(CommandORM.created_at.asc())
-                .limit(1)
+                stmt.order_by(CommandORM.created_at.asc()).limit(1)
             ).scalars().first()
             if row is None:
                 session.rollback()

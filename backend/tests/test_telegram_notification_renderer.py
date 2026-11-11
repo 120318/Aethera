@@ -76,6 +76,29 @@ def test_telegram_failed_event_uses_locale_and_reason():
     assert "media.import.failed" not in message
 
 
+def test_telegram_addon_failure_uses_structured_error_reason():
+    event = Event(
+        type=EventType.ADDON_RUN_FAILED,
+        level=EventLevel.error,
+        addon_name="subtitles",
+        ts=datetime(2026, 6, 2, 20, 30),
+        meta=json.dumps(
+            {
+                "addon_id": "subtitles",
+                "operation_id": "fill_missing",
+                "error_key": "backendErrors.addonDisabled",
+                "error_params": {"addon_id": "subtitles"},
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    message = format_telegram_event(event, locale="en-US", public_base_url="")
+
+    assert "Reason: Addon is disabled: subtitles" in message
+    assert "backendErrors.addonDisabled" not in message
+
+
 def test_telegram_escapes_markdown_v2_stars():
     event = Event(
         type=EventType.DOWNLOAD_COMPLETED,

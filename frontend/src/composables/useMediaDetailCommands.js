@@ -12,8 +12,8 @@ const TASK_CREATE_REFRESH_RETRY_DELAY_MS = 500
 const DOWNLOAD_CREATION_COMMAND_TYPES = ['task.create', 'pilot.episode']
 const SUBSCRIPTION_COMMAND_TYPES = ['subscription.run']
 const PROFILE_REFRESH_COMMAND_TYPES = ['profile.refresh']
-const TASK_COMMAND_TYPES = ['task.pause', 'task.resume', 'task.transfer', 'task.episode_batch_import', 'task.media_server_sync', 'task.danmu_generate', 'task.storage_change', 'task.delete']
-const LIBRARY_FILE_COMMAND_TYPES = ['library_file.delete', 'library_file.media_server_sync', 'library_file.danmu_generate']
+const TASK_COMMAND_TYPES = ['task.pause', 'task.resume', 'task.transfer', 'task.episode_batch_import', 'task.media_server_sync', 'addon.run', 'task.storage_change', 'task.delete']
+const LIBRARY_FILE_COMMAND_TYPES = ['library_file.delete', 'library_file.media_server_sync', 'addon.run']
 const MEDIA_DETAIL_COMMAND_TYPES = [
   'resource.search',
   ...DOWNLOAD_CREATION_COMMAND_TYPES,
@@ -325,12 +325,12 @@ export function useMediaDetailCommands(options = {}) {
       if (terminalCommand?.status === 'succeeded') {
         if (terminalCommand?.type === 'library_file.delete') notification.success(t('mediaDetail.resourceDeleted'))
         if (terminalCommand?.type === 'library_file.media_server_sync') notification.success(t('mediaDetail.scrapeCompleted'))
-        if (terminalCommand?.type === 'library_file.danmu_generate') notification.success(t('mediaDetail.danmuGenerateCompleted'))
+        if (terminalCommand?.type === 'addon.run' && terminalCommand?.payload?.addon_id === 'danmu') notification.success(t('mediaDetail.danmuGenerateCompleted'))
         if (terminalCommand?.type === 'task.pause') notification.success(t('mediaDetail.taskPaused'))
         if (terminalCommand?.type === 'task.resume') notification.success(t('mediaDetail.taskResumed'))
         if (terminalCommand?.type === 'task.transfer') notification.success(t('mediaDetail.transferCompleted'))
         if (terminalCommand?.type === 'task.media_server_sync') notification.success(t('mediaDetail.scrapeCompleted'))
-        if (terminalCommand?.type === 'task.danmu_generate') notification.success(t('mediaDetail.danmuGenerateCompleted'))
+        if (terminalCommand?.type === 'addon.run' && terminalCommand?.payload?.addon_id === 'danmu') notification.success(t('mediaDetail.danmuGenerateCompleted'))
         if (terminalCommand?.type === 'task.delete') notification.success(t('mediaDetail.downloadTaskDeleted'))
       }
 

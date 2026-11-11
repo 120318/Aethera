@@ -157,6 +157,9 @@ export function useMediaDetailData() {
     const hash = task.torrent_hash || ''
     return {
       id: task.id,
+      media_id: task.media_id || '',
+      media_type: task.media_type || '',
+      season_number: task.season_number ?? null,
       title: task.title || t('downloadDialog.unknownResource'),
       description: task.description || '',
       attributes,

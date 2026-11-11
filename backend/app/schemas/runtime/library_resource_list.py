@@ -43,7 +43,6 @@ class LibraryResourceAction(str, Enum):
     DELETE = "delete"
     MEDIA_SERVER_OPEN = "media_server_open"
     MEDIA_SERVER_SYNC = "media_server_sync"
-    DANMU_GENERATE = "danmu_generate"
     CHANGE_DIRECTORY = "change_directory"
 
 

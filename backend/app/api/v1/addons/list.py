@@ -6,10 +6,18 @@ from app.addons.registry import addon_service
 router = APIRouter()
 
 
+class AddonResourceActionInfo(BaseModel):
+    id: str
+    command_id: str | None = None
+    target_type: str
+    interaction_kind: str
+
+
 class AddonInfo(BaseModel):
     name: str
     enabled: bool
     subscribed_events: list[str]
+    resource_actions: list[AddonResourceActionInfo]
 
 
 class AddonListResponse(BaseModel):
@@ -27,5 +35,20 @@ async def list_addons() -> AddonListResponse:
             events = addon.subscribed_event_patterns() or []
         except (AttributeError, RuntimeError, ValueError):
             events = []
-        items.append(AddonInfo(name=addon.name, enabled=enabled, subscribed_events=events))
+        items.append(
+            AddonInfo(
+                name=addon.name,
+                enabled=enabled,
+                subscribed_events=events,
+                resource_actions=[
+                    AddonResourceActionInfo(
+                        id=action.id,
+                        command_id=action.command_id,
+                        target_type=action.target_type.value,
+                        interaction_kind=action.interaction_kind,
+                    )
+                    for action in addon.resource_actions
+                ],
+            )
+        )
     return AddonListResponse(items=items)

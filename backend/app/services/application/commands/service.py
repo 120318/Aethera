@@ -7,19 +7,18 @@ from app.db.repositories.command_repository import CommandRepository
 from app.schemas.exception import DownloadException
 from app.schemas.exception.base import AppException
 from app.schemas.media_id import MediaID
-from app.schemas.domain.action import ActionActor, ActionKind, ActionName, ActionRecord, ActionSource, ActionStatus, ActionTrigger
+from app.schemas.domain.action import ActionActor, ActionKind, ActionRecord, ActionSource, ActionStatus, ActionTrigger
 from app.schemas.domain.action_meta import CommandQueuedActionMeta
-from app.schemas.domain.addon_events import DownloadFailedEventMeta
+from app.schemas.domain.addon_events import AddonRunEventMeta, DownloadFailedEventMeta
 from app.schemas.domain.command import (
     CommandCreateRequest,
     CommandInitiator,
     CommandRecord,
-    CommandResult,
     CommandStatus,
     CommandTargetType,
     CommandType,
 )
-from app.schemas.domain.event import EventActor, EventEntityRef, EventLevel, EventSource, MediaEventCreate
+from app.schemas.domain.event import EventActor, EventCreate, EventEntityRef, EventLevel, EventSource, MediaEventCreate
 from app.services.audit.action_service import action_service
 from app.services.audit.event_service import event_service
 from app.services.application.commands.message_i18n import attach_command_message_i18n
@@ -48,13 +47,20 @@ class CommandService:
     async def reset_active_commands(self) -> None:
         await self.reset_running_commands()
 
-    async def reset_running_commands(self) -> None:
+    async def reset_running_commands(
+        self,
+        command_types: list[CommandType] | None = None,
+        excluded_command_types: list[CommandType] | None = None,
+    ) -> None:
         expired_count = await self.repo.delete_expired_staged_commands(
             (datetime.now() - STAGED_COMMAND_MAX_AGE).isoformat()
         )
         if expired_count:
             logger.info("Removed %d expired staged commands", expired_count)
-        running_commands = await self.repo.find_running()
+        running_commands = await self.repo.find_running(
+            command_types=command_types,
+            excluded_command_types=excluded_command_types,
+        )
         for command in running_commands:
             command.status = CommandStatus.FAILED
             command.error = "Service restarted and the command was interrupted"
@@ -251,9 +257,17 @@ class CommandService:
             return command.target_season_number
         return None
 
-    async def run_next_queued_command(self) -> bool:
+    async def run_next_queued_command(
+        self,
+        command_types: list[CommandType] | None = None,
+        excluded_command_types: list[CommandType] | None = None,
+    ) -> bool:
         started_at = datetime.now()
-        command = await self.repo.claim_next_queued(started_at.isoformat())
+        command = await self.repo.claim_next_queued(
+            started_at.isoformat(),
+            command_types=command_types,
+            excluded_command_types=excluded_command_types,
+        )
         if not command:
             return False
         attach_command_message_i18n(command)
@@ -273,6 +287,7 @@ class CommandService:
             attach_command_message_i18n(command)
             await self.repo.update(command, self.repo.cond_id(command.id))
             self._mark_command_completed(command)
+            self._emit_addon_command_event(command, succeeded=True)
         except AppException as exc:
             current = await self.repo.find_by_id(command.id)
             if current and current.status == CommandStatus.CANCELLED:
@@ -287,6 +302,7 @@ class CommandService:
             await self.repo.update(command, self.repo.cond_id(command.id))
             self._mark_command_failed(command)
             self._emit_command_failed_event(command)
+            self._emit_addon_command_event(command, succeeded=False)
         except (RuntimeError, ValueError) as exc:
             current = await self.repo.find_by_id(command.id)
             if current and current.status == CommandStatus.CANCELLED:
@@ -301,6 +317,7 @@ class CommandService:
             await self.repo.update(command, self.repo.cond_id(command.id))
             self._mark_command_failed(command)
             self._emit_command_failed_event(command)
+            self._emit_addon_command_event(command, succeeded=False)
 
         return True
 
@@ -350,10 +367,14 @@ class CommandService:
             trigger = ActionTrigger.scheduler
         else:
             trigger = ActionTrigger.system
+        action_name = command.type.value
+        if command.type == CommandType.ADDON_RUN:
+            payload = command.payload
+            action_name = f"{payload.addon_id}.{payload.operation_id}"
         action_context_data = self._get_registry().resolve_action_context(command)
         return action_service.create_action(
             kind=ActionKind.command,
-            action_name=ActionName(command.type.value),
+            action_name=action_name,
             status=ActionStatus.queued,
             actor=actor,
             trigger=trigger,
@@ -369,6 +390,7 @@ class CommandService:
                 command_id=command.id,
                 initiator=command.initiator.value,
                 target_label=command.target_label,
+                command_type=command.type,
             ),
             action_id=command.id,
             persist=persist,
@@ -410,6 +432,35 @@ class CommandService:
         return action_service.mark_cancelled(
             command.id,
             finished_at=command.finished_at or datetime.now(),
+        )
+
+    def _emit_addon_command_event(self, command: CommandRecord, *, succeeded: bool) -> None:
+        if command.type != CommandType.ADDON_RUN or command.initiator == CommandInitiator.MANUAL:
+            return
+        payload = command.payload
+        result = command.result
+        event_service.emit(
+            EventCreate(
+                type=EventTypes.ADDON_RUN_COMPLETED if succeeded else EventTypes.ADDON_RUN_FAILED,
+                level=EventLevel.info if succeeded else EventLevel.error,
+                task_id=payload.task_id,
+                actor=EventActor.system,
+                source=EventSource.addon,
+                addon_id=payload.addon_id,
+                addon_name=payload.addon_id,
+                entities=[EventEntityRef(type="command", id=command.id)],
+                correlation_id=command.id,
+                action_id=command.id,
+            ),
+            meta=AddonRunEventMeta(
+                addon_id=payload.addon_id,
+                operation_id=payload.operation_id,
+                result_count=result.result_count if result else 0,
+                failed_count=result.failed_count if result else 0,
+                error=command.error or "",
+                error_key=command.error_key,
+                error_params={str(key): str(value) for key, value in command.error_params.items()},
+            ),
         )
 
     def _emit_command_failed_event(self, command: CommandRecord) -> None:

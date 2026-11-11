@@ -113,6 +113,11 @@ class ResourceNotFoundException(AppException):
         super().__init__(code=10014, message_key=message_key, params=params)
 
 
+class SubtitleFileException(AppException):
+    def __init__(self, message_key: str, *, params: dict | None = None):
+        super().__init__(code=10025, message_key=message_key, params=params)
+
+
 class SearchMissingImdbException(AppException):
     def __init__(self):
         super().__init__(code=10015, message_key="backendErrors.searchMissingImdb")

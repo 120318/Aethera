@@ -9,12 +9,13 @@ from app.schemas.domain.addon_events import ImportedMediaFile, MediaImportComple
 from app.schemas.domain.addon_events import MediaImportFailedEventMeta
 from app.schemas.domain.download import TaskData, TaskErrorStage, TaskStatus, TransferFileResult, TransferResult
 from app.schemas.domain.event import Event, EventEntityRef, EventLevel, EventSource, MediaEventCreate
-from app.schemas.domain.library import LibraryFile
+from app.schemas.domain.library import LibraryFile, LibraryFileArtifact
 from app.schemas.exception.base import AppException
 from app.schemas.exception.exceptions import TransferException
 from app.services.audit.event_service import event_service
 from app.services.domain.download import download_service
 from app.services.domain.download.task_runtime_service import event_actor_for_task
+from app.services.domain.library.operation_lock import library_file_operation_coordinator
 from app.services.domain.library.service import library_service
 from app.services.domain.media import media_service
 from app.services.platform.domain_lock_service import domain_lock_service
@@ -115,14 +116,18 @@ class TransferService:
                     raise TransferException("backendErrors.transferProtectedEpisodePathConflict")
                 logger.info("Episode batch deferred due to protected target path: task=%s", task.id)
                 return TransferResult(transferred_files=[])
-            transfer_results = await execution.execute_transfer_plan(task, context, transfer_plan)
-            await commit_episode_batch(
-                task,
-                transfer_results,
-                context,
-                replacement_plan.replace_files,
-                handled_file_indices=file_indices,
-            )
+            existing_library_files = await library_service.get_files_by_task(task.id)
+            async with library_file_operation_coordinator.lock(
+                _replacement_file_ids(existing_library_files, replacement_plan.replace_files)
+            ):
+                transfer_results = await execution.execute_transfer_plan(task, context, transfer_plan)
+                await commit_episode_batch(
+                    task,
+                    transfer_results,
+                    context,
+                    replacement_plan.replace_files,
+                    handled_file_indices=file_indices,
+                )
             if completes_task and not await download_service.update_task_state(task.id, TaskStatus.COMPLETED):
                 raise TransferException("backendErrors.transferTaskLockFailed", params={"task_id": task.id})
             return TransferResult(transferred_files=transfer_results)
@@ -151,14 +156,17 @@ class TransferService:
                 replacement_plan.replace_files,
             ):
                 raise TransferException("backendErrors.transferProtectedEpisodePathConflict")
-            transfer_results = await execution.execute_transfer_plan(task, execution_context, transfer_plan)
-            await commit_transfer_results(
-                task,
-                transfer_results,
-                existing_library_files,
-                execution_context,
-                replacement_plan.replace_files,
-            )
+            async with library_file_operation_coordinator.lock(
+                _replacement_file_ids(existing_library_files, replacement_plan.replace_files)
+            ):
+                transfer_results = await execution.execute_transfer_plan(task, execution_context, transfer_plan)
+                await commit_transfer_results(
+                    task,
+                    transfer_results,
+                    existing_library_files,
+                    execution_context,
+                    replacement_plan.replace_files,
+                )
             logger.info("Transfer completed: task=%s files=%d", task.id, len(transfer_results))
             return TransferResult(transferred_files=transfer_results)
         except AppException as exc:
@@ -180,11 +188,21 @@ class TransferService:
 async def cleanup_replaced_library_files(
     existing_library_files: list[LibraryFile],
     transfer_results: list[TransferFileResult],
+    artifacts: list[LibraryFileArtifact] | None = None,
 ) -> None:
     if not existing_library_files:
         return
     replacement_paths = {str(Path(result.destination_path)) for result in transfer_results}
-    await library_service.cleanup_replaced_files(existing_library_files, replacement_paths)
+    await library_service.cleanup_replaced_files(existing_library_files, replacement_paths, artifacts)
+
+
+def _replacement_file_ids(*groups: list[LibraryFile]) -> list[str]:
+    return sorted({item.id for group in groups for item in group if item.id})
+
+
+async def load_replacement_artifacts(files: list[LibraryFile]) -> list[LibraryFileArtifact]:
+    file_ids = list({item.id for item in files if item.id})
+    return await library_service.get_artifacts_by_file_ids(file_ids)
 
 
 def _task_import_entities(task: TaskData) -> list[EventEntityRef]:
@@ -284,6 +302,8 @@ async def commit_transfer_results(
     replacement_files: list[LibraryFile] | None = None,
 ) -> None:
     try:
+        replacement_candidates = [*existing_library_files, *(replacement_files or [])]
+        replacement_artifacts = await load_replacement_artifacts(replacement_candidates)
         replaced_library_files = await library_service.replace_task_entries(
             task.id,
             task.context.directory_id,
@@ -293,7 +313,11 @@ async def commit_transfer_results(
             replacement_files,
         )
         await download_service.update_task_state(task.id, TaskStatus.COMPLETED)
-        await cleanup_replaced_library_files(replaced_library_files or existing_library_files, transfer_results)
+        await cleanup_replaced_library_files(
+            replaced_library_files or existing_library_files,
+            transfer_results,
+            replacement_artifacts,
+        )
         try:
             await media_service.refresh_profile_safely(task.media_id, execution_context.season_number)
         except AppException as exc:
@@ -312,6 +336,9 @@ async def commit_episode_batch(
     handled_file_indices: set[int],
 ) -> None:
     try:
+        existing_library_files = await library_service.get_files_by_task(task.id)
+        replacement_candidates = [*existing_library_files, *replacement_files]
+        replacement_artifacts = await load_replacement_artifacts(replacement_candidates)
         completion_event = build_media_import_completed_event(task, transfer_results)
         removed_files = await library_service.replace_task_batch_entries(
             task.id,
@@ -327,7 +354,7 @@ async def commit_episode_batch(
         task.context.imported_file_indices = sorted(
             set(task.context.imported_file_indices) | handled_file_indices
         )
-        await cleanup_replaced_library_files(removed_files, transfer_results)
+        await cleanup_replaced_library_files(removed_files, transfer_results, replacement_artifacts)
         if transfer_results:
             try:
                 await media_service.refresh_profile_safely(task.media_id, execution_context.season_number)

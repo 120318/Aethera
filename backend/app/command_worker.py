@@ -6,6 +6,7 @@ from app.core.logging_config import setup_logging
 from app.services.config.settings_service import settings_service
 from app.db.migration_guard import assert_database_schema_is_current
 from app.services.application.commands.service import command_service
+from app.schemas.domain.command import CommandType
 from app.addons.registry import addon_service
 from app.services.application.workflows.media_server_sync import register_media_server_sync
 from app.services.domain.subscription.repair_service import subscription_repair_service
@@ -29,14 +30,14 @@ class CommandWorker:
         await subscription_repair_service.repair_missing_media_snapshots()
         addon_service.discover_and_register()
         register_media_server_sync()
-        await command_service.reset_running_commands()
+        await command_service.reset_running_commands(excluded_command_types=[CommandType.ADDON_RUN])
 
         try:
             while not self._stop_event.is_set():
                 recovered = await command_service.recover_next_deferred_command()
                 if recovered:
                     continue
-                handled = await command_service.run_next_queued_command()
+                handled = await command_service.run_next_queued_command(excluded_command_types=[CommandType.ADDON_RUN])
                 if handled:
                     continue
 

@@ -31,7 +31,7 @@ def _task(status: TaskStatus, *, progress: float = 1.0, error_stage: TaskErrorSt
         context=TaskContext(
             download_url="https://example.com/file.torrent",
             directory_id="dir-1",
-            media={"media_id": media_id, "title": "Test Show", "year": 2024},
+            media={"media_id": media_id, "title": "Test Show", "year": 2024, "season_number": 1},
         ),
         created_at=datetime.now(),
         updated_at=datetime.now(),
@@ -80,6 +80,7 @@ def test_build_task_view_marks_seeding_absent_as_attention_with_delete_only_acti
     assert view.phase_label_key == "taskStatus.status.seedingAbsent"
     assert view.media_type == "tv"
     assert view.media_id == "tmdb:tv:1"
+    assert view.season_number == 1
     assert view.attention_reason_key == "taskStatus.warning.seedingAbsent"
     assert view.actions == [TaskAction.VIEW_DETAIL, TaskAction.DELETE]
     assert [item.action for item in view.action_states if item.available] == view.actions
@@ -130,11 +131,9 @@ def test_build_task_view_exposes_post_transfer_actions_when_library_files_exist(
         active_command=None,
         has_primary_library_files=True,
         can_media_server_sync=True,
-        can_danmu_generate=True,
     )
 
     assert TaskAction.MEDIA_SERVER_SYNC in view.actions
-    assert TaskAction.DANMU_GENERATE in view.actions
 
 
 def test_build_task_view_hides_unavailable_post_transfer_actions():
@@ -144,7 +143,6 @@ def test_build_task_view_hides_unavailable_post_transfer_actions():
     view = service._build_task_view(task, realtime=None, active_command=None, has_primary_library_files=True)
 
     assert TaskAction.MEDIA_SERVER_SYNC not in view.actions
-    assert TaskAction.DANMU_GENERATE not in view.actions
 
 
 def test_build_task_view_marks_actions_loading_when_task_command_is_active():
@@ -158,7 +156,6 @@ def test_build_task_view_marks_actions_loading_when_task_command_is_active():
         active_command=active_command,
         has_primary_library_files=True,
         can_media_server_sync=True,
-        can_danmu_generate=True,
     )
 
     detail_state = _action_state(view, TaskAction.VIEW_DETAIL)
@@ -186,7 +183,6 @@ def test_build_task_view_keeps_migrating_actions_visible_but_disabled():
         active_command=None,
         has_primary_library_files=True,
         can_media_server_sync=True,
-        can_danmu_generate=True,
     )
 
     assert view.phase == TaskPhase.MIGRATING
@@ -195,7 +191,6 @@ def test_build_task_view_keeps_migrating_actions_visible_but_disabled():
         TaskAction.VIEW_DETAIL,
         TaskAction.TRANSFER,
         TaskAction.MEDIA_SERVER_SYNC,
-        TaskAction.DANMU_GENERATE,
         TaskAction.CHANGE_DOWNLOADER,
         TaskAction.DELETE,
     ]

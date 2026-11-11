@@ -80,6 +80,17 @@ export const submitLibraryFileDirectoryChange = (payload) =>
 export const resolveLibraryMediaServerLink = (payload) =>
   http.post('/api/v1/library/media-server/link/resolve', payload)
 
+export const getAddons = () => http.get('/api/v1/addons/')
+
+export const searchSubtitles = (fileId) =>
+  http.post('/api/v1/addons/subtitles/search', { file_id: fileId })
+
+export const previewSubtitle = (candidateFileId) =>
+  http.post('/api/v1/addons/subtitles/preview', { candidate_file_id: candidateFileId })
+
+export const installSubtitle = (payload) =>
+  http.post('/api/v1/addons/subtitles/install', payload)
+
 let resourceSitesCache = null
 let resourceSitesPromise = null
 

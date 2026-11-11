@@ -1,7 +1,9 @@
 import os
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,7 +16,7 @@ from app.schemas.exception.exceptions import DownloadException, TransferExceptio
 from app.schemas.config import Template, TransferMode
 from app.schemas.media_id import MediaID
 from app.schemas.domain.download import TaskContext, TaskData, TaskStatus, TransferFileResult
-from app.schemas.domain.library import LibraryFile
+from app.schemas.domain.library import LibraryFile, LibraryFileArtifact, LibraryFileArtifactStatus
 from app.schemas.domain.resource_attributes import ResourceAttributes
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
 from app.services.domain.transfer import transfer_service
@@ -154,6 +156,140 @@ async def test_commit_transfer_results_refreshes_tv_profile_with_execution_seaso
     )
 
     refresh_mock.assert_awaited_once_with(task.media_id, 2)
+
+
+@pytest.mark.asyncio
+async def test_commit_transfer_results_cleans_artifacts_from_replaced_file(monkeypatch):
+    task = _task(status=TaskStatus.TRANSFERRING)
+    context = TransferExecutionContext(
+        source_base_path=Path("/downloads"),
+        destination_base_path=Path("/library"),
+        title="Test Show",
+        year=2024,
+        season_number=1,
+    )
+    replaced_file = _library_file("old-file")
+    artifact = LibraryFileArtifact(
+        id="subtitle-artifact",
+        library_file_id=replaced_file.id,
+        artifact_type="subtitle",
+        expected_path="/library/TV/Test Show/Test.Show.S01E01.zh-cn.srt",
+        status=LibraryFileArtifactStatus.succeeded,
+        created_at=1.0,
+        updated_at=1.0,
+    )
+    artifact_lookup = AsyncMock(return_value=[artifact])
+    cleanup_mock = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.get_artifacts_by_file_ids",
+        artifact_lookup,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.replace_task_entries",
+        AsyncMock(return_value=[replaced_file]),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.cleanup_replaced_files",
+        cleanup_mock,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.download_service.update_task_state",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.media_service.refresh_profile_safely",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.emit_media_import_completed",
+        AsyncMock(),
+    )
+
+    transfer_result = _transfer_file_result()
+    await commit_transfer_results(
+        task,
+        [transfer_result],
+        [],
+        context,
+        [replaced_file],
+    )
+
+    artifact_lookup.assert_awaited_once_with([replaced_file.id])
+    cleanup_mock.assert_awaited_once_with(
+        [replaced_file],
+        {transfer_result.destination_path},
+        [artifact],
+    )
+
+
+@pytest.mark.asyncio
+async def test_transfer_holds_library_file_lock_through_materialization_and_commit(monkeypatch):
+    task = _task(status=TaskStatus.FINISHED)
+    existing_file = _library_file("existing-file")
+    replacement_file = _library_file("replacement-file")
+    context = TransferExecutionContext(
+        source_base_path=Path("/downloads"),
+        destination_base_path=Path("/library"),
+        title="Test Show",
+        year=2024,
+        season_number=1,
+    )
+    lock_state = {"active": False, "file_ids": []}
+
+    @asynccontextmanager
+    async def lock(file_ids):
+        lock_state["active"] = True
+        lock_state["file_ids"] = file_ids
+        try:
+            yield
+        finally:
+            lock_state["active"] = False
+
+    async def execute_transfer_plan(*_args):
+        assert lock_state["active"] is True
+        return [_transfer_file_result()]
+
+    async def commit(*_args, **_kwargs):
+        assert lock_state["active"] is True
+
+    monkeypatch.setattr(transfer_service, "_lock_task_status", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_service.get_files_by_task",
+        AsyncMock(return_value=[existing_file]),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.execution.build_transfer_execution_context",
+        AsyncMock(return_value=context),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.execution.build_transfer_plan",
+        lambda *_args: object(),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_replacement_policy.build_safe_plan",
+        AsyncMock(return_value=SimpleNamespace(replace_files=[replacement_file])),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_replacement_policy.has_unsafe_path_conflict",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.library_file_operation_coordinator.lock",
+        lock,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.execution.execute_transfer_plan",
+        execute_transfer_plan,
+    )
+    monkeypatch.setattr(
+        "app.services.domain.transfer.service.commit_transfer_results",
+        commit,
+    )
+
+    await transfer_service._perform_transfer(task)
+
+    assert lock_state["file_ids"] == [existing_file.id, replacement_file.id]
+    assert lock_state["active"] is False
 
 
 @pytest.mark.asyncio

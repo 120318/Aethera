@@ -219,6 +219,22 @@ class MediaServerSyncService:
         )
         await media_server_sync_pipeline.refresh_media_server(media, file_path, transfer_results, media_server=media_server)
 
+    async def refresh_library_file(self, library_file: LibraryFile, file_path: str) -> None:
+        media_server = media_server_sync_config.resolve_server_for_directory_id(library_file.directory_id)
+        if media_server is None or not media_server.sync.enabled or not media_server.sync.refresh_after_sync:
+            return
+        await media_server_sync_pipeline.apply_media_server_changes(
+            media_server=media_server,
+            changes=[
+                MediaServerChange(
+                    media_id=library_file.media_id,
+                    target_path=file_path,
+                    change_type=MediaServerChangeType.UPDATED,
+                    reason="sidecar_refresh",
+                )
+            ],
+        )
+
     async def refresh_after_sidecar_only_completion(
         self,
         task: TaskData,
@@ -506,3 +522,7 @@ async def refresh_media_server(
     transfer_results: list[MediaServerSyncTargetFile] | None = None,
 ) -> None:
     await media_server_sync_service.refresh_media_server(media, file_path, transfer_results)
+
+
+async def refresh_library_file(library_file: LibraryFile, file_path: str) -> None:
+    await media_server_sync_service.refresh_library_file(library_file, file_path)

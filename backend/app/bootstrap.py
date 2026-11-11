@@ -5,7 +5,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from app.services.config.settings_service import settings_service
 from app.core.logging_config import setup_logging
@@ -67,6 +67,11 @@ class BackendBootstrap:
             return [sys.executable, "-m", "app.dev_command_worker"]
         return [sys.executable, "-m", "app.command_worker"]
 
+    def _build_addon_worker_command(self) -> List[str]:
+        if self.hot_reload:
+            return [sys.executable, "-m", "app.dev_addon_worker"]
+        return [sys.executable, "-m", "app.addon_worker"]
+
     def _build_scheduler_command(self) -> List[str]:
         if self.hot_reload:
             return [sys.executable, "-m", "app.dev_scheduler_worker"]
@@ -126,6 +131,7 @@ class BackendBootstrap:
         for worker_index in range(self.command_worker_count):
             self._start_process(self._build_command_worker_command(), f"command-worker-{worker_index + 1}")
         self._start_process(self._build_event_worker_command(), "event-worker")
+        self._start_process(self._build_addon_worker_command(), "addon-worker")
         self._start_process(self._build_scheduler_command(), "scheduler")
 
         try:

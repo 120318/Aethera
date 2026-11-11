@@ -35,7 +35,10 @@
           </button>
         </div>
         <div class="grid grid-cols-1 gap-item">
-          <InputText v-model="localFilters.keyword" :placeholder="$t('resourceSearch.keywordFilter')" class="w-full" />
+          <div class="flex gap-item">
+            <InputText v-model="localFilters.keyword" :placeholder="$t('resourceSearch.keywordFilter')" class="w-full" />
+            <Button v-if="subtitlesEnabled" :label="$t('localResources.subtitles.fillMissing')" severity="secondary" outlined :loading="subtitleBatchLoading" @click="fillMissing" />
+          </div>
         </div>
       </div>
 
@@ -180,11 +183,12 @@
         </section>
       </template>
     </Dialog>
+    <SubtitleSearchDialog v-model:visible="subtitleDialogVisible" :resource="subtitleResource" />
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, toRef } from 'vue'
 import Button from 'primevue/button'
 import DataView from 'primevue/dataview'
 import InputText from 'primevue/inputtext'
@@ -194,9 +198,11 @@ import Dialog from 'primevue/dialog'
 import Select from 'primevue/select'
 import ResourceAttributes from './common/ResourceAttributes.vue'
 import SortControl from '@/components/common/filter/SortControl.vue'
+import SubtitleSearchDialog from '@/components/SubtitleSearchDialog.vue'
 import { getDirectoriesTabConfig } from '@/api/config'
 import { previewLibraryFileDirectoryChange, resolveLibraryMediaServerLink, submitLibraryFileDirectoryChange } from '@/api/resource'
 import { ResourceTagType } from '@/constants/resourceTagTypes'
+import { useLocalResourceAddons } from '@/composables/useLocalResourceAddons'
 import { useLocalResourcesList } from '@/composables/useLocalResourcesList'
 import { useLocalResourcesOverview } from '@/composables/useLocalResourcesOverview'
 import { useOperationsStore } from '@/stores/operations'
@@ -264,13 +270,26 @@ const directoryChangeSubmitting = ref(false)
 const directoryChangePreview = ref(null)
 const directoryChangeConfig = ref({ directories: [] })
 const directoryChangeForm = ref({ target_directory_id: '' })
+const {
+  subtitlesEnabled,
+  addonResourceActions,
+  subtitleDialogVisible,
+  subtitleResource,
+  subtitleBatchLoading,
+  fillMissing,
+  openSubtitleSearch,
+} = useLocalResourceAddons({
+  mediaId: toRef(props, 'mediaId'),
+  seasonNumber: toRef(props, 'seasonNumber'),
+  emit,
+})
 
 const RESOURCES_ROWS_PER_PAGE = 10
 const LIBRARY_FILE_COMMAND_TYPES = [
   'library_file.delete',
   'library_file.storage_change',
   'library_file.media_server_sync',
-  'library_file.danmu_generate',
+  'addon.run',
 ]
 const localResourceVisibleTags = [
   ResourceTagType.DIRECTORY,
@@ -379,7 +398,7 @@ function getResourceTarget() {
   }
 }
 
-async function submitResourceCommand(type, resource) {
+async function submitResourceCommand(type, resource, extraPayload = {}) {
   if (!resource?.id || !props.mediaId) return null
   const targetId = getResourceTargetId(resource)
   const command = await operations.submitCommand(
@@ -389,6 +408,7 @@ async function submitResourceCommand(type, resource) {
         file_id: resource.id,
         target: getResourceTarget(),
         package_root: resource.is_package ? resource.package_root || '' : '',
+        ...extraPayload,
       },
     },
     { dedupeKey: `library_file:${targetId}:${type}` },
@@ -450,11 +470,17 @@ function getResourceMenuItems(resource) {
       command: () => submitResourceCommand('library_file.media_server_sync', resource),
     })
   }
-  if (isResourceActionAvailable(resource, 'danmu_generate')) {
+  for (const action of addonResourceActions.value) {
+    if (action.supports && !action.supports(resource)) continue
+    if (action.availabilityAction && !isResourceActionAvailable(resource, action.availabilityAction)) continue
     items.push({
-      label: t('taskLive.actions.danmuGenerate'),
+      label: t(action.labelKey),
       disabled,
-      command: () => submitResourceCommand('library_file.danmu_generate', resource),
+      command: () => action.execute({
+        resource,
+        submitCommand: submitResourceCommand,
+        openSubtitleSearch,
+      }),
     })
   }
   return items
@@ -555,15 +581,7 @@ const hasActiveDeleteCommand = (resource) => {
 }
 
 const hasActiveResourceOperationCommand = (resource) => {
-  return isResourceActionBusy(
-    resource,
-    'media_server_sync',
-    LIBRARY_FILE_COMMAND_TYPES
-  ) || isResourceActionBusy(
-    resource,
-    'danmu_generate',
-    LIBRARY_FILE_COMMAND_TYPES
-  )
+  return !!getActiveLibraryFileCommand(resource, LIBRARY_FILE_COMMAND_TYPES)
 }
 </script>
 

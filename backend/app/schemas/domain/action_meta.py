@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel
-from app.schemas.domain.command import CommandInitiator
+from app.schemas.domain.command import CommandInitiator, CommandType
 from app.schemas.domain.event import EventType
 from app.schemas.runtime.scheduler_types import SchedulerJobSourceType
 
@@ -10,6 +10,7 @@ class CommandQueuedActionMeta(BaseModel):
     command_id: str
     initiator: CommandInitiator
     target_label: str
+    command_type: CommandType | None = None
 
 
 class TaskStorageMigrationActionMeta(BaseModel):

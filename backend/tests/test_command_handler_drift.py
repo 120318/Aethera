@@ -1,7 +1,6 @@
 import os
 import uuid
 from unittest.mock import AsyncMock
-
 import pytest
 
 pytestmark = [pytest.mark.drift, pytest.mark.health]
@@ -18,8 +17,6 @@ from app.schemas.domain.command import (
     CommandType,
     DirectoryIntegrityScanCommandRequestPayload,
     DirectoryIntegrityRepairCommandRequestPayload,
-    LibraryFileDanmuGenerateCommandRecordPayload,
-    LibraryFileDanmuGenerateCommandRequestPayload,
     LibraryFileMediaServerSyncCommandRequestPayload,
     MediaDeleteCommandRequestPayload,
     MediaDeleteCommandRecordPayload,
@@ -40,7 +37,7 @@ from app.schemas.runtime.directory_integrity import (
 )
 from app.services.application.commands.handlers.directory_integrity import DirectoryIntegrityRepairCommandHandler, DirectoryIntegrityScanCommandHandler
 from app.services.application.commands.handlers.download import TaskDeleteCommandHandler
-from app.services.application.commands.handlers.library import LibraryFileDanmuGenerateCommandHandler, LibraryFileMediaServerSyncCommandHandler, MediaDeleteCommandHandler
+from app.services.application.commands.handlers.library import LibraryFileMediaServerSyncCommandHandler, MediaDeleteCommandHandler
 from app.services.application.commands.handlers.search import ResourceSearchCommandHandler
 from app.services.application.commands.handlers.subscription import SubscriptionRunCommandHandler
 
@@ -379,8 +376,6 @@ async def test_media_delete_build_uses_identity_label_without_media_id_fallback(
     assert command.target_label == "Test Show (2024)"
     assert command.target == MediaTarget(media_id=media_id, season_number=1)
     resolve_mock.assert_awaited_once_with(media_id, season_number=1)
-
-
 @pytest.mark.asyncio
 async def test_resource_search_handler_uses_identity_snapshot_without_detail_fields(monkeypatch):
     handler = ResourceSearchCommandHandler()
@@ -436,78 +431,3 @@ async def test_library_file_media_server_sync_builds_library_file_target(monkeyp
     assert command.media_id == media_id
     assert command.target_label == "Test Show (2024)"
     resolve_mock.assert_awaited_once_with(media_id, season_number=1)
-
-
-@pytest.mark.asyncio
-async def test_library_file_danmu_generate_build_uses_identity_label_without_media_id_fallback(monkeypatch):
-    handler = LibraryFileDanmuGenerateCommandHandler()
-    media_id = MediaID.parse("tmdb:tv:1")
-    monkeypatch.setattr(
-        "app.services.application.commands.handlers.library.library_service.find_file_by_id",
-        AsyncMock(return_value=_library_file()),
-    )
-    resolve_mock = AsyncMock(return_value=_snapshot(media_id, season_number=1))
-    monkeypatch.setattr(
-        "app.services.application.commands.handlers.library.media_service.resolve_execution_snapshot",
-        resolve_mock,
-    )
-
-    command = await handler.build(
-        CommandCreateRequest(
-            type=CommandType.LIBRARY_FILE_DANMU_GENERATE,
-            payload=LibraryFileDanmuGenerateCommandRequestPayload(
-                file_id="file-1",
-                target=MediaTarget(media_id=media_id, season_number=1),
-            ),
-        )
-    )
-
-    assert command.type == CommandType.LIBRARY_FILE_DANMU_GENERATE
-    assert command.target_type == CommandTargetType.LIBRARY_FILE
-    assert command.target_id == "file-1"
-    assert command.media_id == media_id
-    assert command.target_label == "Test Show (2024)"
-    resolve_mock.assert_awaited_once_with(media_id, season_number=1)
-
-
-@pytest.mark.asyncio
-async def test_library_file_danmu_generate_executes_for_package_files(monkeypatch):
-    handler = LibraryFileDanmuGenerateCommandHandler()
-    media_id = MediaID.parse("tmdb:tv:1")
-    files = [_library_file("file-1"), _library_file("file-2")]
-    monkeypatch.setattr(
-        "app.services.application.commands.handlers.library.library_service.find_file_by_id",
-        AsyncMock(return_value=files[0]),
-    )
-    monkeypatch.setattr(
-        "app.services.application.commands.handlers.library.library_service.get_files_by_media",
-        AsyncMock(return_value=files),
-    )
-    monkeypatch.setattr(
-        "app.services.application.commands.handlers.library.library_service.matches_package_root",
-        lambda _file, package_root: package_root == "library/Show",
-    )
-    run_mock = AsyncMock(return_value=2)
-    monkeypatch.setattr(
-        "app.services.application.commands.handlers.library.danmu_application_service.run_for_library_files",
-        run_mock,
-    )
-    command = CommandRecord(
-        id="cmd-danmu",
-        type=CommandType.LIBRARY_FILE_DANMU_GENERATE,
-        payload=LibraryFileDanmuGenerateCommandRecordPayload(
-            file_id="file-1",
-            target=MediaTarget(media_id=media_id, season_number=1),
-            package_root="library/Show",
-        ),
-        initiator=CommandInitiator.MANUAL,
-        media_id=media_id,
-        target=MediaTarget(media_id=media_id, season_number=1),
-        target_type=CommandTargetType.LIBRARY_FILE,
-        target_id="library/Show",
-    )
-
-    result = await handler.execute(command)
-
-    assert result.result_count == 2
-    run_mock.assert_awaited_once_with(files)
