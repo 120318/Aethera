@@ -67,6 +67,8 @@ class TransferService:
             task = await download_service.find_task_by_id(task_id)
             if not task:
                 raise TransferException("backendErrors.taskNotFound", params={"id": task_id})
+            if task.status == TaskStatus.FINISHED:
+                return await self._finish_episode_batches(task)
             if task.status not in EARLY_IMPORT_TASK_STATUSES:
                 return TransferResult(transferred_files=[])
             statuses = await download_service.get_torrent_status_by_tasks([task])

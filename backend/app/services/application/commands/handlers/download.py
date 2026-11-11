@@ -225,6 +225,10 @@ class PilotEpisodeCommandHandler:
         return CommandActionContext(media=payload.media)
 
 
+def _task_import_uniq_key(task_id: str) -> str:
+    return f"command:task.import:{task_id}"
+
+
 class TaskTransferCommandHandler(TaskCommandSupport):
     command_type = CommandType.TASK_TRANSFER
 
@@ -239,7 +243,7 @@ class TaskTransferCommandHandler(TaskCommandSupport):
             body=body,
             task=task,
             payload=payload,
-            uniq_key=f"command:{CommandType.TASK_TRANSFER.value}:{task.id}",
+            uniq_key=_task_import_uniq_key(task.id),
         )
 
     async def execute(self, command: CommandRecord) -> CommandResult:
@@ -281,7 +285,7 @@ class TaskEpisodeBatchImportCommandHandler(TaskCommandSupport):
             body=body,
             task=task,
             payload=payload,
-            uniq_key=f"command:{CommandType.TASK_EPISODE_BATCH_IMPORT.value}:{task.id}",
+            uniq_key=_task_import_uniq_key(task.id),
         )
 
     async def execute(self, command: CommandRecord) -> CommandResult:

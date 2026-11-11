@@ -218,13 +218,6 @@ class QBittorrentClient(DownloadClient):
             except ValueError:
                 pass
 
-        result = await asyncio.to_thread(self._qb_add_torrent_file, client, torrent_data, save_path, category, tags, is_paused)
-
-        if isinstance(result, str):
-            text = result.strip()
-            if not text.lower().startswith('ok'):
-                return ClientOperationResult(success=False, message=f"Failed to add torrent file: {text}", id=torrent_hash)
-
         info_hash = torrent_hash
         if not info_hash:
             try:
@@ -236,9 +229,44 @@ class QBittorrentClient(DownloadClient):
             except (ValueError, TypeError, KeyError):
                 info_hash = None
 
-        if file_priorities and info_hash:
-            await self._apply_file_priorities_after_add(info_hash, file_priorities)
+        if file_priorities and not info_hash:
+            return ClientOperationResult(
+                success=False,
+                message="Failed to resolve torrent hash for file priority synchronization",
+            )
 
+        pause_for_priority_sync = bool(file_priorities) and is_paused is not True
+        result = await asyncio.to_thread(
+            self._qb_add_torrent_file,
+            client,
+            torrent_data,
+            save_path,
+            category,
+            tags,
+            True if pause_for_priority_sync else is_paused,
+        )
+
+        if isinstance(result, str):
+            text = result.strip()
+            if not text.lower().startswith('ok'):
+                return ClientOperationResult(success=False, message=f"Failed to add torrent file: {text}", id=torrent_hash)
+
+        if file_priorities and info_hash:
+            priorities_synced = await self._apply_file_priorities_after_add(info_hash, file_priorities)
+            if not priorities_synced:
+                await self.delete_torrent(info_hash, delete_files=False)
+                return ClientOperationResult(
+                    success=False,
+                    message="Failed to synchronize torrent file priorities",
+                    id=info_hash,
+                )
+            if pause_for_priority_sync and not await self.start_torrents([info_hash]):
+                await self.delete_torrent(info_hash, delete_files=False)
+                return ClientOperationResult(
+                    success=False,
+                    message="Failed to start torrent after synchronizing file priorities",
+                    id=info_hash,
+                )
         if isinstance(result, str):
             return ClientOperationResult(success=True, id=info_hash)
         
@@ -384,29 +412,34 @@ class QBittorrentClient(DownloadClient):
             logger.error(f"Failed to set file priority: {e}")
             return False
 
-    async def _apply_file_priorities_after_add(self, torrent_hash: str, file_priorities: list[int]) -> None:
+    async def _apply_file_priorities_after_add(self, torrent_hash: str, file_priorities: list[int]) -> bool:
         try:
             selected = [index for index, priority in enumerate(file_priorities) if int(priority) > 0]
             unselected = [index for index, priority in enumerate(file_priorities) if int(priority) <= 0]
         except (ValueError, TypeError):
             logger.warning("Invalid file priorities for torrent %s", torrent_hash)
-            return
+            return False
         if not selected and not unselected:
-            return
+            return True
 
-        for attempt in range(5):
+        for attempt in range(20):
             files = await self.get_torrent_files(torrent_hash)
-            if files and len(files) >= len(file_priorities):
-                if unselected and not await self.set_file_priority(torrent_hash, unselected, 0):
+            live_by_index = {item.index: item for item in files or []}
+            if all(index in live_by_index for index in range(len(file_priorities))):
+                mismatched_unselected = [index for index in unselected if live_by_index[index].priority > 0]
+                mismatched_selected = [index for index in selected if live_by_index[index].priority <= 0]
+                if not mismatched_unselected and not mismatched_selected:
+                    return True
+                if mismatched_unselected and not await self.set_file_priority(torrent_hash, mismatched_unselected, 0):
                     logger.warning("Failed to disable unselected files after adding torrent %s", torrent_hash)
-                    return
-                if selected and not await self.set_file_priority(torrent_hash, selected, 1):
+                    return False
+                if mismatched_selected and not await self.set_file_priority(torrent_hash, mismatched_selected, 1):
                     logger.warning("Failed to enable selected files after adding torrent %s", torrent_hash)
-                    return
-                return
-            await asyncio.sleep(0.2 * (attempt + 1))
+                    return False
+            await asyncio.sleep(min(0.2 * (attempt + 1), 1.0))
 
-        logger.warning("Torrent files were not ready for priority sync after adding torrent %s", torrent_hash)
+        logger.warning("Torrent file priorities did not converge after adding torrent %s", torrent_hash)
+        return False
 
     async def export_torrent(self, torrent_hash: str) -> bytes | None:
         await self.authenticate()
@@ -501,6 +534,7 @@ class QBittorrentClient(DownloadClient):
             is_paused=is_paused,
             is_stopped=is_paused,
             use_auto_torrent_management=False,
+            is_sequential_download=True,
         )
 
     def _qb_get_torrents(self, client, hashes):

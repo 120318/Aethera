@@ -48,6 +48,56 @@ def test_qbittorrent_add_torrent_file_passes_tags_to_client():
     assert result == "Ok."
     assert captured["tags"] == ["Aethera"]
     assert captured["use_auto_torrent_management"] is False
+    assert captured["is_sequential_download"] is True
+
+
+@pytest.mark.asyncio
+async def test_qbittorrent_add_with_file_selection_starts_only_after_priorities_are_synced(monkeypatch):
+    client = QBittorrentClient(QBittorrentConfig(id="qb-1", type="qbittorrent"))
+    add = Mock(return_value="Ok.")
+    priority_sync = AsyncMock(return_value=True)
+    start = AsyncMock(return_value=True)
+    monkeypatch.setattr(client, "authenticate", AsyncMock())
+    monkeypatch.setattr(client, "_get_client", AsyncMock(return_value=object()))
+    monkeypatch.setattr(client, "_qb_add_torrent_file", add)
+    monkeypatch.setattr(client, "_apply_file_priorities_after_add", priority_sync)
+    monkeypatch.setattr(client, "start_torrents", start)
+
+    result = await client.add_torrent_file(
+        torrent_data=b"torrent-data",
+        file_priorities=[1, 0],
+        torrent_hash="abc",
+    )
+
+    assert result.success is True
+    assert add.call_args.args[-1] is True
+    priority_sync.assert_awaited_once_with("abc", [1, 0])
+    start.assert_awaited_once_with(["abc"])
+
+
+@pytest.mark.asyncio
+async def test_qbittorrent_priority_sync_retries_until_priorities_are_verified(monkeypatch):
+    client = QBittorrentClient(QBittorrentConfig(id="qb-1", type="qbittorrent"))
+    files = [
+        [
+            DownloadFileInfo(index=0, name="e1.mkv", size=1, progress=0, priority=1),
+            DownloadFileInfo(index=1, name="extra.mkv", size=1, progress=0, priority=1),
+        ],
+        [
+            DownloadFileInfo(index=0, name="e1.mkv", size=1, progress=0, priority=1),
+            DownloadFileInfo(index=1, name="extra.mkv", size=1, progress=0, priority=0),
+        ],
+    ]
+    get_files = AsyncMock(side_effect=files)
+    set_priority = AsyncMock(return_value=True)
+    monkeypatch.setattr(client, "get_torrent_files", get_files)
+    monkeypatch.setattr(client, "set_file_priority", set_priority)
+    monkeypatch.setattr("app.clients.qbittorrent.asyncio.sleep", AsyncMock())
+
+    assert await client._apply_file_priorities_after_add("abc", [1, 0]) is True
+
+    set_priority.assert_awaited_once_with("abc", [1], 0)
+    assert get_files.await_count == 2
 
 
 @pytest.mark.asyncio
