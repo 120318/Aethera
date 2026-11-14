@@ -16,7 +16,9 @@ from app.services.domain.directory import directory_service
 from app.services.config.settings_service import settings_service
 from app.services.domain.resource.parser import resource_parser
 from app.services.domain.resource.torrent_metadata import build_torrent_payload
+from app.services.domain.resource.torrent_file_policy import library_download_file_indices
 from app.services.domain.resource.torrent_season import selected_files_have_season_conflict
+from app.services.domain.download.episode_selection import resolve_episode_selection
 from app.services.integration.torrent import torrent_service
 from app.services.platform.domain_lock_service import domain_lock_service
 from app.utils.library_paths import to_download_relative_path
@@ -315,6 +317,24 @@ class DownloadCreationService:
         logger.debug("Preparing download request: media=%s result_id=%s title=%s", req.media.media_id, req.result_id, search_result.title)
 
         payload = build_torrent_payload(await torrent_service.fetch_blob(search_result), desc=search_result.description)
+        if req.selected_episodes is not None:
+            selected_files, effective_episodes = resolve_episode_selection(
+                payload.metadata,
+                req.media.season_number,
+                req.selected_episodes,
+            )
+            if not selected_files:
+                raise InvalidRequestException("backendErrors.episodeSelectionInvalid")
+            req = req.model_copy(update={
+                "selected_files": selected_files,
+                "selected_episodes": effective_episodes,
+            })
+        if payload.metadata.files:
+            selected_files = library_download_file_indices(payload.metadata, req.selected_files)
+            if not selected_files:
+                raise InvalidRequestException("backendErrors.torrentHasNoLibraryFiles")
+            if req.selected_files or len(selected_files) != len(payload.metadata.files):
+                req = req.model_copy(update={"selected_files": selected_files})
         if selected_files_have_season_conflict(
             payload.metadata,
             season_number=req.media.season_number,

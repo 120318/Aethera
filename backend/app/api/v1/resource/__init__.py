@@ -1,6 +1,7 @@
 from app.api.v1.resource.delete import router as delete_router
 from app.api.v1.resource.delete_post import router as delete_post_router
 from app.api.v1.resource.download import router as download_router
+from app.api.v1.resource.episode_selection import router as episode_selection_router
 from app.api.v1.resource.list import router as list_router
 from app.api.v1.resource.pilot_episode import router as pilot_episode_router
 from app.api.v1.resource.search import router as search_router
@@ -20,3 +21,4 @@ router.include_router(transfer_router)
 router.include_router(delete_router)
 router.include_router(delete_post_router)
 router.include_router(download_router)
+router.include_router(episode_selection_router)

@@ -104,6 +104,9 @@ class CommandService:
         command = await self.repo.find_active_by_uniq_key(uniq_key)
         return attach_command_message_i18n(command) if command else None
 
+    async def list_addon_commands_for_event(self, event_id: str) -> list[CommandRecord]:
+        return await self.repo.list_addon_commands_by_event_id(event_id)
+
     async def create_command_with_uniq_key(
         self,
         body: CommandCreateRequest,
@@ -455,6 +458,7 @@ class CommandService:
             meta=AddonRunEventMeta(
                 addon_id=payload.addon_id,
                 operation_id=payload.operation_id,
+                trigger_event_id=payload.event_id,
                 result_count=result.result_count if result else 0,
                 failed_count=result.failed_count if result else 0,
                 error=command.error or "",

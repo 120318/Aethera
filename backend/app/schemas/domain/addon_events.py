@@ -10,6 +10,7 @@ from app.schemas.domain.download import TaskStatus
 class AddonRunEventMeta(BaseModel):
     addon_id: str
     operation_id: str
+    trigger_event_id: str | None = None
     result_count: int = 0
     failed_count: int = 0
     error: str = ""

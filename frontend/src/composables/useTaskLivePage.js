@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import { changeTaskDownloader, previewTaskDownloaderChange } from '@/api/resource'
+import { changeTaskDownloader, getTaskEpisodeSelection, previewTaskDownloaderChange, updateTaskEpisodeSelection } from '@/api/resource'
 import { getDirectoriesTabConfig, getDownloadersTabConfig } from '@/api/config'
 import { useResourceTags } from '@/composables/useResourceTags'
 import { useTaskOperations } from '@/composables/useTaskOperations'
@@ -135,6 +135,12 @@ export function useTaskLivePage(props, emit) {
     target_downloader_id: '',
     target_directory_id: '',
   })
+  const episodeSelectionVisible = ref(false)
+  const episodeSelectionLoading = ref(false)
+  const episodeSelectionSaving = ref(false)
+  const episodeSelectionTask = ref(null)
+  const episodeSelection = ref({ available_episodes: [], selected_episodes: [], locked_episodes: [], episode_count: null })
+  const selectedEpisodes = ref([])
   const selectedDownloaderChangeDirectory = computed(() => (
     downloaderChangeConfig.value.directories.find((item) => item.id === downloaderChangeForm.value.target_directory_id) || null
   ))
@@ -255,6 +261,42 @@ export function useTaskLivePage(props, emit) {
     }
   }
 
+  async function handleSelectEpisodes(task) {
+    const taskId = resolveTaskId(task)
+    if (!taskId) return
+    episodeSelectionTask.value = task
+    episodeSelectionVisible.value = true
+    episodeSelectionLoading.value = true
+    try {
+      const payload = await getTaskEpisodeSelection(taskId)
+      episodeSelection.value = payload
+      selectedEpisodes.value = [...(payload.selected_episodes || [])]
+    } catch {
+      episodeSelectionVisible.value = false
+    } finally {
+      episodeSelectionLoading.value = false
+    }
+  }
+
+  async function saveEpisodeSelection() {
+    const taskId = resolveTaskId(episodeSelectionTask.value)
+    if (!taskId || selectedEpisodes.value.length === 0) return
+    episodeSelectionSaving.value = true
+    try {
+      const payload = await updateTaskEpisodeSelection(taskId, selectedEpisodes.value)
+      episodeSelection.value = payload
+      selectedEpisodes.value = [...(payload.selected_episodes || [])]
+      episodeSelectionVisible.value = false
+      notification.success(t('episodeSelection.saved'))
+      emit('task-view-updated')
+      emit('task-updated', { id: taskId })
+    } catch {
+      // API errors are surfaced by the shared HTTP interceptor.
+    } finally {
+      episodeSelectionSaving.value = false
+    }
+  }
+
   async function previewDownloaderChange() {
     const taskId = resolveTaskId(downloaderChangeTask.value)
     const payload = buildDownloaderChangePayload()
@@ -367,6 +409,7 @@ export function useTaskLivePage(props, emit) {
     handleMediaServerSync,
     handleDanmuGenerate,
     handleChangeDownloader,
+    handleSelectEpisodes,
     isTaskPending,
   })
 
@@ -418,6 +461,12 @@ export function useTaskLivePage(props, emit) {
     previewDownloaderChange,
     executeDownloaderChange,
     resolveDownloaderChangePreviewMessage,
+    episodeSelectionVisible,
+    episodeSelectionLoading,
+    episodeSelectionSaving,
+    episodeSelection,
+    selectedEpisodes,
+    saveEpisodeSelection,
     TASK_ACTIONS_CONFIG,
     getStatusButtonSeverity,
     getTaskStatusTooltip,

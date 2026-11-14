@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from app.db.repositories.event_repository import EventRepository
 from app.db.repositories.event_dispatch_repository import EventDispatchRepository
 from app.schemas.exception.exceptions import EventConsumerExecutionException
-from app.schemas.persistence.event_dispatch import EventDispatchRecord, EventDispatchStatus
+from app.schemas.persistence.event_dispatch import EventDispatchDeferred, EventDispatchRecord, EventDispatchStatus
 from app.services.application.events.consumer import event_consumer_service
 
 logger = logging.getLogger("app.event_dispatch_service")
@@ -31,8 +31,10 @@ class EventDispatchService:
         ]
 
     async def enqueue_event(self, event_id: str, event_type: str) -> None:
-        for record in self.build_records(event_id, event_type):
-            await self.repo.insert(record)
+        await self.repo.insert_many(self.build_records(event_id, event_type))
+
+    async def list_event_dispatches(self, event_id: str) -> list[EventDispatchRecord]:
+        return await self.repo.list_by_event_id(event_id)
 
     async def reset_running_dispatches(self) -> None:
         records = await self.repo.find_running()
@@ -63,6 +65,12 @@ class EventDispatchService:
 
         try:
             await event_consumer_service.dispatch(event, record.consumer_name)
+        except EventDispatchDeferred as exc:
+            record.status = EventDispatchStatus.QUEUED
+            record.started_at = None
+            record.available_at = datetime.now() + timedelta(seconds=exc.delay_seconds)
+            await self.repo.update(record, self.repo.cond_id(record.id))
+            return True
         except EventConsumerExecutionException as exc:
             logger.exception("Event dispatch failed: dispatch_id=%s consumer=%s", record.id, record.consumer_name)
             await self._mark_dispatch_attempt_failed(record, str(exc))

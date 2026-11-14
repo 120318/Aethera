@@ -6,6 +6,14 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 
+class EventDispatchDeferred(Exception):
+    """Yield the queue without consuming a failure attempt."""
+
+    def __init__(self, delay_seconds: int = 5) -> None:
+        super().__init__("Waiting for related work to finish")
+        self.delay_seconds = delay_seconds
+
+
 class EventDispatchStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"

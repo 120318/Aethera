@@ -7,17 +7,21 @@ DEFAULT_NOTIFICATION_EVENT_PATTERNS = [
     "download.failed",
     "download.task.downloader_change_failed",
     "download.task.storage_change_failed",
-    "media.import.completed",
-    "media.import.failed",
+    "media.import.*",
     "library.file.missing",
     "indexer.site.unhealthy",
     "follow.*",
     "subscription.ended.*",
-    "media_server_sync.failed",
-    "danmu.generate.failed",
 ]
 
 NOTIFICATION_EVENT_PATTERNS = list(DEFAULT_NOTIFICATION_EVENT_PATTERNS)
+
+
+def normalize_notification_event_patterns(patterns: list[str]) -> list[str]:
+    return list(dict.fromkeys(
+        "media.import.*" if pattern.startswith(("media_server_sync.", "danmu.", "media.import.")) else pattern
+        for pattern in patterns
+    ))
 
 MANUAL_NOTIFICATION_SUPPRESSED_EVENTS = {
     EventType.DOWNLOAD_COMPLETED,

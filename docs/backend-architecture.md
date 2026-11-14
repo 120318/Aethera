@@ -147,6 +147,7 @@ Boundary rules:
 - Built-in addons are assembled explicitly in the repository and released with Aethera. Addon discovery does not imply remote code loading, third-party package installation, or addon-owned database migrations.
 - Long-running addon operations use the persisted `addon.run` command contract. The core command worker excludes that type and the addon worker consumes only that type, so addon work remains observable and cannot block ordinary download commands.
 - Event handlers enqueue addon commands; they do not perform network or sidecar work inline. Manual addon commands remain user actions and do not emit automatic notification events.
+- Automatic import notifications are grouped by the import event ID, never by task or media ID. The notification consumer reads the existing dispatch and addon-command state, yields its persisted queue record while related work is pending, and sends one terminal summary. Disabled work is excluded; skipped work is terminal; a bounded wait reports timeout without cancelling the work. The import chain never waits for notifications or addons. Scrape result events retain the originating import event ID as their correlation ID. Individual post-processing events remain available for audit but are not sent as separate notifications.
 - Frontend contributions are same-repository modules selected by stable descriptor IDs. The backend may advertise an action, but the UI renders it only when a built-in implementation exists; arbitrary remote frontend code is never loaded.
 
 ### 3.5 `platform/`

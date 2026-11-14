@@ -40,6 +40,7 @@ class TaskAction(str, Enum):
     TRANSFER = "transfer"
     MEDIA_SERVER_SYNC = "media_server_sync"
     CHANGE_DOWNLOADER = "change_downloader"
+    SELECT_EPISODES = "select_episodes"
     DELETE = "delete"
 
 

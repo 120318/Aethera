@@ -103,6 +103,7 @@ async def _run_subtitle_fill_operation(payload: AddonRunCommandRecordPayload) ->
     )
     return CommandResult(
         result_count=result.installed_count,
+        skipped_count=result.skipped_count,
         failed_count=result.failed_count,
     )
 
@@ -135,6 +136,7 @@ async def _run_danmu_operation(payload: AddonRunCommandRecordPayload) -> Command
         result = await danmu_application_service.handle_event(event)
         return CommandResult(
             result_count=result.completed_count,
+            skipped_count=result.skipped_count,
             failed_count=result.failed_count,
         )
     if payload.task_id:

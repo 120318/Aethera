@@ -336,7 +336,7 @@ export function useResourceSearch(options = {}) {
     })
   })
 
-  const addTorrent = async (resource, mInfo = {}, directoryId = null) => {
+  const addTorrent = async (resource, mInfo = {}, directoryId = null, selectedEpisodes = null) => {
     const resId = resource.resource?.id || resource.id
     const resultId = resource.resource?.result_id || resource.result_id || resId
     torrenting.value.add(resId)
@@ -359,9 +359,10 @@ export function useResourceSearch(options = {}) {
           media: mediaIdentity,
           result_id: resultId,
           directory_id: directoryId,
+          ...(Array.isArray(selectedEpisodes) ? { selected_episodes: selectedEpisodes } : {}),
         },
       }, {
-        dedupeKey: `resource:${resultId}:task.create`,
+        dedupeKey: `resource:${resultId}:episodes:${(selectedEpisodes || []).join(',')}:task.create`,
       })
       return command
     } catch (e) {

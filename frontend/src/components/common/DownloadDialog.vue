@@ -39,26 +39,43 @@
 
     <!-- Directory selection -->
     <div class="ui-dialog-section">
-      <label class="ui-dialog-item-title">{{ $t('downloadDialog.directory') }}</label>
-      <Select
-        v-model="selectedDirectoryId" :options="availableDirectories" :option-label="getDirectoryDisplayName"
-        option-value="id" :placeholder="$t('downloadDialog.selectDirectory')" class="w-full" @change="handleDirectoryChange"
-      >
-        <template #value="slotProps">
-          <div v-if="slotProps.value" class="flex items-center gap-item">
-            <i class="pi pi-folder text-primary"></i>
-            <span>{{ getDirectoryDisplayName(availableDirectories.find(d => d.id === slotProps.value)) }}</span>
-          </div>
-          <span v-else>{{ slotProps.placeholder }}</span>
-        </template>
-        <template #option="slotProps">
-          <div class="flex items-center gap-item">
-            <i class="pi pi-folder text-muted"></i>
-            <span>{{ getDirectoryDisplayName(slotProps.option) }}</span>
-            <AppTag v-if="slotProps.option.is_default" :label="$t('common.default')" tone="success" />
-          </div>
-        </template>
-      </Select>
+      <div :class="['grid gap-item', showEpisodeSelection ? 'grid-cols-2' : 'grid-cols-1']">
+        <div class="flex flex-col gap-item min-w-0">
+          <label class="ui-dialog-item-title">{{ $t('downloadDialog.directory') }}</label>
+          <Select
+            v-model="selectedDirectoryId" :options="availableDirectories" :option-label="getDirectoryDisplayName"
+            option-value="id" :placeholder="$t('downloadDialog.selectDirectory')" class="w-full" @change="handleDirectoryChange"
+          >
+            <template #value="slotProps">
+              <div v-if="slotProps.value" class="flex items-center gap-item">
+                <i class="pi pi-folder text-primary"></i>
+                <span>{{ getDirectoryDisplayName(availableDirectories.find(d => d.id === slotProps.value)) }}</span>
+              </div>
+              <span v-else>{{ slotProps.placeholder }}</span>
+            </template>
+            <template #option="slotProps">
+              <div class="flex items-center gap-item">
+                <i class="pi pi-folder text-muted"></i>
+                <span>{{ getDirectoryDisplayName(slotProps.option) }}</span>
+                <AppTag v-if="slotProps.option.is_default" :label="$t('common.default')" tone="success" />
+              </div>
+            </template>
+          </Select>
+        </div>
+        <EpisodeSelectionField
+          v-if="showEpisodeSelection"
+          v-model="selectedEpisodes"
+          :available-episodes="episodeSelection.available_episodes"
+          :label="$t('episodeSelection.label')"
+          class="min-w-0"
+        />
+      </div>
+      <p v-if="episodeSelectionLoading" class="text-caption text-muted m-none mt-item">
+        {{ $t('episodeSelection.loading') }}
+      </p>
+      <p v-else-if="episodeSelectionError" class="text-caption text-danger m-none mt-item">
+        {{ $t('episodeSelection.loadFailedHint') }}
+      </p>
 
       <div v-if="selectedDirectory" class="ui-dialog-subsection">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-y-item gap-x-block">
@@ -86,7 +103,7 @@
     <template #footer>
       <Button :label="$t('common.cancel')" severity="secondary" text @click="handleClose" />
       <Button
-        :label="$t('downloadDialog.downloadNow')" icon="pi pi-download" :disabled="!selectedDirectoryId" :loading="loading"
+        :label="$t('downloadDialog.downloadNow')" icon="pi pi-download" :disabled="downloadDisabled" :loading="loading"
         @click="handleDownload"
       />
     </template>
@@ -94,7 +111,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import Button from 'primevue/button'
 import Select from 'primevue/select'
 import { getDirectoriesTabConfig } from '@/api/config'
@@ -102,6 +119,9 @@ import { useNotificationStore } from '@/stores/notification'
 import { useResourceTags } from '@/composables/useResourceTags'
 import AppTag from '@/components/common/AppTag.vue'
 import ConfigDialog from '@/components/common/ConfigDialog.vue'
+import EpisodeSelectionField from '@/components/common/EpisodeSelectionField.vue'
+import { previewResourceEpisodeSelection } from '@/api/resource'
+import { buildMediaExecutionSnapshot } from '@/composables/mediaIdentitySupport'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
@@ -116,6 +136,10 @@ const props = defineProps({
   mediaInfo: {
     type: Object,
     default: null
+  },
+  seasonNumber: {
+    type: Number,
+    default: null
   }
 })
 
@@ -129,6 +153,11 @@ const availableDownloaders = ref([])
 const availableMediaServers = ref([])
 const selectedDirectoryId = ref(null)
 const selectedDirectory = ref(null)
+const episodeSelectionLoading = ref(false)
+const episodeSelectionError = ref(false)
+const episodeSelection = ref({ selectable: false, available_episodes: [], selected_episodes: [], episode_count: null })
+const selectedEpisodes = ref([])
+let episodeSelectionRequest = 0
 
 const { getSortedTags } = useResourceTags()
 
@@ -155,6 +184,51 @@ const mediaType = computed(() => {
   const [, type] = mediaId.split(':')
   return type === 'movie' || type === 'tv' ? type : null
 })
+
+const downloadDisabled = computed(() => (
+  !selectedDirectoryId.value
+  || episodeSelectionLoading.value
+  || episodeSelectionError.value
+  || (episodeSelection.value.selectable && selectedEpisodes.value.length === 0)
+))
+
+const showEpisodeSelection = computed(() => (
+  mediaType.value === 'tv'
+  && episodeSelection.value.selectable
+  && episodeSelection.value.available_episodes.length > 1
+))
+
+const resultId = computed(() => {
+  const resource = props.resourceData?.resource || props.resourceData || {}
+  return resource.result_id || props.resourceData?.result_id || resource.id || props.resourceData?.id || ''
+})
+
+async function fetchEpisodeSelection() {
+  const requestId = ++episodeSelectionRequest
+  episodeSelection.value = { selectable: false, available_episodes: [], selected_episodes: [], episode_count: null }
+  selectedEpisodes.value = []
+  episodeSelectionError.value = false
+  episodeSelectionLoading.value = false
+  if (mediaType.value !== 'tv' || !resultId.value) return
+  const media = buildMediaExecutionSnapshot({
+    ...props.mediaInfo,
+    season_number: props.seasonNumber || props.mediaInfo?.season_number,
+  })
+  if (!media) return
+  episodeSelectionLoading.value = true
+  try {
+    const preview = await previewResourceEpisodeSelection({ result_id: resultId.value, media })
+    if (requestId !== episodeSelectionRequest || !props.visible) return
+    episodeSelection.value = preview
+    selectedEpisodes.value = [...(preview.selected_episodes || [])]
+  } catch (error) {
+    if (requestId !== episodeSelectionRequest || !props.visible) return
+    episodeSelectionError.value = true
+    notificationStore.error(error?.response?.data?.message || t('episodeSelection.loadFailed'))
+  } finally {
+    if (requestId === episodeSelectionRequest) episodeSelectionLoading.value = false
+  }
+}
 
 const getDirectoryDisplayName = (dir) => {
   if (!dir) return ''
@@ -210,6 +284,7 @@ const handleDownload = async () => {
     // Parent component handles the actual download request.
     emit('download', {
       directory_id: selectedDirectoryId.value,
+      selected_episodes: episodeSelection.value.selectable ? selectedEpisodes.value : null,
       resource: props.resourceData // Pass back the original prop data
     })
 
@@ -225,19 +300,22 @@ const handleClose = () => {
   emit('update:visible', false)
 }
 
-watch(() => props.visible, (newVal) => {
-  if (newVal) {
-    fetchDirectories()
-  } else {
-    loading.value = false
-  }
-})
-
-onMounted(() => {
-  if (props.visible) {
-    fetchDirectories()
-  }
-})
+watch(
+  () => [props.visible, resultId.value, props.mediaInfo?.media_id, props.seasonNumber],
+  ([visible]) => {
+    if (visible) {
+      fetchDirectories()
+      fetchEpisodeSelection()
+    } else {
+      episodeSelectionRequest += 1
+      loading.value = false
+      episodeSelectionLoading.value = false
+      episodeSelection.value = { selectable: false, available_episodes: [], selected_episodes: [], episode_count: null }
+      selectedEpisodes.value = []
+    }
+  },
+  { immediate: true },
+)
 
 // Tag Helper Logic
 const resourceTags = computed(() => {

@@ -79,6 +79,7 @@ def emit_media_server_sync_events(
     trigger: str,
     task_id: str | None = None,
     error: str = "",
+    correlation_id: str | None = None,
 ) -> None:
     target_paths = _sync_event_paths(anchor_file, transfer_results)
     if not target_paths:
@@ -97,6 +98,7 @@ def emit_media_server_sync_events(
             task_id=task_id,
             actor=EventActor.system,
             source=EventSource.base,
+            correlation_id=correlation_id,
             entities=[
                 EventEntityRef(type="media", id=str(media.media_id)),
                 *[EventEntityRef(type="file", id=path) for path in target_paths],

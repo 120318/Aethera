@@ -15,13 +15,15 @@ from app.schemas.domain.action import (
     ActionTrigger,
 )
 from app.schemas.domain.action_meta import NotificationSendQueuedActionMeta
-from app.schemas.domain.event import Event
+from app.schemas.domain.addon_events import AddonRunEventMeta
+from app.schemas.domain.event import Event, EventType
 from app.schemas.domain.event_catalog import is_manual_notification_suppressed
 from app.services.application.events.consumer import event_matches_patterns
 from app.services.audit.action_catalog import ACTION_NAME_NOTIFICATION_SEND
 from app.services.audit.action_service import action_service
 from app.services.config.settings_service import settings_service
 from app.services.platform.notification_channel_service import notification_channel_service
+from app.services.application.workflows.notifications.import_summary import import_notification_summary_service
 
 logger = logging.getLogger("app.application.notifications")
 
@@ -29,9 +31,10 @@ logger = logging.getLogger("app.application.notifications")
 class NotificationApplicationService:
     async def handle_event(self, event: Event) -> None:
         channels = settings_service.get_addons_config().notifications.channels
-        for channel in channels:
-            if not self._should_send(channel, event):
-                continue
+        eligible_channels = [channel for channel in channels if self._should_send(channel, event)]
+        if eligible_channels and event.type == EventType.MEDIA_IMPORT_COMPLETED and event.meta:
+            event = await import_notification_summary_service.build_notification(event)
+        for channel in eligible_channels:
             action = self._create_notify_action(channel, event)
             action_service.mark_running(action.id, started_at=datetime.now())
             try:
@@ -48,6 +51,17 @@ class NotificationApplicationService:
             action_service.mark_completed(action.id)
 
     def _should_send(self, channel: NotificationChannelConfig, event: Event) -> bool:
+        # Generic execution receipts belong to audit history, not user notifications.
+        if event.type == EventType.ADDON_RUN_COMPLETED:
+            return False
+        if event.type in {
+            EventType.MEDIA_SERVER_SYNC_COMPLETED, EventType.MEDIA_SERVER_SYNC_FAILED,
+            EventType.DANMU_GENERATE_COMPLETED, EventType.DANMU_GENERATE_FAILED,
+        }:
+            return False
+        if event.type == EventType.ADDON_RUN_FAILED and event.meta:
+            if AddonRunEventMeta.model_validate_json(event.meta).trigger_event_id:
+                return False
         if not channel.enabled:
             return False
         if not notification_channel_service.supports(channel.type):

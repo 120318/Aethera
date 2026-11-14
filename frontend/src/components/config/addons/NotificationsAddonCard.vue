@@ -355,8 +355,7 @@ function eventPatternScopeOptions() {
     { value: 'download.*', label: t('settings.addons.notifications.eventScopeDownload') },
     { value: 'media.*', label: t('settings.addons.notifications.eventScopeMedia') },
     { value: 'subscription.ended.*', label: t('settings.addons.notifications.eventScopeSubscriptionEnded') },
-    { value: 'media_server_sync.*', label: t('settings.addons.notifications.eventScopeMediaServerSync') },
-    { value: 'danmu.*', label: t('settings.addons.notifications.eventScopeDanmu') },
+    { value: 'media.import.*', label: t('settings.addons.notifications.eventScopeImport') },
     { value: 'library.*', label: t('settings.addons.notifications.eventScopeLibrary') },
   ].map((option) => ({
     ...option,
@@ -366,8 +365,9 @@ function eventPatternScopeOptions() {
 
 function eventTypeOptions() {
   return Object.entries(EVENT_TYPE_MAP)
-    .filter(([domain]) => !['addon', 'notification'].includes(domain))
+    .filter(([domain]) => !['addon', 'notification', 'media_server_sync', 'danmu'].includes(domain))
     .flatMap(([domain, actions]) => Object.keys(actions).map((action) => `${domain}.${action}`))
+    .filter(value => !value.startsWith('media.import.'))
     .map((value) => ({
       label: `${t('settings.addons.notifications.eventTypeGroup')} · ${eventTypeLabel(value)}`,
       value,

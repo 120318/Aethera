@@ -131,6 +131,7 @@ class MediaServerSyncService:
                 media_server.id,
                 trigger="import",
                 task_id=event.task_id,
+                correlation_id=event.id,
             )
             media_server_sync_state.touch_state(media_info, media_server.id, time.time())
         except ValueError as exc:
@@ -142,6 +143,7 @@ class MediaServerSyncService:
                 media_server.id,
                 trigger="import",
                 task_id=event.task_id,
+                correlation_id=event.id,
                 error=str(exc),
             )
             logger.exception("Failed to sync media server metadata for %s: %s", media_info.title, exc)

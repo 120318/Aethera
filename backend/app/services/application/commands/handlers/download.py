@@ -100,9 +100,11 @@ class TaskCreateCommandHandler:
 
     def _build_uniq_key(self, request: DownloadTaskCreateInput) -> str:
         selected_files = ",".join(str(item) for item in sorted(request.selected_files or []))
+        selected_episodes = ",".join(str(item) for item in sorted(request.selected_episodes or []))
         return (
             f"command:{CommandType.TASK_CREATE.value}:{request.media.media_id}:"
-            f"result_id={request.result_id}:directory_id={request.directory_id}:selected_files={selected_files}"
+            f"result_id={request.result_id}:directory_id={request.directory_id}:"
+            f"selected_files={selected_files}:selected_episodes={selected_episodes}"
         )
 
     async def build(self, body: CommandCreateRequest) -> CommandRecord:
@@ -114,6 +116,7 @@ class TaskCreateCommandHandler:
             result_id=request.result_id,
             directory_id=request.directory_id,
             selected_files=request.selected_files,
+            selected_episodes=request.selected_episodes,
             resource_title=search_result.title if search_result else None,
         )
         return CommandRecord(
@@ -140,6 +143,7 @@ class TaskCreateCommandHandler:
                 result_id=payload.result_id,
                 directory_id=payload.directory_id,
                 selected_files=payload.selected_files,
+                selected_episodes=payload.selected_episodes,
             ),
             search_result,
             source=_task_source_from_initiator(command.initiator),

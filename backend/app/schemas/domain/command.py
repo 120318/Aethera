@@ -402,12 +402,14 @@ class CommandCreateRequest(BaseModel):
                 result_id=req.result_id,
                 directory_id=req.directory_id,
                 selected_files=list(req.selected_files or []),
+                selected_episodes=list(req.selected_episodes) if req.selected_episodes is not None else None,
             ),
         )
 
 
 class CommandResult(BaseModel):
     result_count: int = 0
+    skipped_count: int = 0
     task_id: str | None = None
     transferred_files_count: int = 0
     deleted_tasks_count: int = 0

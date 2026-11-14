@@ -180,7 +180,25 @@ class DownloadTaskCreateInput(BaseModel):
     media: MediaExecutionSnapshot
     directory_id: str
     selected_files: list[int] | None = None
+    selected_episodes: list[int] | None = None
     result_id: str
+
+
+class EpisodeSelectionPreviewRequest(BaseModel):
+    result_id: str
+    media: MediaExecutionSnapshot
+
+
+class EpisodeSelectionUpdateRequest(BaseModel):
+    selected_episodes: list[int] = Field(min_length=1)
+
+
+class EpisodeSelectionView(BaseModel):
+    selectable: bool = False
+    available_episodes: list[int] = Field(default_factory=list)
+    selected_episodes: list[int] = Field(default_factory=list)
+    locked_episodes: list[int] = Field(default_factory=list)
+    episode_count: int | None = None
 
 
 class TaskFieldPatch(BaseModel):

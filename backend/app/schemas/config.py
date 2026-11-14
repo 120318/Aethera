@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Annotated, Literal
 
 from app.schemas.domain.filter_config import FilterConfig
-from app.schemas.domain.event_catalog import DEFAULT_NOTIFICATION_EVENT_PATTERNS
+from app.schemas.domain.event_catalog import DEFAULT_NOTIFICATION_EVENT_PATTERNS, normalize_notification_event_patterns
 from app.schemas.domain.media_types import MediaType
 from app.schemas.domain.quality_profile import QualityProfile
 from app.schemas.integration.site_models import IndexerSiteSetting
@@ -402,6 +402,11 @@ class NotificationChannelConfig(BaseModel):
         default_factory=lambda: list(DEFAULT_NOTIFICATION_EVENT_PATTERNS)
     )
     levels: list[str] = Field(default_factory=list)
+
+    @field_validator("event_patterns")
+    @classmethod
+    def normalize_patterns(cls, value: list[str]) -> list[str]:
+        return normalize_notification_event_patterns(value)
 
 
 class TelegramNotificationChannelConfig(NotificationChannelConfig):

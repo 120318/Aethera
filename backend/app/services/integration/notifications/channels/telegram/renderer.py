@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.domain.event import Event, EventLevel, EventType
 from app.services.i18n.message_renderer import render_message
+from app.schemas.runtime.import_notification import ImportNotificationStep
 
 
 class TelegramImportedFileMeta(BaseModel):
@@ -19,6 +20,8 @@ class TelegramImportedFileMeta(BaseModel):
 
 
 class TelegramEventMeta(BaseModel):
+    addon_id: str = ""
+    operation_id: str = ""
     resource_title: str = ""
     torrent_name: str = ""
     file_path: str = ""
@@ -30,6 +33,7 @@ class TelegramEventMeta(BaseModel):
     error_params: Mapping[str, str] = Field(default_factory=lambda: {})
     selected_episodes: list[int] = Field(default_factory=list)
     imported_files: list[TelegramImportedFileMeta] = Field(default_factory=list)
+    postprocessing: list[ImportNotificationStep] = Field(default_factory=list)
     episode_number: int | None = None
     episode_numbers: list[int] = Field(default_factory=list)
 
@@ -147,6 +151,10 @@ def _media_line(event: Event, meta: TelegramEventMeta, locale: str) -> str:
 
 
 def _resource_line(event: Event, meta: TelegramEventMeta, locale: str) -> str:
+    if event.type == EventType.ADDON_RUN_FAILED:
+        addon = event.addon_name or event.addon_id or meta.addon_id
+        operation = meta.operation_id or _message_param(event, "operation_id")
+        return _text("telegram.fields.addon", locale, {"addon": " / ".join(part for part in (addon, operation) if part)})
     resource = (
         meta.torrent_name
         or meta.resource_title
@@ -206,6 +214,7 @@ def _detail_url(event: Event, public_base_url: str) -> str:
 
 def _title_key(event: Event) -> str:
     keys = {
+        EventType.ADDON_RUN_FAILED: "telegram.titles.addonRunFailed",
         EventType.DOWNLOAD_COMPLETED: "telegram.titles.downloadCompleted",
         EventType.DOWNLOAD_FAILED: "telegram.titles.downloadFailed",
         EventType.DOWNLOAD_TASK_DOWNLOADER_CHANGE_FAILED: "telegram.titles.downloadTaskDownloaderChangeFailed",
@@ -242,6 +251,13 @@ def format_telegram_event(event: Event, *, locale: str, public_base_url: str) ->
         escape_markdown(_media_line(event, meta, locale)),
         escape_markdown(_resource_line(event, meta, locale)),
         escape_markdown(_reason_line(event, meta, locale)),
+        *[
+            escape_markdown(_text("telegram.fields.importStep", locale, {
+                "name": _text(f"telegram.importSteps.{step.name}", locale),
+                "status": _text(f"telegram.importStatuses.{step.status.value}", locale),
+            }))
+            for step in meta.postprocessing
+        ],
         escape_markdown(_time_line(event.ts, locale)),
     ]
     detail_url = _detail_url(event, public_base_url)

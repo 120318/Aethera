@@ -2,6 +2,7 @@ import pytest
 
 from app.schemas.domain.event import Event, EventType
 from app.schemas.exception.exceptions import EventConsumerExecutionException
+from app.schemas.persistence.event_dispatch import EventDispatchDeferred
 from app.services.application.events.consumer import EventConsumerService
 
 
@@ -38,3 +39,15 @@ async def test_event_consumer_dispatch_wraps_handler_errors():
 
     with pytest.raises(EventConsumerExecutionException):
         await service.dispatch(Event(type=EventType.MEDIA_IMPORT_COMPLETED), "sample")
+
+
+@pytest.mark.asyncio
+async def test_event_consumer_defer_is_not_wrapped_as_failure():
+    service = EventConsumerService()
+
+    async def handler(event):
+        raise EventDispatchDeferred()
+
+    service.register(name="notifications", patterns=["*"], handler=handler)
+    with pytest.raises(EventDispatchDeferred):
+        await service.dispatch(Event(type=EventType.MEDIA_IMPORT_COMPLETED), "notifications")

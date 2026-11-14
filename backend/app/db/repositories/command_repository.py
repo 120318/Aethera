@@ -79,6 +79,16 @@ class CommandRepository:
             row = session.get(CommandORM, command_id)
             return self._to_model(row) if row else None
 
+    async def list_addon_commands_by_event_id(self, event_id: str) -> list[CommandRecord]:
+        with SessionLocal() as session:
+            rows = session.execute(
+                select(CommandORM)
+                .where(CommandORM.type == CommandType.ADDON_RUN.value)
+                .where(CommandORM.payload_json["event_id"].as_string() == event_id)
+                .order_by(CommandORM.created_at)
+            ).scalars().all()
+            return [self._to_model(row) for row in rows]
+
     async def insert(self, command: CommandRecord) -> str:
         with SessionLocal() as session:
             session.add(

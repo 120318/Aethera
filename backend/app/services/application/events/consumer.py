@@ -8,6 +8,7 @@ from app.schemas.exception.base import AppException
 from app.schemas.exception.exceptions import EventConsumerExecutionException
 from app.schemas.domain.action import ActionSource
 from app.schemas.domain.event import Event
+from app.schemas.persistence.event_dispatch import EventDispatchDeferred
 
 logger = logging.getLogger("app.event_consumer_service")
 
@@ -74,6 +75,8 @@ class EventConsumerService:
 
         try:
             await consumer.handler(event)
+        except EventDispatchDeferred:
+            raise
         except (AppException, RuntimeError, ValueError) as exc:
             raise EventConsumerExecutionException(consumer.name, str(exc)) from exc
         except Exception as exc:
