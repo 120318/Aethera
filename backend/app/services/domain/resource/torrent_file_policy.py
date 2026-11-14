@@ -14,6 +14,12 @@ NON_LIBRARY_EXTENSIONS = {
     ".zip", ".rar", ".7z", ".tar", ".gz",
 }
 
+SHARED_FONT_EXTENSIONS = {".ttf", ".otf", ".woff", ".woff2"}
+
+
+def is_shared_torrent_font(file_item: TorrentFileItem) -> bool:
+    return not file_item.get_episodes() and PurePosixPath(file_item.filename).suffix.lower() in SHARED_FONT_EXTENSIONS
+
 
 def is_library_download_file(metadata: TorrentMetadata, file_item: TorrentFileItem) -> bool:
     # Disc structures contain required non-video support files; keep them intact.

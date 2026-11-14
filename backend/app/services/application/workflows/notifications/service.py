@@ -31,10 +31,12 @@ logger = logging.getLogger("app.application.notifications")
 class NotificationApplicationService:
     async def handle_event(self, event: Event) -> None:
         channels = settings_service.get_addons_config().notifications.channels
-        eligible_channels = [channel for channel in channels if self._should_send(channel, event)]
+        eligible_channels = [channel for channel in channels if self._should_send(channel, event, apply_level_filter=False)]
         if eligible_channels and event.type == EventType.MEDIA_IMPORT_COMPLETED and event.meta:
             event = await import_notification_summary_service.build_notification(event)
         for channel in eligible_channels:
+            if channel.levels and event.level.value not in channel.levels:
+                continue
             action = self._create_notify_action(channel, event)
             action_service.mark_running(action.id, started_at=datetime.now())
             try:
@@ -50,7 +52,7 @@ class NotificationApplicationService:
                 continue
             action_service.mark_completed(action.id)
 
-    def _should_send(self, channel: NotificationChannelConfig, event: Event) -> bool:
+    def _should_send(self, channel: NotificationChannelConfig, event: Event, *, apply_level_filter: bool = True) -> bool:
         # Generic execution receipts belong to audit history, not user notifications.
         if event.type == EventType.ADDON_RUN_COMPLETED:
             return False
@@ -72,7 +74,7 @@ class NotificationApplicationService:
             return False
         if is_manual_notification_suppressed(event):
             return False
-        if channel.levels and event.level.value not in channel.levels:
+        if apply_level_filter and channel.levels and event.level.value not in channel.levels:
             return False
         return True
 

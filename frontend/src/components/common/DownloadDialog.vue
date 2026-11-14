@@ -120,8 +120,7 @@ import { useResourceTags } from '@/composables/useResourceTags'
 import AppTag from '@/components/common/AppTag.vue'
 import ConfigDialog from '@/components/common/ConfigDialog.vue'
 import EpisodeSelectionField from '@/components/common/EpisodeSelectionField.vue'
-import { previewResourceEpisodeSelection } from '@/api/resource'
-import { buildMediaExecutionSnapshot } from '@/composables/mediaIdentitySupport'
+import { useDownloadEpisodeSelection } from '@/composables/useDownloadEpisodeSelection'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
@@ -153,11 +152,10 @@ const availableDownloaders = ref([])
 const availableMediaServers = ref([])
 const selectedDirectoryId = ref(null)
 const selectedDirectory = ref(null)
-const episodeSelectionLoading = ref(false)
-const episodeSelectionError = ref(false)
-const episodeSelection = ref({ selectable: false, available_episodes: [], selected_episodes: [], episode_count: null })
-const selectedEpisodes = ref([])
-let episodeSelectionRequest = 0
+const {
+  mediaType, episodeSelection, selectedEpisodes,
+  episodeSelectionLoading, episodeSelectionError, showEpisodeSelection,
+} = useDownloadEpisodeSelection(props)
 
 const { getSortedTags } = useResourceTags()
 
@@ -175,60 +173,12 @@ const displayResource = computed(() => {
   }
 })
 
-const mediaType = computed(() => {
-  const explicitType = props.mediaInfo?.media_type || props.mediaInfo?.type
-  if (explicitType === 'movie' || explicitType === 'tv') {
-    return explicitType
-  }
-  const mediaId = String(props.mediaInfo?.media_id || props.mediaInfo?.id || '')
-  const [, type] = mediaId.split(':')
-  return type === 'movie' || type === 'tv' ? type : null
-})
-
 const downloadDisabled = computed(() => (
   !selectedDirectoryId.value
   || episodeSelectionLoading.value
   || episodeSelectionError.value
   || (episodeSelection.value.selectable && selectedEpisodes.value.length === 0)
 ))
-
-const showEpisodeSelection = computed(() => (
-  mediaType.value === 'tv'
-  && episodeSelection.value.selectable
-  && episodeSelection.value.available_episodes.length > 1
-))
-
-const resultId = computed(() => {
-  const resource = props.resourceData?.resource || props.resourceData || {}
-  return resource.result_id || props.resourceData?.result_id || resource.id || props.resourceData?.id || ''
-})
-
-async function fetchEpisodeSelection() {
-  const requestId = ++episodeSelectionRequest
-  episodeSelection.value = { selectable: false, available_episodes: [], selected_episodes: [], episode_count: null }
-  selectedEpisodes.value = []
-  episodeSelectionError.value = false
-  episodeSelectionLoading.value = false
-  if (mediaType.value !== 'tv' || !resultId.value) return
-  const media = buildMediaExecutionSnapshot({
-    ...props.mediaInfo,
-    season_number: props.seasonNumber || props.mediaInfo?.season_number,
-  })
-  if (!media) return
-  episodeSelectionLoading.value = true
-  try {
-    const preview = await previewResourceEpisodeSelection({ result_id: resultId.value, media })
-    if (requestId !== episodeSelectionRequest || !props.visible) return
-    episodeSelection.value = preview
-    selectedEpisodes.value = [...(preview.selected_episodes || [])]
-  } catch (error) {
-    if (requestId !== episodeSelectionRequest || !props.visible) return
-    episodeSelectionError.value = true
-    notificationStore.error(error?.response?.data?.message || t('episodeSelection.loadFailed'))
-  } finally {
-    if (requestId === episodeSelectionRequest) episodeSelectionLoading.value = false
-  }
-}
 
 const getDirectoryDisplayName = (dir) => {
   if (!dir) return ''
@@ -301,17 +251,12 @@ const handleClose = () => {
 }
 
 watch(
-  () => [props.visible, resultId.value, props.mediaInfo?.media_id, props.seasonNumber],
-  ([visible]) => {
+  () => props.visible,
+  (visible) => {
     if (visible) {
       fetchDirectories()
-      fetchEpisodeSelection()
     } else {
-      episodeSelectionRequest += 1
       loading.value = false
-      episodeSelectionLoading.value = false
-      episodeSelection.value = { selectable: false, available_episodes: [], selected_episodes: [], episode_count: null }
-      selectedEpisodes.value = []
     }
   },
   { immediate: true },

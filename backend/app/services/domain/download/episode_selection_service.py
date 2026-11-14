@@ -49,12 +49,30 @@ class TaskEpisodeSelectionService:
         return self._view(task)
 
     async def update(self, task_id: str, episodes: list[int]) -> EpisodeSelectionView:
+        snapshot = await self._repo.find_by_id(task_id)
+        if not snapshot:
+            raise ResourceNotFoundException("backendErrors.taskNotFound")
+        if not snapshot.downloader_id:
+            raise InvalidRequestException("backendErrors.episodeSelectionNotEditable")
+        async with domain_lock_service.acquire_download_create(snapshot.downloader_id, snapshot.torrent_hash) as acquired:
+            if not acquired:
+                raise DownloadException("backendErrors.taskBusy")
+            return await self._update_locked(
+                task_id, episodes, downloader_id=snapshot.downloader_id, torrent_hash=snapshot.torrent_hash,
+            )
+
+    async def _update_locked(
+        self, task_id: str, episodes: list[int], *, downloader_id: str, torrent_hash: str,
+    ) -> EpisodeSelectionView:
         async with domain_lock_service.acquire_task_op(task_id) as acquired:
             if not acquired:
                 raise DownloadException("backendErrors.taskBusy")
             task = await self._repo.find_by_id(task_id)
             if not task:
                 raise ResourceNotFoundException("backendErrors.taskNotFound")
+            # Re-read inside both locks; the pre-lock snapshot only determines the lock key.
+            if task.downloader_id != downloader_id or task.torrent_hash != torrent_hash:
+                raise DownloadException("backendErrors.taskBusy")
             if task.status not in EDITABLE_STATUSES or not task.metadata or not task.downloader_id:
                 raise InvalidRequestException("backendErrors.episodeSelectionNotEditable")
 

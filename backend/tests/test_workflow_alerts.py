@@ -124,6 +124,36 @@ def test_independent_postprocessing_channel_options_normalize_to_import():
     assert channel.event_patterns == ["media.import.*", "indexer.site.unhealthy"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_level,channel_level,expected_sends", [
+    (EventLevel.error, "error", 1),
+    (EventLevel.warning, "warning", 1),
+    (EventLevel.info, "error", 0),
+])
+async def test_import_level_filter_uses_postprocessing_summary(monkeypatch, summary_level, channel_level, expected_sends):
+    event = Event(type=EventType.MEDIA_IMPORT_COMPLETED, level=EventLevel.info, media=_media(), meta="{}")
+    channel = NotificationChannelConfig(type="fake", event_patterns=["media.import.*"], levels=[channel_level])
+    send = AsyncMock()
+    summary = AsyncMock(return_value=event.model_copy(update={"level": summary_level}))
+    module = "app.services.application.workflows.notifications.service"
+    monkeypatch.setattr(f"{module}.settings_service", SimpleNamespace(
+        get_addons_config=lambda: SimpleNamespace(notifications=SimpleNamespace(channels=[channel])),
+    ))
+    monkeypatch.setattr(f"{module}.notification_channel_service", SimpleNamespace(
+        supports=lambda _: True,
+        get_channel=lambda _: SimpleNamespace(is_configured=lambda _: True, send=send),
+    ))
+    monkeypatch.setattr(f"{module}.action_service", SimpleNamespace(
+        create_action=Mock(return_value=SimpleNamespace(id="notify-action")), mark_running=Mock(), mark_completed=Mock(),
+    ))
+    monkeypatch.setattr(f"{module}.import_notification_summary_service", SimpleNamespace(build_notification=summary))
+
+    await NotificationApplicationService().handle_event(event)
+
+    summary.assert_awaited_once_with(event)
+    assert send.await_count == expected_sends
+
+
 def test_manual_notification_suppression_keeps_task_change_failures_notifiable():
     assert is_manual_notification_suppressed(
         Event(id="event-1", type=EventType.DOWNLOAD_FAILED, level=EventLevel.error, actor=EventActor.user)

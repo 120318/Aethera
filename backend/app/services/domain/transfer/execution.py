@@ -18,6 +18,7 @@ from app.services.domain.directory import directory_service
 from app.services.domain.download import download_service
 from app.services.domain.library.service import library_service
 from app.services.domain.library.target_path_policy import library_target_path_policy
+from app.services.domain.resource.torrent_file_policy import is_shared_torrent_font
 from app.utils.fs_utils import fs_provider
 from app.utils.library_paths import build_download_path, build_library_file_path, file_name_looks_like_media_file
 
@@ -390,13 +391,18 @@ def build_transfer_plan(task: TaskData, execution_context: TransferExecutionCont
     transfer_results: list[TransferFileResult] = []
     inherit_context_episodes = may_inherit_context_episodes(task)
     for index, original_file_item in iter_selected_files(task.metadata.files, execution_context.selected_indices):
+        shared_font = is_shared_torrent_font(original_file_item)
         file_item = with_context_resource_attrs(
             task,
             original_file_item,
-            inherit_context_episodes=inherit_context_episodes,
+            inherit_context_episodes=inherit_context_episodes and not shared_font,
         )
         source_path = generate_source_path(task, file_item, execution_context.source_base_path)
-        destination_path = library_target_path_policy.build_destination_path(
+        build_destination = (
+            library_target_path_policy.build_destination_dir
+            if shared_font else library_target_path_policy.build_destination_path
+        )
+        destination_path = build_destination(
             destination_base_path=execution_context.destination_base_path,
             template_config=execution_context.template_config,
             title=execution_context.title,
@@ -404,6 +410,8 @@ def build_transfer_plan(task: TaskData, execution_context: TransferExecutionCont
             season_number=execution_context.season_number,
             file_item=file_item,
         )
+        if shared_font:
+            destination_path /= Path(original_file_item.filename.replace("\\", "/")).name
         episode_numbers = library_target_path_policy.extract_episode_numbers(file_item, season_number=execution_context.season_number)
         transfer_results.append(
             TransferFileResult(

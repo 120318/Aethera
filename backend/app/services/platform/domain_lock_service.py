@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
+import hashlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from app.core.storage_paths import get_cache_dir
 from app.schemas.media_id import MediaID
 
 
 class DomainLockService:
-    def __init__(self) -> None:
+    def __init__(self, download_lock_root: Path | None = None) -> None:
         self._registry_lock = asyncio.Lock()
         self._active_keys: set[str] = set()
+        self._download_lock_root = download_lock_root
 
     @asynccontextmanager
     async def acquire_media_acquire(self, media_id: MediaID) -> AsyncIterator[bool]:
@@ -43,8 +48,23 @@ class DomainLockService:
 
     @asynccontextmanager
     async def acquire_download_create(self, downloader_id: str, torrent_hash: str) -> AsyncIterator[bool]:
-        async with self._acquire(f"download-create:{downloader_id}:{torrent_hash.lower()}") as acquired:
-            yield acquired
+        # API selection edits and command-worker creates share the downloader state.
+        # A file lock, unlike the local registry, also excludes other processes and
+        # is released by the OS if the worker exits; no lease timeout can expire mid-write.
+        root = self._download_lock_root or get_cache_dir() / "download-locks"
+        root.mkdir(parents=True, exist_ok=True)
+        key = f"download-create:{downloader_id}:{torrent_hash.lower()}"
+        lock_name = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        with (root / f"{lock_name}.lock").open("a+b") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     @asynccontextmanager
     async def acquire_scheduler_job(self, job_name: str) -> AsyncIterator[bool]:

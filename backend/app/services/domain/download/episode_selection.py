@@ -4,7 +4,7 @@ from collections.abc import Iterable
 
 from app.schemas.domain.torrent import TorrentMetadata
 from app.services.domain.resource.torrent_season import torrent_file_matches_season
-from app.services.domain.resource.torrent_file_policy import is_library_download_file
+from app.services.domain.resource.torrent_file_policy import is_library_download_file, is_shared_torrent_font
 
 
 def available_episodes(metadata: TorrentMetadata, season_number: int | None) -> list[int]:
@@ -24,9 +24,11 @@ def selected_file_indices(
     return sorted(
         file_item.index
         for file_item in metadata.files
-        if torrent_file_matches_season(metadata, file_item, season_number)
-        and is_library_download_file(metadata, file_item)
-        and file_item.get_episodes() & requested
+        if is_library_download_file(metadata, file_item)
+        and (
+            (torrent_file_matches_season(metadata, file_item, season_number) and file_item.get_episodes() & requested)
+            or is_shared_torrent_font(file_item)
+        )
     )
 
 

@@ -99,6 +99,7 @@ async def test_import_summary_has_bounded_wait(dependencies):
     event.ts = datetime.now() - timedelta(minutes=11)
     notification = await import_summary.import_notification_summary_service.build_notification(event)
     assert ImportNotificationMeta.model_validate_json(notification.meta).postprocessing[0].status.value == "timed_out"
+    assert notification.level.value == "warning"
 
 
 @pytest.mark.asyncio
@@ -107,6 +108,7 @@ async def test_import_summary_distinguishes_partial_success(dependencies):
     commands[0].result = CommandResult(result_count=1, failed_count=1)
     notification = await import_summary.import_notification_summary_service.build_notification(_event())
     assert ImportNotificationMeta.model_validate_json(notification.meta).postprocessing[0].status.value == "partial"
+    assert notification.level.value == "error"
 
 
 @pytest.mark.asyncio

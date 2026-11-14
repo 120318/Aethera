@@ -583,6 +583,33 @@ def test_build_transfer_plan_uses_context_episode_parsed_from_description(monkey
     assert results[0].destination_path == "/library/爱情没有神话 (2026)/Season 01/爱情没有神话 - S01E11.mkv"
 
 
+def test_shared_fonts_keep_original_names_and_no_episode_coverage(monkeypatch):
+    monkeypatch.setattr("app.services.domain.transfer.execution.fs_provider.exists", lambda path: True)
+    task = _task(status=TaskStatus.FINISHED)
+    task.context.parsed_attributes = ResourceAttributes(seasons=[1], episodes=[11])
+    task.metadata.files.extend([
+        TorrentFileItem(index=1, filename="fonts/First.ttf", size=10),
+        TorrentFileItem(index=2, filename="fonts/Second.ttf", size=10),
+    ])
+    context = TransferExecutionContext(
+        source_base_path=Path("/downloads"),
+        destination_base_path=Path("/library"),
+        template_config=Template(
+            dir_template="{title} ({year})/Season {season:00}",
+            file_template="{title} - S{season:00}E{episode:00}",
+        ),
+        title="Test Show", year=2024, season_number=1,
+    )
+
+    results = build_transfer_plan(task, context)
+
+    assert [result.destination_path for result in results[1:]] == [
+        "/library/Test Show (2024)/Season 01/First.ttf",
+        "/library/Test Show (2024)/Season 01/Second.ttf",
+    ]
+    assert all(not result.episode_numbers for result in results[1:])
+
+
 def test_multi_video_files_do_not_inherit_package_episode_range(monkeypatch):
     task = _task(status=TaskStatus.FINISHED)
     task.context.parsed_attributes = ResourceAttributes(seasons=[1], episodes=[1, 2])

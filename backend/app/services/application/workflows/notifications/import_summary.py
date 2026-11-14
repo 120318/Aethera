@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from app.schemas.domain.addon_events import MediaImportCompletedEventMeta
 from app.schemas.domain.command import CommandRecord, CommandStatus
-from app.schemas.domain.event import Event, EventType
+from app.schemas.domain.event import Event, EventLevel, EventType
 from app.schemas.persistence.event_dispatch import EventDispatchDeferred, EventDispatchRecord, EventDispatchStatus
 from app.schemas.runtime.import_notification import ImportNotificationMeta, ImportNotificationStep, ImportStepStatus
 from app.services.application.commands.service import command_service
@@ -48,7 +48,12 @@ class ImportNotificationSummaryService:
                 steps.append(self._addon_step(name, dispatch, addon_commands, timed_out))
 
         summary = ImportNotificationMeta(**meta.model_dump(), postprocessing=steps)
-        return event.model_copy(update={"meta": summary.model_dump_json()})
+        level = event.level
+        if any(step.status in {ImportStepStatus.FAILED, ImportStepStatus.PARTIAL} for step in steps):
+            level = EventLevel.error
+        elif level != EventLevel.error and any(step.status == ImportStepStatus.TIMED_OUT for step in steps):
+            level = EventLevel.warning
+        return event.model_copy(update={"meta": summary.model_dump_json(), "level": level})
 
     @staticmethod
     def _pending_step(name: str, timed_out: bool) -> ImportNotificationStep:

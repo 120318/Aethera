@@ -66,6 +66,15 @@ def test_episode_selection_maps_multi_episode_files_without_exposing_unmapped_fi
     assert episodes_for_file_indices(metadata, [3]) == []
 
 
+def test_episode_selection_keeps_shared_fonts_without_inventing_episode_coverage():
+    metadata = _metadata()
+    metadata.files.append(TorrentFileItem(
+        index=4, filename="fonts/font.ttf", size=10, attrs=ResourceAttributes(episodes=[]),
+    ))
+    assert resolve_episode_selection(metadata, 1, [2]) == ([1, 4], [2, 3])
+    assert available_episodes(metadata, 1) == [1, 2, 3, 4]
+
+
 def test_task_create_command_preserves_episode_selection():
     task = _task(selected_files=[])
     request = DownloadTaskCreateInput(
@@ -154,3 +163,38 @@ async def test_task_episode_selection_preserves_files_selected_by_sibling_task()
     assert client.calls == [([0, 3], 0)]
     assert repo.updated is not None
     assert repo.updated.context.selected_files == [2]
+
+
+@pytest.mark.asyncio
+async def test_selection_update_cannot_race_torrent_creation_or_expansion():
+    from app.services.platform.domain_lock_service import domain_lock_service
+    from app.schemas.exception.exceptions import DownloadException
+
+    task = _task(selected_files=[0, 1, 2])
+    repo = _Repo(task)
+    client = _Client()
+    service = TaskEpisodeSelectionService(repo, _ClientFactory(client))
+    async with domain_lock_service.acquire_download_create(task.downloader_id, task.torrent_hash) as acquired:
+        assert acquired
+        with pytest.raises(DownloadException) as exc:
+            await service.update(task.id, [4])
+        assert exc.value.message_key == "backendErrors.taskBusy"
+    assert repo.updated is None
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_selection_update_holds_torrent_lock_during_priority_changes():
+    from app.services.platform.domain_lock_service import domain_lock_service
+
+    class LockCheckingClient(_Client):
+        async def get_torrent_files(self, torrent_hash):
+            async with domain_lock_service.acquire_download_create("qb", torrent_hash) as acquired:
+                assert not acquired
+            return await super().get_torrent_files(torrent_hash)
+
+    task = _task(selected_files=[0, 1, 2])
+    service = TaskEpisodeSelectionService(_Repo(task), _ClientFactory(LockCheckingClient()))
+    await service.update(task.id, [4])
+    async with domain_lock_service.acquire_download_create(task.downloader_id, task.torrent_hash) as acquired:
+        assert acquired
