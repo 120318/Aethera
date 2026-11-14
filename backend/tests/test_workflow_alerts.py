@@ -86,6 +86,19 @@ def test_import_postprocessing_results_do_not_send_separate_notifications(monkey
 
 
 @pytest.mark.parametrize("event_type", [EventType.MEDIA_SERVER_SYNC_FAILED, EventType.DANMU_GENERATE_FAILED])
+def test_manual_import_postprocessing_does_not_bypass_manual_notification_policy(monkeypatch, event_type):
+    manual_import = Event(type=EventType.MEDIA_IMPORT_COMPLETED, actor=EventActor.user)
+    monkeypatch.setattr(
+        "app.services.application.workflows.notifications.service.event_service",
+        SimpleNamespace(get_event=lambda _: manual_import),
+    )
+    channel = NotificationChannelConfig(type="fake", event_patterns=["*"], levels=["error"])
+    assert not NotificationApplicationService()._should_send(
+        channel, Event(type=event_type, level=EventLevel.error, correlation_id=manual_import.id),
+    )
+
+
+@pytest.mark.parametrize("event_type", [EventType.MEDIA_SERVER_SYNC_FAILED, EventType.DANMU_GENERATE_FAILED])
 @pytest.mark.parametrize("parent_type", [None, EventType.FOLLOW_RELEASED])
 @pytest.mark.asyncio
 async def test_independent_postprocessing_failures_remain_notifiable(monkeypatch, event_type, parent_type):

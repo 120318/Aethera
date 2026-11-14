@@ -89,6 +89,29 @@ def test_task_create_command_preserves_episode_selection():
     assert command.payload.selected_episodes == [2, 3]
 
 
+def test_multi_season_selection_keeps_only_target_and_unscoped_fonts():
+    from app.services.domain.resource.torrent_season import selected_files_have_season_conflict
+
+    metadata = TorrentMetadata(
+        hash="multi-season", name="Seasons 1-2", size=100,
+        attrs=ResourceAttributes(seasons=[1, 2], episodes=[]),
+        files=[
+            TorrentFileItem(index=0, filename="S01/S01E01.mkv", size=30, attrs=ResourceAttributes(seasons=[1], episodes=[1])),
+            TorrentFileItem(index=1, filename="S02/S02E01.mkv", size=30, attrs=ResourceAttributes(seasons=[2], episodes=[1])),
+            TorrentFileItem(index=2, filename="S01/fonts/first.ttf", size=10, attrs=ResourceAttributes(seasons=[1], episodes=[])),
+            TorrentFileItem(index=3, filename="S02/fonts/second.ttf", size=10, attrs=ResourceAttributes(seasons=[2], episodes=[])),
+            TorrentFileItem(index=4, filename="fonts/shared.ttf", size=10, attrs=ResourceAttributes(seasons=[], episodes=[])),
+        ],
+    )
+
+    indices, episodes = resolve_episode_selection(metadata, 1, [1])
+
+    assert indices == [0, 2, 4]
+    assert episodes == [1]
+    assert not selected_files_have_season_conflict(metadata, season_number=1, selected_files=indices)
+    assert resolve_episode_selection(metadata, 2, [1]) == ([1, 3, 4], [1])
+
+
 class _Repo:
     def __init__(self, task: TaskData, siblings: list[TaskData] | None = None) -> None:
         self.task = task

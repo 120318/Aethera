@@ -85,6 +85,8 @@ class NotificationApplicationService:
         if not event_id:
             return False
         parent = event_service.get_event(event_id)
+        # Manual imports remain covered: their entire user-triggered chain is
+        # intentionally silent, including automatically executed postprocessing.
         return parent is not None and parent.type == EventType.MEDIA_IMPORT_COMPLETED
 
     def _create_notify_action(self, channel: NotificationChannelConfig, event: Event) -> ActionRecord:

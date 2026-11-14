@@ -25,10 +25,8 @@ def selected_file_indices(
         file_item.index
         for file_item in metadata.files
         if is_library_download_file(metadata, file_item)
-        and (
-            (torrent_file_matches_season(metadata, file_item, season_number) and file_item.get_episodes() & requested)
-            or is_shared_torrent_font(file_item)
-        )
+        and torrent_file_matches_season(metadata, file_item, season_number)
+        and (file_item.get_episodes() & requested or is_shared_torrent_font(file_item))
     )
 
 
