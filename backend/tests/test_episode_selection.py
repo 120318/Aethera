@@ -198,3 +198,33 @@ async def test_selection_update_holds_torrent_lock_during_priority_changes():
     await service.update(task.id, [4])
     async with domain_lock_service.acquire_download_create(task.downloader_id, task.torrent_hash) as acquired:
         assert acquired
+
+
+@pytest.mark.asyncio
+async def test_selection_edit_and_episode_import_share_task_lock(monkeypatch, tmp_path):
+    from app.services.platform.domain_lock_service import DomainLockService
+    from app.services.domain.transfer.service import TransferService
+    from app.schemas.exception.exceptions import DownloadException, TransferException
+
+    api_locks = DomainLockService(lock_root=tmp_path)
+    worker_locks = DomainLockService(lock_root=tmp_path)
+    monkeypatch.setattr("app.services.domain.download.episode_selection_service.domain_lock_service", api_locks)
+    monkeypatch.setattr("app.services.domain.transfer.service.domain_lock_service", worker_locks)
+    task = _task(selected_files=[0, 1, 2])
+    repo = _Repo(task)
+    client = _Client()
+    service = TaskEpisodeSelectionService(repo, _ClientFactory(client))
+
+    async with worker_locks.acquire_task_op(task.id) as acquired:
+        assert acquired
+        with pytest.raises(DownloadException) as exc:
+            await service.update(task.id, [4])
+        assert exc.value.message_key == "backendErrors.taskBusy"
+    assert repo.updated is None
+    assert not client.calls
+
+    async with api_locks.acquire_task_op(task.id) as acquired:
+        assert acquired
+        with pytest.raises(TransferException) as exc:
+            await TransferService().import_episode_batch(task.id, [0])
+        assert exc.value.message_key == "backendErrors.taskBusy"
