@@ -8,10 +8,11 @@ from collections.abc import Mapping
 from app.core.action_context import get_current_action_id
 from app.db.repositories.event_repository import EventRepository
 from app.db.sql.serialization import to_jsonable
-from app.schemas.domain.action import ActionStatus
+from app.schemas.domain.action import ActionActor, ActionStatus
 from app.schemas.media_id import MediaID
 from app.schemas.domain.event import (
     Event,
+    EventActor,
     EventCenterBellState,
     EventCenterResponse,
     EventCenterSummary,
@@ -61,6 +62,13 @@ class EventService:
         self.repo = EventRepository()
         self.max_events = 20000
         self.max_age_days = 30
+
+    def actor_for_current_action(self) -> EventActor:
+        action_id = get_current_action_id()
+        action = action_service.get_action(action_id) if action_id else None
+        # Execution origin determines whether a result was manual; the original
+        # task may have been added by a user long before a scheduled import.
+        return EventActor.user if action and action.actor == ActionActor.user else EventActor.system
 
     def is_business_event(self, event_type: str) -> bool:
         return not any(event_type.startswith(prefix) for prefix in NON_BUSINESS_EVENT_PREFIXES)

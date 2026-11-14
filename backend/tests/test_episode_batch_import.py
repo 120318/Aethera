@@ -11,7 +11,11 @@ import pytest
 os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
 from app.schemas.config import Template
-from app.schemas.domain.download import DownloadFileInfo, TaskContext, TaskData, TaskStatus, TransferFileResult
+from app.core.action_context import action_context
+from app.schemas.domain.action import ActionActor, ActionKind, ActionRecord, ActionStatus
+from app.schemas.domain.download import DownloadFileInfo, TaskContext, TaskData, TaskSource, TaskStatus, TransferFileResult
+from app.schemas.domain.event import EventActor
+from app.schemas.domain.event_catalog import is_manual_notification_suppressed
 from app.schemas.domain.import_upgrade import LibraryReplacementPlan
 from app.schemas.domain.library import LibraryEpisode, LibraryFile
 from app.schemas.domain.resource_attributes import ResourceAttributes
@@ -211,6 +215,34 @@ def test_completed_event_contains_one_batch_with_both_episodes():
 
     assert event is not None
     assert [item["episode_number"] for item in json.loads(event.meta)["imported_files"]] == [1, 2]
+
+
+@pytest.mark.parametrize("task_source", [TaskSource.MANUAL, TaskSource.SYSTEM])
+@pytest.mark.parametrize("action_actor", [ActionActor.user, ActionActor.system])
+def test_import_notification_policy_follows_execution_not_task_creation(monkeypatch, task_source, action_actor):
+    task = _task()
+    task.context.source = task_source
+    action = ActionRecord(
+        kind=ActionKind.command,
+        action_name="task.episode_batch_import",
+        status=ActionStatus.running,
+        actor=action_actor,
+    )
+    monkeypatch.setattr("app.services.audit.event_service.action_service.get_action", lambda _action_id: action)
+    results = [TransferFileResult(
+        source_path="/downloads/e1.mkv",
+        destination_path="/library/Show - S01E01.mkv",
+        file_item=task.metadata.files[0],
+        file_index=task.metadata.files[0].index,
+        episode_number=1,
+    )]
+
+    with action_context(action.id):
+        event = build_media_import_completed_event(task, results)
+
+    assert event is not None
+    assert event.actor == (EventActor.user if action_actor == ActionActor.user else EventActor.system)
+    assert is_manual_notification_suppressed(event) == (action_actor == ActionActor.user)
 
 
 @pytest.mark.asyncio

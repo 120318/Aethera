@@ -14,7 +14,6 @@ from app.schemas.exception.base import AppException
 from app.schemas.exception.exceptions import TransferException
 from app.services.audit.event_service import event_service
 from app.services.domain.download import download_service
-from app.services.domain.download.task_runtime_service import event_actor_for_task
 from app.services.domain.library.operation_lock import library_file_operation_coordinator
 from app.services.domain.library.service import library_service
 from app.services.domain.media import media_service
@@ -243,7 +242,7 @@ def build_media_import_completed_event(
             type=EventTypes.MEDIA_IMPORT_COMPLETED,
             media=media,
             task_id=task.id,
-            actor=event_actor_for_task(task),
+            actor=event_service.actor_for_current_action(),
             source=EventSource.base,
             entities=_task_import_entities(task),
         ),
@@ -277,7 +276,7 @@ async def emit_media_import_failed(task: TaskData, error_key: str, error_params:
                 level=EventLevel.error,
                 media=media,
                 task_id=task.id,
-                actor=event_actor_for_task(task),
+                actor=event_service.actor_for_current_action(),
                 source=EventSource.base,
                 entities=_task_import_entities(task),
             ),
