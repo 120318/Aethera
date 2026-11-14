@@ -12,6 +12,7 @@ def emit_generation_summary(
     outcomes: list[DanmuGenerationOutcome],
     *,
     actor: EventActor = EventActor.system,
+    correlation_id: str | None = None,
 ) -> None:
     for status, event_type in (
         (ActionStatus.completed, EventType.DANMU_GENERATE_COMPLETED),
@@ -36,4 +37,5 @@ def emit_generation_summary(
             video_paths=[Path(outcome.video_path) for outcome in matching],
             episode_numbers=[outcome.episode_number for outcome in matching if outcome.episode_number],
             actor=actor,
+            correlation_id=correlation_id,
         )

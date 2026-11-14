@@ -18,10 +18,8 @@ NOTIFICATION_EVENT_PATTERNS = list(DEFAULT_NOTIFICATION_EVENT_PATTERNS)
 
 
 def normalize_notification_event_patterns(patterns: list[str]) -> list[str]:
-    return list(dict.fromkeys(
-        "media.import.*" if pattern.startswith(("media_server_sync.", "danmu.", "media.import.")) else pattern
-        for pattern in patterns
-    ))
+    # Deduplicate without changing custom subscriptions to unrelated event types.
+    return list(dict.fromkeys(patterns))
 
 MANUAL_NOTIFICATION_SUPPRESSED_EVENTS = {
     EventType.DOWNLOAD_COMPLETED,

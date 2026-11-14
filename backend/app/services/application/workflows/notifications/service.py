@@ -21,6 +21,7 @@ from app.schemas.domain.event_catalog import is_manual_notification_suppressed
 from app.services.application.events.consumer import event_matches_patterns
 from app.services.audit.action_catalog import ACTION_NAME_NOTIFICATION_SEND
 from app.services.audit.action_service import action_service
+from app.services.audit.event_service import event_service
 from app.services.config.settings_service import settings_service
 from app.services.platform.notification_channel_service import notification_channel_service
 from app.services.application.workflows.notifications.import_summary import import_notification_summary_service
@@ -60,9 +61,10 @@ class NotificationApplicationService:
             EventType.MEDIA_SERVER_SYNC_COMPLETED, EventType.MEDIA_SERVER_SYNC_FAILED,
             EventType.DANMU_GENERATE_COMPLETED, EventType.DANMU_GENERATE_FAILED,
         }:
-            return False
+            if self._is_import_event(event.correlation_id):
+                return False
         if event.type == EventType.ADDON_RUN_FAILED and event.meta:
-            if AddonRunEventMeta.model_validate_json(event.meta).trigger_event_id:
+            if self._is_import_event(AddonRunEventMeta.model_validate_json(event.meta).trigger_event_id):
                 return False
         if not channel.enabled:
             return False
@@ -77,6 +79,13 @@ class NotificationApplicationService:
         if apply_level_filter and channel.levels and event.level.value not in channel.levels:
             return False
         return True
+
+    @staticmethod
+    def _is_import_event(event_id: str | None) -> bool:
+        if not event_id:
+            return False
+        parent = event_service.get_event(event_id)
+        return parent is not None and parent.type == EventType.MEDIA_IMPORT_COMPLETED
 
     def _create_notify_action(self, channel: NotificationChannelConfig, event: Event) -> ActionRecord:
         return action_service.create_action(

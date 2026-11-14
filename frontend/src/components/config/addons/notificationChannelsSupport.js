@@ -10,11 +10,7 @@ export const DEFAULT_NOTIFICATION_EVENT_PATTERNS = [
 ]
 
 export function normalizeNotificationEventPatterns(patterns) {
-  return [...new Set((patterns || []).map(pattern => (
-    ['media_server_sync.', 'danmu.', 'media.import.'].some(prefix => pattern.startsWith(prefix))
-      ? 'media.import.*'
-      : pattern
-  )))]
+  return [...new Set(patterns || [])]
 }
 
 export function createNotificationChannelId() {

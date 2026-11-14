@@ -129,7 +129,7 @@ class DanmuApplicationService:
                     library_file=library_file,
                 )
             )
-        emit_generation_summary(media, outcomes)
+        emit_generation_summary(media, outcomes, correlation_id=event.id)
         return DanmuGenerationBatchResult.from_outcomes(outcomes)
 
     async def run_backfill(self) -> None:
@@ -431,6 +431,7 @@ class DanmuApplicationService:
                 event_task_id,
                 error="cancelled",
                 actor=EventActor.user if trigger == ActionTrigger.manual else EventActor.system,
+                correlation_id=event.id if event else None,
             )
             raise
         except Exception as exc:

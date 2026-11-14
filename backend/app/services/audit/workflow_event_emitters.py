@@ -36,6 +36,7 @@ def emit_danmu_generate_event(
     video_paths: list[Path] | None = None,
     episode_numbers: list[int] | None = None,
     actor: EventActor = EventActor.system,
+    correlation_id: str | None = None,
 ) -> None:
     resolved_video_paths = video_paths or [video_path]
     resolved_episode_numbers = sorted(set(episode_numbers or ([episode_number] if episode_number else [])))
@@ -48,6 +49,7 @@ def emit_danmu_generate_event(
             actor=actor,
             source=EventSource.addon,
             action_id=action_id,
+            correlation_id=correlation_id,
             entities=[
                 EventEntityRef(type="media", id=str(media.media_id)),
                 *[EventEntityRef(type="file", id=str(path)) for path in resolved_video_paths],

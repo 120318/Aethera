@@ -76,9 +76,40 @@ def test_business_results_and_addon_failures_remain_notifiable(monkeypatch, even
     EventType.DANMU_GENERATE_COMPLETED,
     EventType.DANMU_GENERATE_FAILED,
 ])
-def test_postprocessing_results_do_not_send_separate_notifications(event_type):
+def test_import_postprocessing_results_do_not_send_separate_notifications(monkeypatch, event_type):
+    monkeypatch.setattr(
+        "app.services.application.workflows.notifications.service.event_service",
+        SimpleNamespace(get_event=lambda _: Event(type=EventType.MEDIA_IMPORT_COMPLETED)),
+    )
     channel = NotificationChannelConfig(id="channel-1", type="fake", event_patterns=["*"])
-    assert not NotificationApplicationService()._should_send(channel, Event(type=event_type))
+    assert not NotificationApplicationService()._should_send(channel, Event(type=event_type, correlation_id="import-1"))
+
+
+@pytest.mark.parametrize("event_type", [EventType.MEDIA_SERVER_SYNC_FAILED, EventType.DANMU_GENERATE_FAILED])
+@pytest.mark.parametrize("parent_type", [None, EventType.FOLLOW_RELEASED])
+@pytest.mark.asyncio
+async def test_independent_postprocessing_failures_remain_notifiable(monkeypatch, event_type, parent_type):
+    channel = NotificationChannelConfig(type="fake", event_patterns=[event_type.value], levels=["error"])
+    send = AsyncMock()
+    module = "app.services.application.workflows.notifications.service"
+    monkeypatch.setattr(f"{module}.event_service", SimpleNamespace(
+        get_event=lambda _: Event(type=parent_type) if parent_type else None,
+    ))
+    monkeypatch.setattr(f"{module}.settings_service", SimpleNamespace(
+        get_addons_config=lambda: SimpleNamespace(notifications=SimpleNamespace(channels=[channel])),
+    ))
+    monkeypatch.setattr(f"{module}.notification_channel_service", SimpleNamespace(
+        supports=lambda _: True,
+        get_channel=lambda _: SimpleNamespace(is_configured=lambda _: True, send=send),
+    ))
+    monkeypatch.setattr(f"{module}.action_service", SimpleNamespace(
+        create_action=Mock(return_value=SimpleNamespace(id="action")), mark_running=Mock(), mark_completed=Mock(),
+    ))
+    event = Event(type=event_type, level=EventLevel.error, correlation_id="other" if parent_type else None)
+
+    await NotificationApplicationService().handle_event(event)
+
+    send.assert_awaited_once_with(channel, event)
 
 
 @pytest.mark.asyncio
@@ -102,6 +133,7 @@ async def test_import_notification_is_sent_once_only_after_summary_ready(monkeyp
         create_action=create, mark_running=Mock(), mark_completed=Mock(),
     ))
     monkeypatch.setattr(f"{module}.import_notification_summary_service", SimpleNamespace(build_notification=summary))
+    monkeypatch.setattr(f"{module}.event_service", SimpleNamespace(get_event=lambda _: event))
     service = NotificationApplicationService()
 
     with pytest.raises(EventDispatchDeferred):
@@ -110,18 +142,20 @@ async def test_import_notification_is_sent_once_only_after_summary_ready(monkeyp
     send.assert_not_awaited()
 
     await service.handle_event(event)
-    await service.handle_event(Event(type=EventType.DANMU_GENERATE_COMPLETED))
-    await service.handle_event(Event(type=EventType.MEDIA_SERVER_SYNC_COMPLETED))
+    await service.handle_event(Event(type=EventType.DANMU_GENERATE_COMPLETED, correlation_id=event.id))
+    await service.handle_event(Event(type=EventType.MEDIA_SERVER_SYNC_COMPLETED, correlation_id=event.id))
 
     send.assert_awaited_once_with(channel, event)
     assert create.call_count == 1
 
 
-def test_independent_postprocessing_channel_options_normalize_to_import():
+def test_custom_postprocessing_subscriptions_are_not_rewritten_to_import():
     channel = NotificationChannelConfig(type="telegram", event_patterns=[
         "media_server_sync.*", "danmu.generate.failed", "media.import.completed", "indexer.site.unhealthy",
     ])
-    assert channel.event_patterns == ["media.import.*", "indexer.site.unhealthy"]
+    assert channel.event_patterns == [
+        "media_server_sync.*", "danmu.generate.failed", "media.import.completed", "indexer.site.unhealthy",
+    ]
 
 
 @pytest.mark.asyncio
