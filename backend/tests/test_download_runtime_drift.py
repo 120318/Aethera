@@ -10,7 +10,8 @@ pytestmark = [pytest.mark.drift, pytest.mark.health]
 os.environ.setdefault("DATA_PATH", f"/tmp/aethera-test-data-{uuid.uuid4()}")
 
 from app.schemas.media_id import MediaID
-from app.schemas.domain.download import TaskContext, TaskData, TaskStatus
+from app.schemas.domain.download import TaskContext, TaskData, TaskSource, TaskStatus
+from app.schemas.domain.event import EventActor
 from app.schemas.domain.library import LibraryTaskFileHealth
 from app.schemas.domain.torrent_status import TorrentState, TorrentStatus
 from app.services.domain.download.task_runtime_service import TaskRuntimeService
@@ -176,8 +177,10 @@ async def test_sync_active_downloads_marks_pending_task_as_downloading_when_prog
 
 
 @pytest.mark.asyncio
-async def test_sync_active_downloads_completed_event_uses_live_torrent_progress(monkeypatch):
+@pytest.mark.parametrize("task_source", [TaskSource.MANUAL, TaskSource.SYSTEM])
+async def test_sync_active_downloads_completed_event_uses_live_torrent_progress(monkeypatch, task_source):
     task = _task(status=TaskStatus.DOWNLOADING)
+    task.context.source = task_source
     task.progress = 0.96
     torrent = TorrentStatus(
         hash=task.torrent_hash,
@@ -188,9 +191,11 @@ async def test_sync_active_downloads_completed_event_uses_live_torrent_progress(
         downloader_id="downloader-1",
     )
     captured = {}
+    def emit_media(_self, event, meta=None):
+        captured.update(event=event, meta=meta)
     monkeypatch.setattr(
         "app.services.domain.download.task_runtime_service.event_service",
-        type("FakeEventService", (), {"emit_media": lambda self, event, meta=None: captured.setdefault("meta", meta)})(),
+        type("FakeEventService", (), {"emit_media": emit_media})(),
     )
     service = TaskRuntimeService(_FakeRepo(task), _FakeClientFactory(torrent_statuses=[torrent]))
     update_task_state = AsyncMock(return_value=True)
@@ -202,6 +207,7 @@ async def test_sync_active_downloads_completed_event_uses_live_torrent_progress(
 
     assert result.updated == 1
     assert captured["meta"].progress == 1.0
+    assert captured["event"].actor == EventActor.system
     update_task_state.assert_awaited_once_with(task.id, TaskStatus.FINISHED, None, 1.0, None)
 
 
