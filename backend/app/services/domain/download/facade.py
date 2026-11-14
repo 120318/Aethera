@@ -14,6 +14,7 @@ from app.schemas.media_id import MediaID
 from app.schemas.runtime.media_management import MediaTaskSummary
 from app.services.domain.library.service import library_service
 from app.services.domain.download.lifecycle import DownloadCreationService
+from app.services.domain.download.episode_selection_service import TaskEpisodeSelectionService
 from app.services.domain.download.downloader_change import (
     TaskDownloaderChangePreview,
     TaskDownloaderChangeRequest,
@@ -52,6 +53,7 @@ class DownloadService:
             self.downloader_display_info_cls,
             self.task_service,
         )
+        self.episode_selection_service = TaskEpisodeSelectionService(self._repo, self.client_factory)
         self.downloader_change_service = TaskDownloaderChangeService(self._repo, self.client_factory)
 
     def _get_downloader_display_map(self) -> dict[str, DownloaderDisplayInfo]:
@@ -79,6 +81,12 @@ class DownloadService:
         source: TaskSource = TaskSource.MANUAL,
     ) -> TaskData:
         return await self.creation_service.create_download(req, search_result, source)
+
+    async def get_task_episode_selection(self, task_id: str):
+        return await self.episode_selection_service.get_selection(task_id)
+
+    async def update_task_episode_selection(self, task_id: str, episodes: list[int]):
+        return await self.episode_selection_service.update(task_id, episodes)
 
     async def ensure_task_download_path_consistent(self, task: TaskData) -> None:
         await self.task_service.ensure_task_download_path_consistent(task)

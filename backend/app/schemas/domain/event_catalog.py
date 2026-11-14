@@ -7,17 +7,19 @@ DEFAULT_NOTIFICATION_EVENT_PATTERNS = [
     "download.failed",
     "download.task.downloader_change_failed",
     "download.task.storage_change_failed",
-    "media.import.completed",
-    "media.import.failed",
+    "media.import.*",
     "library.file.missing",
     "indexer.site.unhealthy",
     "follow.*",
     "subscription.ended.*",
-    "media_server_sync.failed",
-    "danmu.generate.failed",
 ]
 
 NOTIFICATION_EVENT_PATTERNS = list(DEFAULT_NOTIFICATION_EVENT_PATTERNS)
+
+
+def normalize_notification_event_patterns(patterns: list[str]) -> list[str]:
+    # Deduplicate without changing custom subscriptions to unrelated event types.
+    return list(dict.fromkeys(patterns))
 
 MANUAL_NOTIFICATION_SUPPRESSED_EVENTS = {
     EventType.DOWNLOAD_COMPLETED,

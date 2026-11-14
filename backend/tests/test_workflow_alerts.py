@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -19,7 +20,7 @@ def test_default_notification_channel_patterns_target_business_results():
     channel = NotificationChannelConfig(id="channel-1", type="fake", name="Fake")
 
     assert "download.completed" not in channel.event_patterns
-    assert "media.import.completed" in channel.event_patterns
+    assert "media.import.*" in channel.event_patterns
     assert "subscription.ended.*" in channel.event_patterns
     assert "*" not in channel.event_patterns
     assert "subscription.*" not in channel.event_patterns
@@ -29,6 +30,175 @@ def test_notification_addon_subscribes_broadly_for_custom_channel_rules():
     patterns = _notification_event_patterns()
 
     assert patterns == ["*"]
+
+
+@pytest.mark.parametrize("patterns", [["*"], ["addon.*"], ["addon.run.completed"]])
+@pytest.mark.asyncio
+async def test_addon_completion_does_not_create_notification_even_with_matching_rules(monkeypatch, patterns):
+    channel = NotificationChannelConfig(id="channel-1", type="fake", event_patterns=patterns)
+    monkeypatch.setattr(
+        "app.services.application.workflows.notifications.service.settings_service",
+        SimpleNamespace(get_addons_config=lambda: SimpleNamespace(notifications=SimpleNamespace(channels=[channel]))),
+    )
+
+    def unexpected_action(**kwargs):
+        pytest.fail("Internal completion must not create a notification action")
+
+    monkeypatch.setattr(
+        "app.services.application.workflows.notifications.service.action_service",
+        SimpleNamespace(create_action=unexpected_action),
+    )
+    monkeypatch.setattr(
+        "app.services.application.workflows.notifications.service.notification_channel_service",
+        SimpleNamespace(supports=lambda _: True, get_channel=lambda _: SimpleNamespace(is_configured=lambda _: True)),
+    )
+
+    await NotificationApplicationService().handle_event(Event(type=EventType.ADDON_RUN_COMPLETED))
+
+
+@pytest.mark.parametrize("event_type", [
+    EventType.ADDON_RUN_FAILED,
+    EventType.MEDIA_IMPORT_COMPLETED,
+])
+def test_business_results_and_addon_failures_remain_notifiable(monkeypatch, event_type):
+    monkeypatch.setattr(
+        "app.services.application.workflows.notifications.service.notification_channel_service",
+        SimpleNamespace(supports=lambda _: True, get_channel=lambda _: SimpleNamespace(is_configured=lambda _: True)),
+    )
+    channel = NotificationChannelConfig(id="channel-1", type="fake", event_patterns=["*"])
+
+    assert NotificationApplicationService()._should_send(channel, Event(type=event_type))
+
+
+@pytest.mark.parametrize("event_type", [
+    EventType.MEDIA_SERVER_SYNC_COMPLETED,
+    EventType.MEDIA_SERVER_SYNC_FAILED,
+    EventType.DANMU_GENERATE_COMPLETED,
+    EventType.DANMU_GENERATE_FAILED,
+])
+def test_import_postprocessing_results_do_not_send_separate_notifications(monkeypatch, event_type):
+    monkeypatch.setattr(
+        "app.services.application.workflows.notifications.service.event_service",
+        SimpleNamespace(get_event=lambda _: Event(type=EventType.MEDIA_IMPORT_COMPLETED)),
+    )
+    channel = NotificationChannelConfig(id="channel-1", type="fake", event_patterns=["*"])
+    assert not NotificationApplicationService()._should_send(channel, Event(type=event_type, correlation_id="import-1"))
+
+
+@pytest.mark.parametrize("event_type", [EventType.MEDIA_SERVER_SYNC_FAILED, EventType.DANMU_GENERATE_FAILED])
+def test_manual_import_postprocessing_does_not_bypass_manual_notification_policy(monkeypatch, event_type):
+    manual_import = Event(type=EventType.MEDIA_IMPORT_COMPLETED, actor=EventActor.user)
+    monkeypatch.setattr(
+        "app.services.application.workflows.notifications.service.event_service",
+        SimpleNamespace(get_event=lambda _: manual_import),
+    )
+    channel = NotificationChannelConfig(type="fake", event_patterns=["*"], levels=["error"])
+    assert not NotificationApplicationService()._should_send(
+        channel, Event(type=event_type, level=EventLevel.error, correlation_id=manual_import.id),
+    )
+
+
+@pytest.mark.parametrize("event_type", [EventType.MEDIA_SERVER_SYNC_FAILED, EventType.DANMU_GENERATE_FAILED])
+@pytest.mark.parametrize("parent_type", [None, EventType.FOLLOW_RELEASED])
+@pytest.mark.asyncio
+async def test_independent_postprocessing_failures_remain_notifiable(monkeypatch, event_type, parent_type):
+    channel = NotificationChannelConfig(type="fake", event_patterns=[event_type.value], levels=["error"])
+    send = AsyncMock()
+    module = "app.services.application.workflows.notifications.service"
+    monkeypatch.setattr(f"{module}.event_service", SimpleNamespace(
+        get_event=lambda _: Event(type=parent_type) if parent_type else None,
+    ))
+    monkeypatch.setattr(f"{module}.settings_service", SimpleNamespace(
+        get_addons_config=lambda: SimpleNamespace(notifications=SimpleNamespace(channels=[channel])),
+    ))
+    monkeypatch.setattr(f"{module}.notification_channel_service", SimpleNamespace(
+        supports=lambda _: True,
+        get_channel=lambda _: SimpleNamespace(is_configured=lambda _: True, send=send),
+    ))
+    monkeypatch.setattr(f"{module}.action_service", SimpleNamespace(
+        create_action=Mock(return_value=SimpleNamespace(id="action")), mark_running=Mock(), mark_completed=Mock(),
+    ))
+    event = Event(type=event_type, level=EventLevel.error, correlation_id="other" if parent_type else None)
+
+    await NotificationApplicationService().handle_event(event)
+
+    send.assert_awaited_once_with(channel, event)
+
+
+@pytest.mark.asyncio
+async def test_import_notification_is_sent_once_only_after_summary_ready(monkeypatch):
+    from app.schemas.persistence.event_dispatch import EventDispatchDeferred
+
+    event = Event(type=EventType.MEDIA_IMPORT_COMPLETED, media=_media(), meta="{}")
+    channel = NotificationChannelConfig(id="channel", type="fake", event_patterns=["*"])
+    send = AsyncMock()
+    create = Mock(return_value=SimpleNamespace(id="notify-action"))
+    summary = AsyncMock(side_effect=[EventDispatchDeferred(), event])
+    module = "app.services.application.workflows.notifications.service"
+    monkeypatch.setattr(f"{module}.settings_service", SimpleNamespace(
+        get_addons_config=lambda: SimpleNamespace(notifications=SimpleNamespace(channels=[channel])),
+    ))
+    monkeypatch.setattr(f"{module}.notification_channel_service", SimpleNamespace(
+        supports=lambda _: True,
+        get_channel=lambda _: SimpleNamespace(is_configured=lambda _: True, send=send),
+    ))
+    monkeypatch.setattr(f"{module}.action_service", SimpleNamespace(
+        create_action=create, mark_running=Mock(), mark_completed=Mock(),
+    ))
+    monkeypatch.setattr(f"{module}.import_notification_summary_service", SimpleNamespace(build_notification=summary))
+    monkeypatch.setattr(f"{module}.event_service", SimpleNamespace(get_event=lambda _: event))
+    service = NotificationApplicationService()
+
+    with pytest.raises(EventDispatchDeferred):
+        await service.handle_event(event)
+    create.assert_not_called()
+    send.assert_not_awaited()
+
+    await service.handle_event(event)
+    await service.handle_event(Event(type=EventType.DANMU_GENERATE_COMPLETED, correlation_id=event.id))
+    await service.handle_event(Event(type=EventType.MEDIA_SERVER_SYNC_COMPLETED, correlation_id=event.id))
+
+    send.assert_awaited_once_with(channel, event)
+    assert create.call_count == 1
+
+
+def test_custom_postprocessing_subscriptions_are_not_rewritten_to_import():
+    channel = NotificationChannelConfig(type="telegram", event_patterns=[
+        "media_server_sync.*", "danmu.generate.failed", "media.import.completed", "indexer.site.unhealthy",
+    ])
+    assert channel.event_patterns == [
+        "media_server_sync.*", "danmu.generate.failed", "media.import.completed", "indexer.site.unhealthy",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("summary_level,channel_level,expected_sends", [
+    (EventLevel.error, "error", 1),
+    (EventLevel.warning, "warning", 1),
+    (EventLevel.info, "error", 0),
+])
+async def test_import_level_filter_uses_postprocessing_summary(monkeypatch, summary_level, channel_level, expected_sends):
+    event = Event(type=EventType.MEDIA_IMPORT_COMPLETED, level=EventLevel.info, media=_media(), meta="{}")
+    channel = NotificationChannelConfig(type="fake", event_patterns=["media.import.*"], levels=[channel_level])
+    send = AsyncMock()
+    summary = AsyncMock(return_value=event.model_copy(update={"level": summary_level}))
+    module = "app.services.application.workflows.notifications.service"
+    monkeypatch.setattr(f"{module}.settings_service", SimpleNamespace(
+        get_addons_config=lambda: SimpleNamespace(notifications=SimpleNamespace(channels=[channel])),
+    ))
+    monkeypatch.setattr(f"{module}.notification_channel_service", SimpleNamespace(
+        supports=lambda _: True,
+        get_channel=lambda _: SimpleNamespace(is_configured=lambda _: True, send=send),
+    ))
+    monkeypatch.setattr(f"{module}.action_service", SimpleNamespace(
+        create_action=Mock(return_value=SimpleNamespace(id="notify-action")), mark_running=Mock(), mark_completed=Mock(),
+    ))
+    monkeypatch.setattr(f"{module}.import_notification_summary_service", SimpleNamespace(build_notification=summary))
+
+    await NotificationApplicationService().handle_event(event)
+
+    summary.assert_awaited_once_with(event)
+    assert send.await_count == expected_sends
 
 
 def test_manual_notification_suppression_keeps_task_change_failures_notifiable():

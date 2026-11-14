@@ -175,6 +175,13 @@ class EventRepository:
             rows = session.execute(select(EventORM).order_by(desc(EventORM.ts))).scalars().all()
             return [self._to_model(row) for row in rows]
 
+    def list_by_correlation_id(self, correlation_id: str) -> list[Event]:
+        with SessionLocal() as session:
+            rows = session.execute(
+                select(EventORM).where(EventORM.correlation_id == correlation_id).order_by(EventORM.ts)
+            ).scalars().all()
+            return [self._to_model(row) for row in rows]
+
     def list_filtered(
         self,
         *,

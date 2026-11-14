@@ -7,6 +7,7 @@ import { useTaskLiveDialogs } from '@/composables/useTaskLiveDialogs'
 import { useTaskLiveFilters } from '@/composables/useTaskLiveFilters'
 import { useTaskLivePresentation } from '@/composables/useTaskLivePresentation'
 import { useTaskLiveRealtime } from '@/composables/useTaskLiveRealtime'
+import { useTaskEpisodeSelection } from '@/composables/useTaskEpisodeSelection'
 import { buildEnhancedTaskWithOverride } from '@/composables/taskLiveViewState'
 import { useOperationsStore } from '@/stores/operations'
 import { useNotificationStore } from '@/stores/notification'
@@ -135,6 +136,10 @@ export function useTaskLivePage(props, emit) {
     target_downloader_id: '',
     target_directory_id: '',
   })
+  const {
+    episodeSelectionVisible, episodeSelectionLoading, episodeSelectionSaving,
+    episodeSelection, selectedEpisodes, handleSelectEpisodes, saveEpisodeSelection,
+  } = useTaskEpisodeSelection(emit)
   const selectedDownloaderChangeDirectory = computed(() => (
     downloaderChangeConfig.value.directories.find((item) => item.id === downloaderChangeForm.value.target_directory_id) || null
   ))
@@ -367,6 +372,7 @@ export function useTaskLivePage(props, emit) {
     handleMediaServerSync,
     handleDanmuGenerate,
     handleChangeDownloader,
+    handleSelectEpisodes,
     isTaskPending,
   })
 
@@ -418,6 +424,12 @@ export function useTaskLivePage(props, emit) {
     previewDownloaderChange,
     executeDownloaderChange,
     resolveDownloaderChangePreviewMessage,
+    episodeSelectionVisible,
+    episodeSelectionLoading,
+    episodeSelectionSaving,
+    episodeSelection,
+    selectedEpisodes,
+    saveEpisodeSelection,
     TASK_ACTIONS_CONFIG,
     getStatusButtonSeverity,
     getTaskStatusTooltip,

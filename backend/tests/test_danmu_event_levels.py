@@ -71,9 +71,11 @@ def test_danmu_unexpected_failure_event_stays_error(monkeypatch):
         "action-1",
         "task-1",
         error="provider failed",
+        correlation_id="import-1",
     )
 
     assert captured["event"].level == EventLevel.error
+    assert captured["event"].correlation_id == "import-1"
 
 
 def test_danmu_skipped_outcomes_do_not_emit_events(monkeypatch):
@@ -117,9 +119,11 @@ def test_danmu_multiple_failures_emit_one_summary_event(monkeypatch):
             )
             for episode in (1, 2, 3)
         ],
+        correlation_id="import-1",
     )
 
     assert len(emitted) == 1
+    assert emitted[0][1]["correlation_id"] == "import-1"
     assert emitted[0][0][0] == EventType.DANMU_GENERATE_FAILED
     assert emitted[0][1]["episode_numbers"] == [1, 2, 3]
     assert len(emitted[0][1]["video_paths"]) == 3

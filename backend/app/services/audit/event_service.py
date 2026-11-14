@@ -65,6 +65,9 @@ class EventService:
     def is_business_event(self, event_type: str) -> bool:
         return not any(event_type.startswith(prefix) for prefix in NON_BUSINESS_EVENT_PREFIXES)
 
+    def list_correlated_events(self, correlation_id: str) -> list[Event]:
+        return self.repo.list_by_correlation_id(correlation_id)
+
     def _persist_event(self, event: Event) -> Event:
         self.repo.insert(event)
         self.dispatch_persisted_event(event)

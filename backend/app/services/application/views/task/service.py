@@ -248,8 +248,8 @@ class TaskViewService:
 
         selected_seasons: set[int] = set()
         selected_episodes: set[int] = set()
-        for index, file_item in enumerate(task.metadata.files):
-            if index not in selected_indices:
+        for file_item in task.metadata.files:
+            if file_item.index not in selected_indices:
                 continue
             if file_item.attrs and file_item.attrs.seasons:
                 for season in file_item.attrs.seasons:
@@ -433,6 +433,8 @@ class TaskViewService:
                 action_states.append(TaskActionState(action=TaskAction.PAUSE))
             elif torrent_state == TorrentState.PAUSED:
                 action_states.append(TaskActionState(action=TaskAction.RESUME))
+            if task.media_id.media_type == MediaType.tv and task.metadata and task.metadata.get_episodes():
+                action_states.append(TaskActionState(action=TaskAction.SELECT_EPISODES))
 
         if self._can_manual_transfer(task):
             action_states.append(TaskActionState(action=TaskAction.TRANSFER))

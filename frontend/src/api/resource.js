@@ -26,6 +26,15 @@ export const getTaskList = (mediaId, seasonNumber = null) =>
 export const getTaskDetail = (taskId) =>
   http.get('/api/v1/task/detail', { params: { task_id: taskId } })
 
+export const previewResourceEpisodeSelection = (payload) =>
+  http.post('/api/v1/resource/episode-selection/preview', payload)
+
+export const getTaskEpisodeSelection = (taskId) =>
+  http.get(`/api/v1/task/${taskId}/episode-selection`)
+
+export const updateTaskEpisodeSelection = (taskId, selectedEpisodes) =>
+  http.put(`/api/v1/task/${taskId}/episode-selection`, { selected_episodes: selectedEpisodes })
+
 export const getTorrentProgress = (taskIds) =>
   http.post('/api/v1/task/torrent_progress', { task_ids: taskIds })
 

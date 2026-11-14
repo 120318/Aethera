@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
+from app.services.domain.resource.torrent_file_policy import is_shared_torrent_font
 
 
 def torrent_file_matches_season(
@@ -73,7 +74,12 @@ def _explicit_file_seasons(
     if file_item.attrs and file_item.attrs.seasons:
         return {season for season in file_item.attrs.seasons if season > 0}
     if metadata.attrs and metadata.attrs.seasons:
-        return _explicit_metadata_seasons(metadata)
+        seasons = _explicit_metadata_seasons(metadata)
+        # A package-wide multi-season range does not assign an unmarked shared
+        # font to another season. Explicit file/directory seasons still win above.
+        if len(seasons) > 1 and is_shared_torrent_font(file_item):
+            return set()
+        return seasons
     return set()
 
 

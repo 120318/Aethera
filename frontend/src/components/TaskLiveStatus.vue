@@ -298,6 +298,28 @@
       </template>
     </Dialog>
 
+    <Dialog v-model:visible="episodeSelectionVisible" :header="$t('episodeSelection.editTitle')" modal :dismissable-mask="true" class="w-full max-w-dialog-md">
+      <div v-if="episodeSelectionLoading" class="ui-dialog-section text-caption text-muted">
+        {{ $t('episodeSelection.loading') }}
+      </div>
+      <EpisodeSelectionField
+        v-else
+        v-model="selectedEpisodes"
+        :available-episodes="episodeSelection.available_episodes"
+        :locked-episodes="episodeSelection.locked_episodes"
+        :label="$t('episodeSelection.label')"
+      />
+      <template #footer>
+        <Button :label="$t('common.cancel')" severity="secondary" outlined @click="episodeSelectionVisible = false" />
+        <Button
+          :label="$t('common.save')"
+          :loading="episodeSelectionSaving"
+          :disabled="episodeSelectionLoading || selectedEpisodes.length === 0"
+          @click="saveEpisodeSelection"
+        />
+      </template>
+    </Dialog>
+
     <Dialog v-model:visible="downloaderChangeVisible" :header="$t('taskLive.changeDownloader.title')" modal :dismissable-mask="true" class="w-full max-w-dialog-md">
       <div class="ui-dialog-body">
         <div class="ui-dialog-section">
@@ -377,6 +399,7 @@ import ConfigDialog from '@/components/common/ConfigDialog.vue'
 import FileStructureTree from '@/components/common/FileStructureTree.vue'
 import ResourceAttributes from '@/components/common/ResourceAttributes.vue'
 import TaskLiveListItem from '@/components/task-live/TaskLiveListItem.vue'
+import EpisodeSelectionField from '@/components/common/EpisodeSelectionField.vue'
 import { ResourceTagType } from '@/constants/resourceTagTypes'
 import { formatAbsoluteDateTime, formatRelativeTime, formatSizeBytes } from '@/utils/formatters'
 import { useSiteDisplay } from '@/composables/useSiteDisplay'
@@ -473,6 +496,12 @@ const {
   previewDownloaderChange,
   executeDownloaderChange,
   resolveDownloaderChangePreviewMessage,
+  episodeSelectionVisible,
+  episodeSelectionLoading,
+  episodeSelectionSaving,
+  episodeSelection,
+  selectedEpisodes,
+  saveEpisodeSelection,
   TASK_ACTIONS_CONFIG,
   getStatusButtonSeverity,
   getTaskStatusTooltip,

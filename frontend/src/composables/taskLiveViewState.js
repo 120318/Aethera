@@ -6,7 +6,7 @@ function normalizeTorrentState(value) {
   return value ? String(value).toLowerCase() : ''
 }
 
-const ACTION_ORDER = ['view_detail', 'pause', 'resume', 'transfer', 'media_server_sync', 'change_downloader', 'delete']
+const ACTION_ORDER = ['view_detail', 'pause', 'resume', 'select_episodes', 'transfer', 'media_server_sync', 'change_downloader', 'delete']
 
 function shouldApplyRealtimeOverlay(task) {
   const status = normalizeTaskStatus(task?.status)

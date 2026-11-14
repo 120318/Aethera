@@ -2,15 +2,16 @@ export const DEFAULT_NOTIFICATION_EVENT_PATTERNS = [
   'download.failed',
   'download.task.downloader_change_failed',
   'download.task.storage_change_failed',
-  'media.import.completed',
-  'media.import.failed',
+  'media.import.*',
   'library.file.missing',
   'indexer.site.unhealthy',
   'follow.*',
   'subscription.ended.*',
-  'media_server_sync.failed',
-  'danmu.generate.failed',
 ]
+
+export function normalizeNotificationEventPatterns(patterns) {
+  return [...new Set(patterns || [])]
+}
 
 export function createNotificationChannelId() {
   return globalThis.crypto?.randomUUID?.() || `notification-channel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -35,7 +36,7 @@ export function assignNotificationChannelForm(form, channel) {
   form.name = channel.name || ''
   form.enabled = channel.enabled !== false
   form.event_patterns = Array.isArray(channel.event_patterns) && channel.event_patterns.length
-    ? [...channel.event_patterns]
+    ? normalizeNotificationEventPatterns(channel.event_patterns)
     : [...DEFAULT_NOTIFICATION_EVENT_PATTERNS]
   form.levels = Array.isArray(channel.levels) ? [...channel.levels] : []
   form.bot_token = channel.bot_token || ''
@@ -45,7 +46,7 @@ export function assignNotificationChannelForm(form, channel) {
 export function cloneNotificationChannel(channel) {
   return {
     ...channel,
-    event_patterns: [...(channel.event_patterns || [])],
+    event_patterns: normalizeNotificationEventPatterns(channel.event_patterns),
     levels: [...(channel.levels || [])],
   }
 }

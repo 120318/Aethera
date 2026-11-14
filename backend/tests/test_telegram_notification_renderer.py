@@ -80,6 +80,7 @@ def test_telegram_addon_failure_uses_structured_error_reason():
     event = Event(
         type=EventType.ADDON_RUN_FAILED,
         level=EventLevel.error,
+        addon_id="subtitles",
         addon_name="subtitles",
         ts=datetime(2026, 6, 2, 20, 30),
         meta=json.dumps(
@@ -96,7 +97,45 @@ def test_telegram_addon_failure_uses_structured_error_reason():
     message = format_telegram_event(event, locale="en-US", public_base_url="")
 
     assert "Reason: Addon is disabled: subtitles" in message
+    assert "Addon operation failed" in message
+    assert "Addon: subtitles / fill\\_missing" in message
     assert "backendErrors.addonDisabled" not in message
+
+
+def test_telegram_addon_failure_in_zh_cn_has_plugin_operation_and_error():
+    event = Event(
+        type=EventType.ADDON_RUN_FAILED,
+        level=EventLevel.error,
+        addon_id="danmu",
+        meta=json.dumps({"operation_id": "generate", "error": "provider timeout"}),
+    )
+
+    message = format_telegram_event(event, locale="zh-CN", public_base_url="")
+
+    assert "插件执行失败" in message
+    assert "插件：danmu / generate" in message
+    assert "原因：provider timeout" in message
+
+
+def test_telegram_import_notification_renders_all_participating_statuses():
+    event = Event(
+        type=EventType.MEDIA_IMPORT_COMPLETED,
+        media=_media(),
+        meta=json.dumps({
+            "imported_files": [{"destination_path": "/library/Show.S01E01.mkv", "episode_number": 1}],
+            "postprocessing": [
+                {"name": "media_server_sync", "status": "completed"},
+                {"name": "danmu", "status": "skipped"},
+                {"name": "subtitles", "status": "failed"},
+            ],
+        }),
+    )
+    message = format_telegram_event(event, locale="zh-CN", public_base_url="")
+    assert "入库已完成" in message
+    assert "刮削：已完成" in message
+    assert "弹幕：已跳过" in message
+    assert "字幕：失败" in message
+    assert "第 1 集" in message
 
 
 def test_telegram_escapes_markdown_v2_stars():

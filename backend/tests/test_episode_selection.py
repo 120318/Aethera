@@ -1,0 +1,253 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from app.schemas.domain.command import CommandCreateRequest
+from app.schemas.domain.download import DownloadFileInfo, DownloadTaskCreateInput, TaskContext, TaskData, TaskStatus
+from app.schemas.domain.media import MediaExecutionSnapshot
+from app.schemas.domain.resource_attributes import ResourceAttributes
+from app.schemas.domain.torrent import TorrentFileItem, TorrentMetadata
+from app.schemas.media_id import MediaID
+from app.services.domain.download.episode_selection import (
+    available_episodes,
+    episodes_for_file_indices,
+    resolve_episode_selection,
+)
+from app.services.domain.download.episode_selection_service import TaskEpisodeSelectionService
+
+
+def _metadata() -> TorrentMetadata:
+    return TorrentMetadata(
+        hash="torrent-hash",
+        name="Season 1",
+        size=300,
+        attrs=ResourceAttributes(seasons=[1]),
+        files=[
+            TorrentFileItem(index=0, filename="S01E01.mkv", size=100, attrs=ResourceAttributes(seasons=[1], episodes=[1])),
+            TorrentFileItem(index=1, filename="S01E02-E03.mkv", size=100, attrs=ResourceAttributes(seasons=[1], episodes=[2, 3])),
+            TorrentFileItem(index=2, filename="S01E04.mkv", size=100, attrs=ResourceAttributes(seasons=[1], episodes=[4])),
+            TorrentFileItem(index=3, filename="sample.mkv", size=10, attrs=ResourceAttributes(episodes=[])),
+        ],
+    )
+
+
+def _task(*, selected_files: list[int], imported_files: list[int] | None = None) -> TaskData:
+    media = MediaExecutionSnapshot(
+        media_id=MediaID.parse("tmdb:tv:1"),
+        title="Example",
+        year=2026,
+        season_number=1,
+        episodes_count=4,
+    )
+    return TaskData(
+        id="task-1",
+        media_id=media.media_id,
+        torrent_hash="torrent-hash",
+        status=TaskStatus.DOWNLOADING,
+        downloader_id="qb",
+        context=TaskContext(
+            download_url="https://example.invalid/torrent",
+            media=media,
+            directory_id="tv",
+            selected_files=selected_files,
+            imported_file_indices=imported_files or [],
+        ),
+        metadata=_metadata(),
+    )
+
+
+def test_episode_selection_maps_multi_episode_files_without_exposing_unmapped_files():
+    metadata = _metadata()
+
+    assert available_episodes(metadata, 1) == [1, 2, 3, 4]
+    assert resolve_episode_selection(metadata, 1, [2]) == ([1], [2, 3])
+    assert episodes_for_file_indices(metadata, [3]) == []
+
+
+def test_episode_selection_keeps_shared_fonts_without_inventing_episode_coverage():
+    metadata = _metadata()
+    metadata.files.append(TorrentFileItem(
+        index=4, filename="fonts/font.ttf", size=10, attrs=ResourceAttributes(episodes=[]),
+    ))
+    assert resolve_episode_selection(metadata, 1, [2]) == ([1, 4], [2, 3])
+    assert available_episodes(metadata, 1) == [1, 2, 3, 4]
+
+
+def test_task_create_command_preserves_episode_selection():
+    task = _task(selected_files=[])
+    request = DownloadTaskCreateInput(
+        media=task.context.media,
+        directory_id="tv",
+        result_id="result-1",
+        selected_episodes=[2, 3],
+    )
+
+    command = CommandCreateRequest.from_task_create_input(request)
+
+    assert command.payload.selected_episodes == [2, 3]
+
+
+def test_multi_season_selection_keeps_only_target_and_unscoped_fonts():
+    from app.services.domain.resource.torrent_season import selected_files_have_season_conflict
+
+    metadata = TorrentMetadata(
+        hash="multi-season", name="Seasons 1-2", size=100,
+        attrs=ResourceAttributes(seasons=[1, 2], episodes=[]),
+        files=[
+            TorrentFileItem(index=0, filename="S01/S01E01.mkv", size=30, attrs=ResourceAttributes(seasons=[1], episodes=[1])),
+            TorrentFileItem(index=1, filename="S02/S02E01.mkv", size=30, attrs=ResourceAttributes(seasons=[2], episodes=[1])),
+            TorrentFileItem(index=2, filename="S01/fonts/first.ttf", size=10, attrs=ResourceAttributes(seasons=[1], episodes=[])),
+            TorrentFileItem(index=3, filename="S02/fonts/second.ttf", size=10, attrs=ResourceAttributes(seasons=[2], episodes=[])),
+            TorrentFileItem(index=4, filename="fonts/shared.ttf", size=10, attrs=ResourceAttributes(seasons=[], episodes=[])),
+        ],
+    )
+
+    indices, episodes = resolve_episode_selection(metadata, 1, [1])
+
+    assert indices == [0, 2, 4]
+    assert episodes == [1]
+    assert not selected_files_have_season_conflict(metadata, season_number=1, selected_files=indices)
+    assert resolve_episode_selection(metadata, 2, [1]) == ([1, 3, 4], [1])
+
+
+class _Repo:
+    def __init__(self, task: TaskData, siblings: list[TaskData] | None = None) -> None:
+        self.task = task
+        self.siblings = siblings or []
+        self.updated: TaskData | None = None
+
+    async def find_by_id(self, task_id: str):
+        return self.task if task_id == self.task.id else None
+
+    async def find_by_hash_and_downloader(self, _torrent_hash: str, _downloader_id: str):
+        return [self.task, *self.siblings]
+
+    async def update_task(self, task: TaskData):
+        self.updated = task.model_copy(deep=True)
+        return True
+
+
+class _Client:
+    def __init__(self, *, fail_priority: int | None = None) -> None:
+        self.calls: list[tuple[list[int], int]] = []
+        self.fail_priority = fail_priority
+
+    def capabilities(self):
+        return SimpleNamespace(can_set_file_priority=True)
+
+    async def get_torrent_files(self, _torrent_hash: str):
+        return [
+            DownloadFileInfo(index=index, name=f"file-{index}", size=100, progress=0.5, priority=1)
+            for index in range(4)
+        ]
+
+    async def set_file_priority(self, _torrent_hash: str, indices: list[int], priority: int):
+        self.calls.append((indices, priority))
+        return priority != self.fail_priority
+
+
+class _ClientFactory:
+    def __init__(self, client: _Client) -> None:
+        self.client = client
+
+    def get_download_client(self, _downloader_id: str):
+        return self.client
+
+
+@pytest.mark.asyncio
+async def test_task_episode_selection_keeps_imported_episodes_and_updates_downloader():
+    task = _task(selected_files=[0, 1, 2], imported_files=[0])
+    repo = _Repo(task)
+    client = _Client()
+    service = TaskEpisodeSelectionService(repo, _ClientFactory(client))
+
+    view = await service.update(task.id, [4])
+
+    assert repo.updated is not None
+    assert repo.updated.context.selected_files == [0, 2]
+    assert client.calls == [([1, 3], 0)]
+    assert view.selected_episodes == [1, 4]
+    assert view.locked_episodes == [1]
+
+
+@pytest.mark.asyncio
+async def test_task_episode_selection_preserves_files_selected_by_sibling_task():
+    task = _task(selected_files=[0, 1, 2])
+    sibling = _task(selected_files=[1])
+    sibling.id = "task-2"
+    repo = _Repo(task, [sibling])
+    client = _Client()
+    service = TaskEpisodeSelectionService(repo, _ClientFactory(client))
+
+    await service.update(task.id, [4])
+
+    assert client.calls == [([0, 3], 0)]
+    assert repo.updated is not None
+    assert repo.updated.context.selected_files == [2]
+
+
+@pytest.mark.asyncio
+async def test_selection_update_cannot_race_torrent_creation_or_expansion():
+    from app.services.platform.domain_lock_service import domain_lock_service
+    from app.schemas.exception.exceptions import DownloadException
+
+    task = _task(selected_files=[0, 1, 2])
+    repo = _Repo(task)
+    client = _Client()
+    service = TaskEpisodeSelectionService(repo, _ClientFactory(client))
+    async with domain_lock_service.acquire_download_create(task.downloader_id, task.torrent_hash) as acquired:
+        assert acquired
+        with pytest.raises(DownloadException) as exc:
+            await service.update(task.id, [4])
+        assert exc.value.message_key == "backendErrors.taskBusy"
+    assert repo.updated is None
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_selection_update_holds_torrent_lock_during_priority_changes():
+    from app.services.platform.domain_lock_service import domain_lock_service
+
+    class LockCheckingClient(_Client):
+        async def get_torrent_files(self, torrent_hash):
+            async with domain_lock_service.acquire_download_create("qb", torrent_hash) as acquired:
+                assert not acquired
+            return await super().get_torrent_files(torrent_hash)
+
+    task = _task(selected_files=[0, 1, 2])
+    service = TaskEpisodeSelectionService(_Repo(task), _ClientFactory(LockCheckingClient()))
+    await service.update(task.id, [4])
+    async with domain_lock_service.acquire_download_create(task.downloader_id, task.torrent_hash) as acquired:
+        assert acquired
+
+
+@pytest.mark.asyncio
+async def test_selection_edit_and_episode_import_share_task_lock(monkeypatch, tmp_path):
+    from app.services.platform.domain_lock_service import DomainLockService
+    from app.services.domain.transfer.service import TransferService
+    from app.schemas.exception.exceptions import DownloadException, TransferException
+
+    api_locks = DomainLockService(lock_root=tmp_path)
+    worker_locks = DomainLockService(lock_root=tmp_path)
+    monkeypatch.setattr("app.services.domain.download.episode_selection_service.domain_lock_service", api_locks)
+    monkeypatch.setattr("app.services.domain.transfer.service.domain_lock_service", worker_locks)
+    task = _task(selected_files=[0, 1, 2])
+    repo = _Repo(task)
+    client = _Client()
+    service = TaskEpisodeSelectionService(repo, _ClientFactory(client))
+
+    async with worker_locks.acquire_task_op(task.id) as acquired:
+        assert acquired
+        with pytest.raises(DownloadException) as exc:
+            await service.update(task.id, [4])
+        assert exc.value.message_key == "backendErrors.taskBusy"
+    assert repo.updated is None
+    assert not client.calls
+
+    async with api_locks.acquire_task_op(task.id) as acquired:
+        assert acquired
+        with pytest.raises(TransferException) as exc:
+            await TransferService().import_episode_batch(task.id, [0])
+        assert exc.value.message_key == "backendErrors.taskBusy"

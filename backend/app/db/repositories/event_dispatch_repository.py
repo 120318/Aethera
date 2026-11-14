@@ -53,6 +53,12 @@ class EventDispatchRepository:
             session.commit()
             return record.id
 
+    async def insert_many(self, records: list[EventDispatchRecord]) -> None:
+        with SessionLocal() as session:
+            for record in records:
+                self.add_to_session(session, record)
+            session.commit()
+
     async def update(self, record: EventDispatchRecord, cond: str) -> bool:
         record_id = cond
         with SessionLocal() as session:
@@ -95,6 +101,13 @@ class EventDispatchRepository:
         with SessionLocal() as session:
             rows = session.execute(
                 select(EventDispatchORM).where(EventDispatchORM.status == EventDispatchStatus.RUNNING.value)
+            ).scalars().all()
+            return [self._to_model(row) for row in rows]
+
+    async def list_by_event_id(self, event_id: str) -> list[EventDispatchRecord]:
+        with SessionLocal() as session:
+            rows = session.execute(
+                select(EventDispatchORM).where(EventDispatchORM.event_id == event_id)
             ).scalars().all()
             return [self._to_model(row) for row in rows]
 

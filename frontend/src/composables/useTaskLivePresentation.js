@@ -24,6 +24,7 @@ export function useTaskLivePresentation(options = {}) {
     handleMediaServerSync,
     handleDanmuGenerate,
     handleChangeDownloader,
+    handleSelectEpisodes,
     isTaskPending,
   } = options
 
@@ -34,6 +35,7 @@ export function useTaskLivePresentation(options = {}) {
     { id: 'transfer', icon: 'pi pi-sync', severity: 'success', tooltip: t('taskLive.actions.transfer'), commandTypes: ['task.transfer', 'task.episode_batch_import'], handler: (event, task) => handleManualTransfer(task) },
     { id: 'media_server_sync', icon: 'pi pi-database', severity: 'secondary', label: t('taskLive.actions.mediaServerSync'), tooltip: t('taskLive.actions.mediaServerSync'), commandTypes: ['task.media_server_sync'], menuOnly: true, handler: (event, task) => handleMediaServerSync(task) },
     { id: 'change_downloader', icon: 'pi pi-arrow-right-arrow-left', severity: 'secondary', label: t('taskLive.actions.changeDownloader'), tooltip: t('taskLive.actions.changeDownloader'), commandTypes: ['task.storage_change'], menuOnly: true, handler: (event, task) => handleChangeDownloader(task) },
+    { id: 'select_episodes', icon: 'pi pi-list-check', severity: 'secondary', label: t('taskLive.actions.selectEpisodes'), tooltip: t('taskLive.actions.selectEpisodes'), menuOnly: true, handler: (event, task) => handleSelectEpisodes(task) },
     { id: 'delete', icon: 'pi pi-trash', severity: 'danger', tooltip: t('taskLive.actions.delete'), commandTypes: ['task.delete'], handler: (event, task) => confirmDelete(task) },
   ])
 

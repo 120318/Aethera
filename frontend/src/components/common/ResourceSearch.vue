@@ -165,7 +165,7 @@
   <!-- Download dialog -->
   <DownloadDialog
     v-model:visible="downloadDialogVisible" :resource-data="selectedResourceForDownload || {}"
-    :media-info="mediaInfo" @download="handleDownloadConfirm"
+    :media-info="mediaInfo" :season-number="seasonNumber" @download="handleDownloadConfirm"
   />
 </template>
 

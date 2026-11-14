@@ -159,7 +159,7 @@ export function useResourceSearchUi({
         title: props.title || '',
         year: props.year ? Number(props.year) : undefined,
       }
-      const command = await addTorrent(data.resource, mediaPayload, data.directory_id)
+      const command = await addTorrent(data.resource, mediaPayload, data.directory_id, data.selected_episodes)
       if (command) {
         emit('command-submitted', command)
         emit('download', {
