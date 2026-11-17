@@ -6,6 +6,7 @@ from urllib.parse import parse_qs
 from uuid import uuid4
 
 import httpx
+from pydantic import BaseModel
 
 from app.schemas.domain.vendor import Vendor
 from app.schemas.domain.media_types import MediaType
@@ -18,6 +19,17 @@ from app.services.integration.danmu.utils import first_query_value, parse_qq_jso
 class _QQSegment:
     path: str
     start_seconds: float = 0.0
+
+
+class _QQRegularEpisode(BaseModel):
+    video_id: str
+    issue_number: int
+    part_number: int
+
+
+class _QQEpisodeMatch(BaseModel):
+    video_id: str | None = None
+    has_regular_episodes: bool = False
 
 
 class QQDanmuProvider(BaseDanmuProvider):
@@ -137,6 +149,13 @@ class QQDanmuProvider(BaseDanmuProvider):
                 if absolute_episode_number and absolute_episode_number != episode_number
                 else []
             )
+        regular_episodes = self._regular_episode_candidates(items, cid)
+        if regular_episodes:
+            if not season_number or season_number <= 1:
+                regular_vid = self._regular_episode_vid(regular_episodes, episode_number)
+                if regular_vid:
+                    return regular_vid
+            legacy_episode_numbers = []
         for candidate_episode_number in legacy_episode_numbers:
             for item in items:
                 item_mapping: dict = item
@@ -144,7 +163,7 @@ class QQDanmuProvider(BaseDanmuProvider):
                 item_title = str(item_mapping.get("title") or item_mapping.get("play_title") or "")
                 if item_vid and self._is_legacy_episode_candidate(item_mapping, candidate_episode_number):
                     return item_vid
-        vector_vid = await self._resolve_episode_vid_from_vector_page(
+        vector_match = await self._resolve_episode_vid_from_vector_page(
             client,
             cid,
             episode_number,
@@ -152,8 +171,8 @@ class QQDanmuProvider(BaseDanmuProvider):
             absolute_episode_number=absolute_episode_number,
             season_number=season_number,
         )
-        if vector_vid:
-            return vector_vid
+        if vector_match.video_id or vector_match.has_regular_episodes or regular_episodes:
+            return vector_match.video_id
         if not season_number or season_number <= 1:
             cover_vid = await self._resolve_episode_vid_from_cover_page(
                 client,
@@ -195,20 +214,26 @@ class QQDanmuProvider(BaseDanmuProvider):
         *,
         absolute_episode_number: int | None = None,
         season_number: int | None = None,
-    ) -> str | None:
+    ) -> _QQEpisodeMatch:
         try:
             page_data = await self._fetch_vector_page(client, cid, fallback_vid)
             requested_cid = self._season_cid(page_data, season_number)
             if season_number and season_number > 1 and not requested_cid:
-                return None
+                return _QQEpisodeMatch()
             if requested_cid and requested_cid != cid:
                 page_data = await self._fetch_vector_page(client, requested_cid, None)
             else:
                 requested_cid = cid
         except (httpx.HTTPError, ValueError, TypeError):
-            return None
+            return _QQEpisodeMatch()
 
         candidates = self._collect_card_params(page_data)
+        regular_episodes = self._regular_episode_candidates(candidates, requested_cid)
+        if regular_episodes:
+            return _QQEpisodeMatch(
+                video_id=self._regular_episode_vid(regular_episodes, episode_number),
+                has_regular_episodes=True,
+            )
         episode_numbers = [episode_number]
         if absolute_episode_number and absolute_episode_number != episode_number:
             episode_numbers.append(int(absolute_episode_number))
@@ -234,8 +259,63 @@ class QQDanmuProvider(BaseDanmuProvider):
                         or self._text_matches_episode_number(item_title, candidate_episode_number)
                     )
                 ):
-                    return item_vid
-        return None
+                    return _QQEpisodeMatch(video_id=item_vid)
+        return _QQEpisodeMatch()
+
+    def _regular_episode_candidates(self, items: list, cid: str) -> list[_QQRegularEpisode]:
+        episodes: list[_QQRegularEpisode] = []
+        for item_map in items:
+            if str(item_map.get("cid") or "") != cid or str(item_map.get("is_trailer") or "") == "1":
+                continue
+            item_title = " ".join(
+                str(item_map.get(key) or "")
+                for key in ("title", "play_title", "union_title", "c_title_output")
+            )
+            if any(keyword in item_title for keyword in ("预告", "花絮", "片花", "彩蛋", "先导片", "加更")):
+                continue
+            video_id = str(item_map.get("vid") or "")
+            duration = self._candidate_duration_seconds(item_map)
+            if not video_id or (duration is not None and duration < 600):
+                continue
+            for key in ("title", "play_title", "union_title", "c_title_output"):
+                match = re.match(
+                    r"^第\s*([1-9]\d*)\s*期(?:\s*[（(]?\s*([上中下])\s*[）)]?)?\s*(?=[：:]|$)",
+                    str(item_map.get(key) or "").strip(),
+                )
+                if match:
+                    episodes.append(_QQRegularEpisode(
+                        video_id=video_id,
+                        issue_number=int(match.group(1)),
+                        part_number={None: 0, "上": 1, "中": 2, "下": 3}[match.group(2)],
+                    ))
+                    break
+        return episodes
+
+    def _regular_episode_vid(self, episodes: list[_QQRegularEpisode], episode_number: int) -> str | None:
+        # File episode numbers count regular videos, independently of issue labels.
+        by_order: dict[tuple[int, int], str] = {}
+        order_by_video: dict[str, tuple[int, int]] = {}
+        for episode in episodes:
+            order = (episode.issue_number, episode.part_number)
+            if order in by_order and by_order[order] != episode.video_id:
+                return None
+            if episode.video_id in order_by_video and order_by_video[episode.video_id] != order:
+                return None
+            by_order[order] = episode.video_id
+            order_by_video[episode.video_id] = order
+        orders = sorted(by_order)
+        if episode_number < 1 or episode_number > len(orders):
+            return None
+        last_issue = orders[-1][0]
+        for issue in range(1, last_issue + 1):
+            parts = {part for number, part in orders if number == issue}
+            if parts in ({0}, {1, 3}, {1, 2, 3}):
+                continue
+            # An ongoing issue may only have its first part(s) available.
+            if issue == last_issue and parts in ({1}, {1, 2}):
+                continue
+            return None
+        return by_order[orders[episode_number - 1]]
 
     async def _fetch_vector_page(
         self,
