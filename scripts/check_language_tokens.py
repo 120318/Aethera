@@ -161,6 +161,8 @@ TOKEN_ALLOWLIST: dict[str, tuple[str, tuple[str, ...]]] = {
     "花絮": ("parser_token", ("backend/app/services/integration/danmu/providers/qq.py",)),
     "片花": ("parser_token", ("backend/app/services/integration/danmu/providers/qq.py",)),
     "彩蛋": ("parser_token", ("backend/app/services/integration/danmu/providers/qq.py",)),
+    "先导片": ("parser_token", ("backend/app/services/integration/danmu/providers/qq.py",)),
+    "加更": ("parser_token", ("backend/app/services/integration/danmu/providers/qq.py",)),
     "电影": ("parser_token", ("backend/app/clients/jackett.py",)),
     "电视剧": ("parser_token", ("backend/app/clients/jackett.py",)),
     "剧集": ("parser_token", ("backend/app/clients/jackett.py", "backend/tests/*")),

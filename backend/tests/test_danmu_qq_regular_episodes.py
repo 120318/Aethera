@@ -79,6 +79,22 @@ async def test_qq_counts_actual_regular_parts_without_assuming_two_per_issue(tit
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["title", "play_title", "union_title", "c_title_output"])
+@pytest.mark.parametrize("keyword", ["预告", "花絮", "片花", "彩蛋", "先导片", "加更"])
+@pytest.mark.parametrize("duration", ["3600", ""])
+async def test_qq_long_or_unknown_duration_extras_in_any_title_do_not_conflict_with_regular_video(field, keyword, duration):
+    extra = _card("第1期上：节目", "extra", duration=duration)
+    extra["params"][field] = f"第1期上：{keyword}"
+    cards = [extra, _card("第1期上：正文", "upper"), _card("第1期下：正文", "lower")]
+    provider = QQDanmuProvider()
+    with patch.object(provider, "_fetch_vector_page", AsyncMock(return_value=_season_page(cards))):
+        result = await provider._resolve_episode_vid_from_vector_page(
+            None, "season-4", 1, None, season_number=4,
+        )
+    assert result.video_id == "upper"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cards", [
     [_card("第2期上：正文", "v2")],
     [_card("第1期：正文", "v1"), _card("第3期：正文", "v3")],

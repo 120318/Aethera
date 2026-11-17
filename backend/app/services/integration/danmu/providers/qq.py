@@ -267,6 +267,12 @@ class QQDanmuProvider(BaseDanmuProvider):
         for item_map in items:
             if str(item_map.get("cid") or "") != cid or str(item_map.get("is_trailer") or "") == "1":
                 continue
+            item_title = " ".join(
+                str(item_map.get(key) or "")
+                for key in ("title", "play_title", "union_title", "c_title_output")
+            )
+            if any(keyword in item_title for keyword in ("预告", "花絮", "片花", "彩蛋", "先导片", "加更")):
+                continue
             video_id = str(item_map.get("vid") or "")
             duration = self._candidate_duration_seconds(item_map)
             if not video_id or (duration is not None and duration < 600):
