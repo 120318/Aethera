@@ -6,12 +6,12 @@ from urllib.parse import parse_qs
 from uuid import uuid4
 
 import httpx
-from pydantic import BaseModel
 
 from app.schemas.domain.vendor import Vendor
 from app.schemas.domain.media_types import MediaType
 from app.services.integration.danmu.base import BaseDanmuProvider
-from app.services.integration.danmu.models import DanmuFetchInput, DanmuFetchResult
+from app.services.integration.danmu.episode_matching import danmu_episode_matcher
+from app.services.integration.danmu.models import DanmuEpisodeCandidate, DanmuEpisodeMatch, DanmuFetchInput, DanmuFetchResult
 from app.services.integration.danmu.utils import first_query_value, parse_qq_json, parse_query_from_deeplink, vendor_text
 
 
@@ -19,17 +19,6 @@ from app.services.integration.danmu.utils import first_query_value, parse_qq_jso
 class _QQSegment:
     path: str
     start_seconds: float = 0.0
-
-
-class _QQRegularEpisode(BaseModel):
-    video_id: str
-    issue_number: int
-    part_number: int
-
-
-class _QQEpisodeMatch(BaseModel):
-    video_id: str | None = None
-    has_regular_episodes: bool = False
 
 
 class QQDanmuProvider(BaseDanmuProvider):
@@ -149,20 +138,17 @@ class QQDanmuProvider(BaseDanmuProvider):
                 if absolute_episode_number and absolute_episode_number != episode_number
                 else []
             )
-        regular_episodes = self._regular_episode_candidates(items, cid)
-        if regular_episodes:
+        legacy_candidates = self._episode_candidates(items, cid, allow_unscoped_numbered=True)
+        legacy_match = danmu_episode_matcher.select(legacy_candidates, episode_number)
+        if legacy_match.uses_issue_order:
             if not season_number or season_number <= 1:
-                regular_vid = self._regular_episode_vid(regular_episodes, episode_number)
-                if regular_vid:
-                    return regular_vid
+                if legacy_match.candidate:
+                    return legacy_match.candidate.external_id
             legacy_episode_numbers = []
         for candidate_episode_number in legacy_episode_numbers:
-            for item in items:
-                item_mapping: dict = item
-                item_vid = str(item_mapping.get("vid") or "")
-                item_title = str(item_mapping.get("title") or item_mapping.get("play_title") or "")
-                if item_vid and self._is_legacy_episode_candidate(item_mapping, candidate_episode_number):
-                    return item_vid
+            match = danmu_episode_matcher.select(legacy_candidates, candidate_episode_number)
+            if match.candidate:
+                return match.candidate.external_id
         vector_match = await self._resolve_episode_vid_from_vector_page(
             client,
             cid,
@@ -171,8 +157,8 @@ class QQDanmuProvider(BaseDanmuProvider):
             absolute_episode_number=absolute_episode_number,
             season_number=season_number,
         )
-        if vector_match.video_id or vector_match.has_regular_episodes or regular_episodes:
-            return vector_match.video_id
+        if vector_match.candidate or vector_match.uses_issue_order or legacy_match.uses_issue_order:
+            return vector_match.candidate.external_id if vector_match.candidate else None
         if not season_number or season_number <= 1:
             cover_vid = await self._resolve_episode_vid_from_cover_page(
                 client,
@@ -184,26 +170,7 @@ class QQDanmuProvider(BaseDanmuProvider):
             )
             if cover_vid:
                 return cover_vid
-        if episode_number == 1 and (not season_number or season_number <= 1):
-            return fallback_vid
         return None
-
-    def _is_legacy_episode_candidate(self, candidate: dict[str, str], episode_number: int) -> bool:
-        text = " ".join(
-            str(candidate.get(key) or "")
-            for key in ("title", "play_title", "union_title", "c_title_output")
-        )
-        if not text or any(keyword in text for keyword in ("预告", "花絮", "片花", "彩蛋")):
-            return False
-        if str(candidate.get("is_trailer") or "") == "1":
-            return False
-        duration_seconds = self._candidate_duration_seconds(candidate)
-        if duration_seconds is not None and duration_seconds < 600:
-            return False
-        title = str(candidate.get("title") or "").strip()
-        return (title.isdecimal() and int(title) == episode_number) or self._text_matches_episode_number(
-            text, episode_number
-        )
 
     async def _resolve_episode_vid_from_vector_page(
         self,
@@ -214,108 +181,52 @@ class QQDanmuProvider(BaseDanmuProvider):
         *,
         absolute_episode_number: int | None = None,
         season_number: int | None = None,
-    ) -> _QQEpisodeMatch:
+    ) -> DanmuEpisodeMatch:
         try:
             page_data = await self._fetch_vector_page(client, cid, fallback_vid)
             requested_cid = self._season_cid(page_data, season_number)
             if season_number and season_number > 1 and not requested_cid:
-                return _QQEpisodeMatch()
+                return DanmuEpisodeMatch()
             if requested_cid and requested_cid != cid:
                 page_data = await self._fetch_vector_page(client, requested_cid, None)
             else:
                 requested_cid = cid
         except (httpx.HTTPError, ValueError, TypeError):
-            return _QQEpisodeMatch()
+            return DanmuEpisodeMatch()
 
         candidates = self._collect_card_params(page_data)
-        regular_episodes = self._regular_episode_candidates(candidates, requested_cid)
-        if regular_episodes:
-            return _QQEpisodeMatch(
-                video_id=self._regular_episode_vid(regular_episodes, episode_number),
-                has_regular_episodes=True,
-            )
-        episode_numbers = [episode_number]
-        if absolute_episode_number and absolute_episode_number != episode_number:
-            episode_numbers.append(int(absolute_episode_number))
-        for candidate_episode_number in episode_numbers:
-            for item_mapping in candidates:
-                item_vid = str(item_mapping.get("vid") or "")
-                item_cid = str(item_mapping.get("cid") or "")
-                item_title = " ".join(
-                    str(item_mapping.get(key) or "")
-                    for key in ("title", "play_title", "union_title", "c_title_output")
-                )
-                title = str(item_mapping.get("title") or "").strip()
-                duration_seconds = self._candidate_duration_seconds(item_mapping)
-                has_short_duration = duration_seconds is not None and duration_seconds < 600
-                if (
-                    item_vid
-                    and str(item_mapping.get("is_trailer") or "") != "1"
-                    and item_cid == requested_cid
-                    and not any(keyword in item_title for keyword in ("预告", "花絮", "片花", "彩蛋"))
-                    and not has_short_duration
-                    and (
-                        (title.isdecimal() and int(title) == candidate_episode_number)
-                        or self._text_matches_episode_number(item_title, candidate_episode_number)
-                    )
-                ):
-                    return _QQEpisodeMatch(video_id=item_vid)
-        return _QQEpisodeMatch()
+        return danmu_episode_matcher.select(
+            self._episode_candidates(candidates, requested_cid),
+            episode_number,
+            absolute_episode_number=absolute_episode_number,
+        )
 
-    def _regular_episode_candidates(self, items: list, cid: str) -> list[_QQRegularEpisode]:
-        episodes: list[_QQRegularEpisode] = []
+    def _episode_candidates(
+        self,
+        items: list,
+        cid: str | None = None,
+        *,
+        allow_unscoped_numbered: bool = False,
+    ) -> list[DanmuEpisodeCandidate]:
+        episodes: list[DanmuEpisodeCandidate] = []
         for item_map in items:
-            if str(item_map.get("cid") or "") != cid or str(item_map.get("is_trailer") or "") == "1":
+            item_cid = str(item_map.get("cid") or "")
+            if cid is not None and item_cid != cid and (item_cid or not allow_unscoped_numbered):
                 continue
-            item_title = " ".join(
-                str(item_map.get(key) or "")
-                for key in ("title", "play_title", "union_title", "c_title_output")
-            )
-            if any(keyword in item_title for keyword in ("预告", "花絮", "片花", "彩蛋", "先导片", "加更")):
-                continue
-            video_id = str(item_map.get("vid") or "")
             duration = self._candidate_duration_seconds(item_map)
-            if not video_id or (duration is not None and duration < 600):
+            candidate = DanmuEpisodeCandidate(
+                external_id=str(item_map.get("vid") or ""),
+                titles=[str(item_map.get(key) or "") for key in (
+                    "title", "play_title", "union_title", "c_title_output", "unionTitle", "playTitle", "htmlTitle",
+                    "videoSubTitle", "video_subtitle",
+                )],
+                duration_seconds=duration,
+                excluded=str(item_map.get("is_trailer") or "") == "1" or (duration is not None and duration < 600),
+            )
+            if cid is not None and not item_cid and danmu_episode_matcher.has_issue_label(candidate):
                 continue
-            for key in ("title", "play_title", "union_title", "c_title_output"):
-                match = re.match(
-                    r"^第\s*([1-9]\d*)\s*期(?:\s*[（(]?\s*([上中下])\s*[）)]?)?\s*(?=[：:]|$)",
-                    str(item_map.get(key) or "").strip(),
-                )
-                if match:
-                    episodes.append(_QQRegularEpisode(
-                        video_id=video_id,
-                        issue_number=int(match.group(1)),
-                        part_number={None: 0, "上": 1, "中": 2, "下": 3}[match.group(2)],
-                    ))
-                    break
+            episodes.append(candidate)
         return episodes
-
-    def _regular_episode_vid(self, episodes: list[_QQRegularEpisode], episode_number: int) -> str | None:
-        # File episode numbers count regular videos, independently of issue labels.
-        by_order: dict[tuple[int, int], str] = {}
-        order_by_video: dict[str, tuple[int, int]] = {}
-        for episode in episodes:
-            order = (episode.issue_number, episode.part_number)
-            if order in by_order and by_order[order] != episode.video_id:
-                return None
-            if episode.video_id in order_by_video and order_by_video[episode.video_id] != order:
-                return None
-            by_order[order] = episode.video_id
-            order_by_video[episode.video_id] = order
-        orders = sorted(by_order)
-        if episode_number < 1 or episode_number > len(orders):
-            return None
-        last_issue = orders[-1][0]
-        for issue in range(1, last_issue + 1):
-            parts = {part for number, part in orders if number == issue}
-            if parts in ({0}, {1, 3}, {1, 2, 3}):
-                continue
-            # An ongoing issue may only have its first part(s) available.
-            if issue == last_issue and parts in ({1}, {1, 2}):
-                continue
-            return None
-        return by_order[orders[episode_number - 1]]
 
     async def _fetch_vector_page(
         self,
@@ -469,16 +380,26 @@ class QQDanmuProvider(BaseDanmuProvider):
         )
         response.raise_for_status()
         video_ids = self._extract_video_ids(response.text)
-        for candidate_episode_number in self._episode_number_candidates(
+        items = []
+        for video_id in video_ids:
+            try:
+                candidate = await self._fetch_video_page_candidate(client, cid, video_id)
+            except (httpx.HTTPError, ValueError, TypeError):
+                continue
+            candidate["vid"] = video_id
+            items.append(candidate)
+            match = danmu_episode_matcher.select(
+                self._episode_candidates(items), episode_number,
+                absolute_episode_number=absolute_episode_number,
+            )
+            if match.candidate and not match.uses_issue_order:
+                return match.candidate.external_id
+        match = danmu_episode_matcher.select(
+            self._episode_candidates(items),
             episode_number,
             absolute_episode_number=absolute_episode_number,
-            season_number=season_number,
-        ):
-            for video_id in video_ids:
-                candidate = await self._fetch_video_page_candidate(client, cid, video_id)
-                if self._is_episode_candidate(candidate, candidate_episode_number):
-                    return video_id
-        return None
+        )
+        return match.candidate.external_id if match.candidate else None
 
     def _extract_video_ids(self, html: str) -> list[str]:
         match = re.search(r"video_ids:\[(?P<values>.*?)\]", html or "")
@@ -506,39 +427,6 @@ class QQDanmuProvider(BaseDanmuProvider):
         if title_match:
             candidate["htmlTitle"] = title_match.group("value")
         return candidate
-
-    def _is_episode_candidate(self, candidate: dict[str, str], episode_number: int) -> bool:
-        text = " ".join(str(value or "") for value in candidate.values())
-        if not text:
-            return False
-        if any(keyword in text for keyword in ("预告", "花絮", "片花", "彩蛋")):
-            return False
-        if not self._candidate_matches_episode_number(candidate, episode_number):
-            return False
-        duration_seconds = self._candidate_duration_seconds(candidate)
-        return duration_seconds is None or duration_seconds >= 600
-
-    def _candidate_matches_episode_number(self, candidate: dict[str, str], episode_number: int) -> bool:
-        title = str(candidate.get("title") or "")
-        if title.isdecimal() and int(title) == episode_number:
-            return True
-        text = " ".join(str(candidate.get(key) or "") for key in ("unionTitle", "playTitle", "htmlTitle"))
-        return self._text_matches_episode_number(text, episode_number)
-
-    def _text_matches_episode_number(self, text: str, episode_number: int) -> bool:
-        if text.strip().isdecimal() and int(text.strip()) == episode_number:
-            return True
-        return any(
-            re.search(pattern, text) is not None
-            for pattern in (
-                rf"第0?{episode_number}集(?!\d)",
-                rf"第0?{episode_number}话(?!\d)",
-                rf"(?<!\d)0?{episode_number}集(?!\d)",
-                rf"(?<!\d)0?{episode_number}话(?!\d)",
-                rf"_{episode_number:02d}(?!\d)",
-                rf"_{episode_number}(?!\d)",
-            )
-        )
 
     def _candidate_duration_seconds(self, candidate: dict[str, str]) -> int | None:
         raw_value = candidate.get("duration")

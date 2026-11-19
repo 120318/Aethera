@@ -8,7 +8,8 @@ import httpx
 from app.schemas.domain.vendor import Vendor
 from app.schemas.domain.media_types import MediaType
 from app.services.integration.danmu.base import BaseDanmuProvider
-from app.services.integration.danmu.models import DanmuFetchInput, DanmuFetchResult
+from app.services.integration.danmu.episode_matching import danmu_episode_matcher
+from app.services.integration.danmu.models import DanmuEpisodeCandidate, DanmuFetchInput, DanmuFetchResult
 from app.services.integration.danmu.utils import parse_bilibili_xml, vendor_text
 
 
@@ -32,12 +33,10 @@ class BilibiliDanmuProvider(BaseDanmuProvider):
             data_mapping: dict = episodes_response.json()
             result_mapping: dict = data_mapping.get("result", {})
             episodes = result_mapping.get("episodes") or []
-            if request.episode_count and request.episode_number and len(episodes) != int(request.episode_count):
+            candidate = self._select_episode(episodes, ep_id, request)
+            if not candidate:
                 return None
-            candidate_mapping: dict | None = self._select_episode(episodes, ep_id, request)
-            if not candidate_mapping:
-                return None
-            cid = str(candidate_mapping.get("cid") or "")
+            cid = candidate.external_id
             if not cid:
                 return None
             danmu_response = await client.get("https://api.bilibili.com/x/v1/dm/list.so", params={"oid": cid})
@@ -47,33 +46,41 @@ class BilibiliDanmuProvider(BaseDanmuProvider):
                 provider=self.provider_id,
                 comments=comments,
                 source_id=cid,
-                source_duration_seconds=self._candidate_duration_seconds(candidate_mapping) or self._comments_duration_seconds(comments),
+                source_duration_seconds=candidate.duration_seconds or self._comments_duration_seconds(comments),
             )
 
-    def _select_episode(self, episodes: list, ep_id: str, request: DanmuFetchInput) -> dict | None:
+    def _select_episode(self, episodes: list, ep_id: str, request: DanmuFetchInput) -> DanmuEpisodeCandidate | None:
         if request.episode_number:
-            index = int(request.episode_number) - 1
-            if index < 0 or index >= len(episodes):
-                return None
-            episode_mapping: dict = episodes[index]
-            return episode_mapping
+            return danmu_episode_matcher.select(self._episode_candidates(episodes), request.episode_number).candidate
         if request.media_type != MediaType.movie:
             return None
         for item in episodes:
             item_mapping: dict = item
             if str(item_mapping.get("id") or item_mapping.get("ep_id") or "") == ep_id:
-                return item_mapping
+                return self._episode_candidates([item])[0]
         if len(episodes) == 1:
-            episode_mapping: dict = episodes[0]
-            return episode_mapping
+            return self._episode_candidates(episodes)[0]
         return None
+
+    def _episode_candidates(self, episodes: list) -> list[DanmuEpisodeCandidate]:
+        candidates: list[DanmuEpisodeCandidate] = []
+        use_numbered_order = all(str(episode_map.get("title") or "").isdecimal() for episode_map in episodes)
+        for index, episode_map in enumerate(episodes):
+            order = str(episode_map.get("title") or "")
+            candidates.append(DanmuEpisodeCandidate(
+                external_id=str(episode_map.get("cid") or ""),
+                titles=[str(episode_map.get(key) or "") for key in ("title", "long_title", "share_copy")],
+                sequence_index=int(order) if use_numbered_order else index + 1,
+                duration_seconds=self._candidate_duration_seconds(episode_map),
+            ))
+        return candidates
 
     def _extract_ep_id(self, url: str) -> str | None:
         match = re.search(r"/ep(\d+)", url)
         return match.group(1) if match else None
 
-    def _candidate_duration_seconds(self, candidate_mapping: Mapping[str, str]) -> float | None:
-        value = candidate_mapping.get("duration")
+    def _candidate_duration_seconds(self, candidate_map: Mapping[str, str]) -> float | None:
+        value = candidate_map.get("duration")
         try:
             duration = float(value or 0)
         except (TypeError, ValueError):

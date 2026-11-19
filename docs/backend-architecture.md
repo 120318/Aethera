@@ -120,6 +120,17 @@ Bad fits:
 - passing third-party payloads upward unchanged
 - depending on application or domain implementation details unless the boundary explicitly allows it
 
+Danmu episode selection uses one provider-independent matcher under
+`integration/danmu/episode_matching.py`. Provider adapters normalize their
+season-scoped catalogs into `DanmuEpisodeCandidate` models; they own HTTP,
+external IDs, explicit exclusion flags, and reliable source ordering keys.
+The matcher owns non-regular-content exclusion, deduplication, issue/part
+ordering, and selection of the Nth regular video. An authoritative catalog
+ordering key is distinct from a displayed or absolute episode number. Unordered
+catalogs need explicit episode or issue labels; they must not use traversal
+position as a substitute. The application workflow supplies the file's local
+episode number and keeps duration validation and artifact creation downstream.
+
 ### 3.4 `addons/`
 
 `app/addons` is the optional-capability assembly layer. It describes which optional capabilities exist, whether they are enabled, and which extension points they contribute. Extension points include events, scheduled tasks, commands, resource actions, artifact types, providers, and settings sections.

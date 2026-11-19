@@ -13,11 +13,19 @@ class DanmuComment(BaseModel):
 
 
 class DanmuEpisodeCandidate(BaseModel):
-    provider: str
+    """A provider video; sequence_index orders a catalog fetched from its beginning."""
+
+    external_id: str
+    titles: list[str] = Field(default_factory=list)
     episode_number: int | None = None
-    title: str = ""
-    duration_seconds: int | None = None
-    external_id: str = ""
+    sequence_index: int | None = None
+    duration_seconds: float | None = None
+    excluded: bool = False
+
+
+class DanmuEpisodeMatch(BaseModel):
+    candidate: DanmuEpisodeCandidate | None = None
+    uses_issue_order: bool = False
 
 
 class DanmuFetchInput(BaseModel):

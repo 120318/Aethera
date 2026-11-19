@@ -7,7 +7,8 @@ import httpx
 from app.schemas.domain.vendor import Vendor
 from app.schemas.domain.media_types import MediaType
 from app.services.integration.danmu.base import BaseDanmuProvider
-from app.services.integration.danmu.models import DanmuFetchInput, DanmuFetchResult
+from app.services.integration.danmu.episode_matching import danmu_episode_matcher
+from app.services.integration.danmu.models import DanmuEpisodeCandidate, DanmuFetchInput, DanmuFetchResult
 from app.services.integration.danmu.utils import parse_iqiyi_xml, vendor_text
 
 
@@ -46,26 +47,18 @@ class IqiyiDanmuProvider(BaseDanmuProvider):
             video_count = int(base_data_mapping.get("videoCount") or base_mapping.get("videoCount") or 0)
             if not album_id:
                 return None
-            if request.episode_count and video_count and video_count != int(request.episode_count):
-                return None
             list_response = await client.get(
                 "https://pcw-api.iqiyi.com/albums/album/avlistinfo",
-                params={"aid": album_id, "page": 1, "size": request.episode_count or video_count or 100},
+                params={"aid": album_id, "page": 1, "size": max(request.episode_count or 0, video_count, 100)},
             )
             list_response.raise_for_status()
             list_mapping: dict = list_response.json()
             list_data_mapping: dict = list_mapping.get("data", {})
             items = list_data_mapping.get("epsodelist") or []
-            target = None
-            for item in items:
-                item_mapping: dict = item
-                if int(item_mapping.get("order") or 0) == int(request.episode_number):
-                    target = item_mapping
-                    break
+            target = danmu_episode_matcher.select(self._episode_candidates(items), request.episode_number).candidate
             if not target:
                 return None
-            target_mapping: dict = target
-            target_tv_id = str(target_mapping.get("tvId") or "")
+            target_tv_id = target.external_id
             if not target_tv_id:
                 return None
             comments = await self._fetch_segments(client, target_tv_id)
@@ -75,6 +68,21 @@ class IqiyiDanmuProvider(BaseDanmuProvider):
                 source_id=target_tv_id,
                 source_duration_seconds=self._comments_duration_seconds(comments),
             )
+
+    def _episode_candidates(self, items: list) -> list[DanmuEpisodeCandidate]:
+        candidates: list[DanmuEpisodeCandidate] = []
+        use_numbered_order = all(
+            str(item_map.get("order") or "").isdecimal() and int(item_map["order"]) > 0
+            for item_map in items
+        )
+        for index, item_map in enumerate(items):
+            order = str(item_map.get("order") or "")
+            candidates.append(DanmuEpisodeCandidate(
+                external_id=str(item_map.get("tvId") or ""),
+                titles=[str(item_map.get(key) or "") for key in ("name", "subtitle", "shortTitle", "orderName")],
+                sequence_index=int(order) if use_numbered_order else index + 1,
+            ))
+        return candidates
 
     def _extract_page_id(self, url: str) -> str | None:
         match = re.search(r"/[vwp]_([^/?#]+)\.html", url)
