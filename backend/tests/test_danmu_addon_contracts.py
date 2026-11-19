@@ -31,12 +31,19 @@ from app.services.application.workflows.danmu.duration_guard import danmu_durati
 from app.services.application.workflows.danmu.formatters import build_ass, build_xml
 from app.services.application.workflows.danmu.sidecar_outputs import remove_outputs, sidecar_path
 from app.services.integration.danmu.models import DanmuComment, DanmuFetchInput, DanmuFetchResult
+from app.services.integration.danmu.episode_matching import danmu_episode_matcher
 from app.services.integration.danmu.providers.bilibili import BilibiliDanmuProvider
 from app.services.integration.danmu.providers.iqiyi import IqiyiDanmuProvider
 from app.services.integration.danmu.providers.qq import QQDanmuProvider
 from app.services.integration.danmu.providers.youku import YoukuDanmuProvider
 from app.services.integration.danmu.service import DanmuProviderService
 from app.services.integration.danmu.utils import extract_youku_show_id, parse_qq_json
+
+
+def _qq_candidate_matches(candidate, episode_number):
+    item = {**candidate, "vid": "episode"}
+    candidates = QQDanmuProvider()._episode_candidates([item])
+    return danmu_episode_matcher.select(candidates, episode_number).candidate is not None
 
 
 class TestDanmuAddonContracts(unittest.TestCase):
@@ -378,7 +385,7 @@ class TestDanmuAddonContracts(unittest.TestCase):
         provider = QQDanmuProvider()
 
         self.assertFalse(
-            provider._is_episode_candidate(
+            _qq_candidate_matches(
                 {
                     "title": "3",
                     "unionTitle": "text_03",
@@ -389,7 +396,7 @@ class TestDanmuAddonContracts(unittest.TestCase):
             )
         )
         self.assertTrue(
-            provider._is_episode_candidate(
+            _qq_candidate_matches(
                 {
                     "title": "3",
                     "unionTitle": "text_03",
@@ -403,9 +410,9 @@ class TestDanmuAddonContracts(unittest.TestCase):
     def test_qq_candidate_matches_common_chinese_episode_titles(self):
         provider = QQDanmuProvider()
 
-        self.assertTrue(provider._text_matches_episode_number("第01集", 1))
-        self.assertTrue(provider._text_matches_episode_number("第1集", 1))
-        self.assertTrue(provider._text_matches_episode_number("第01话", 1))
+        self.assertTrue(_qq_candidate_matches({"title": "第01集"}, 1))
+        self.assertTrue(_qq_candidate_matches({"title": "第1集"}, 1))
+        self.assertTrue(_qq_candidate_matches({"title": "第01话"}, 1))
 
     def test_youku_danmu_parser_uses_text_field_when_content_missing(self):
         class FakeResponse:
@@ -838,15 +845,15 @@ class TestDanmuAddonContracts(unittest.TestCase):
         provider = QQDanmuProvider()
         self.assertIsNone(provider._candidate_duration_seconds({"duration": None}))
         self.assertIsNone(provider._candidate_duration_seconds({"duration": "unknown"}))
-        self.assertTrue(provider._is_episode_candidate({"title": "1", "duration": None}, 1))
+        self.assertTrue(_qq_candidate_matches({"title": "1", "duration": None}, 1))
 
     def test_qq_episode_matching_allows_non_padded_underscore_number(self):
         provider = QQDanmuProvider()
-        self.assertTrue(provider._text_matches_episode_number("Show2_1", 1))
+        self.assertTrue(_qq_candidate_matches({"title": "Show2_1"}, 1))
 
     def test_qq_vector_numeric_unicode_title_does_not_raise(self):
         provider = QQDanmuProvider()
-        self.assertFalse(provider._text_matches_episode_number("①", 1))
+        self.assertFalse(_qq_candidate_matches({"title": "①"}, 1))
 
     def test_qq_episode_vid_does_not_reuse_first_season_fallback(self):
         class FakeResponse:
@@ -921,7 +928,7 @@ class TestDanmuAddonContracts(unittest.TestCase):
 
         selected = provider._select_episode([{"id": 3561185, "cid": "cid-1"}], "3561185", request)
 
-        self.assertEqual("cid-1", selected["cid"])
+        self.assertEqual("cid-1", selected.external_id)
 
     def test_youku_movie_uses_direct_video_id_without_episode_number(self):
         provider = YoukuDanmuProvider()

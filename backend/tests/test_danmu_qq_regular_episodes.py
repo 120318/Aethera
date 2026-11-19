@@ -51,11 +51,11 @@ async def test_qq_regular_video_ordinals_ignore_extras_order_and_duplicates():
                 None, "season-4", ordinal, "intro",
                 absolute_episode_number=ordinal + 70, season_number=4,
             )
-            assert result.video_id == card["params"]["vid"]
+            assert result.candidate.external_id == card["params"]["vid"]
         result = await provider._resolve_episode_vid_from_vector_page(
             None, "season-4", 13, "intro", absolute_episode_number=83, season_number=4,
         )
-        assert result.video_id is None
+        assert result.candidate is None
         assert result.has_regular_episodes
 
 
@@ -75,7 +75,7 @@ async def test_qq_counts_actual_regular_parts_without_assuming_two_per_issue(tit
             result = await provider._resolve_episode_vid_from_vector_page(
                 None, "season-4", ordinal, None, season_number=4,
             )
-            assert result.video_id == video_id
+            assert result.candidate.external_id == video_id
 
 
 @pytest.mark.asyncio
@@ -91,7 +91,7 @@ async def test_qq_long_or_unknown_duration_extras_in_any_title_do_not_conflict_w
         result = await provider._resolve_episode_vid_from_vector_page(
             None, "season-4", 1, None, season_number=4,
         )
-    assert result.video_id == "upper"
+    assert result.candidate.external_id == "upper"
 
 
 @pytest.mark.asyncio
@@ -110,7 +110,7 @@ async def test_qq_does_not_renumber_incomplete_or_ambiguous_regular_lists(cards)
         result = await provider._resolve_episode_vid_from_vector_page(
             None, "season-4", 1, None, season_number=4,
         )
-        assert result.video_id is None
+        assert result.candidate is None
         assert result.has_regular_episodes
 
 
@@ -162,4 +162,17 @@ async def test_qq_later_season_regular_videos_require_verified_season_cid():
     with patch.object(provider, "_fetch_vector_page", AsyncMock(return_value={"cards": []})):
         assert await provider._resolve_episode_vid(
             _legacy_client(legacy), "season-4", 1, "intro", absolute_episode_number=71, season_number=4,
+        ) is None
+
+
+@pytest.mark.asyncio
+async def test_qq_catalog_with_only_extras_does_not_reuse_an_unverified_intro():
+    provider = QQDanmuProvider()
+    cards = [_card("先导片上：出发", "intro")]
+    with (
+        patch.object(provider, "_fetch_vector_page", AsyncMock(return_value=_season_page(cards))),
+        patch.object(provider, "_resolve_episode_vid_from_cover_page", AsyncMock(return_value=None)),
+    ):
+        assert await provider._resolve_episode_vid(
+            _legacy_client({}), "season-4", 1, "intro", season_number=1,
         ) is None

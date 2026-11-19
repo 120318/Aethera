@@ -10,7 +10,8 @@ import httpx
 from app.schemas.domain.vendor import Vendor
 from app.schemas.domain.media_types import MediaType
 from app.services.integration.danmu.base import BaseDanmuProvider
-from app.services.integration.danmu.models import DanmuComment, DanmuFetchInput, DanmuFetchResult
+from app.services.integration.danmu.episode_matching import danmu_episode_matcher
+from app.services.integration.danmu.models import DanmuComment, DanmuEpisodeCandidate, DanmuFetchInput, DanmuFetchResult
 from app.services.integration.danmu.utils import extract_youku_show_id, extract_youku_video_id, vendor_text
 
 
@@ -86,17 +87,25 @@ class YoukuDanmuProvider(BaseDanmuProvider):
                 "ext": "show",
                 "show_id": show_id,
                 "page": 1,
-                "count": request.episode_count or 100,
+                "count": max(request.episode_count or 0, 100),
             },
         )
         response.raise_for_status()
         response_mapping: dict = response.json()
         videos = response_mapping.get("videos") or []
-        index = int(request.episode_number or 0) - 1
-        if index < 0 or index >= len(videos):
-            return None
-        video_mapping: dict = videos[index]
-        return str(video_mapping.get("id") or video_mapping.get("video_id") or "")
+        match = danmu_episode_matcher.select(self._episode_candidates(videos), int(request.episode_number or 0))
+        return match.candidate.external_id if match.candidate else None
+
+    def _episode_candidates(self, videos: list) -> list[DanmuEpisodeCandidate]:
+        candidates: list[DanmuEpisodeCandidate] = []
+        for index, video_map in enumerate(videos):
+            order = str(video_map.get("seq") or "")
+            candidates.append(DanmuEpisodeCandidate(
+                external_id=str(video_map.get("id") or video_map.get("video_id") or ""),
+                titles=[str(video_map.get(key) or "") for key in ("title", "subtitle")],
+                sequence_index=int(order) if order.isdecimal() and int(order) > 0 else index + 1,
+            ))
+        return candidates
 
     async def _fetch_danmu(self, client: httpx.AsyncClient, video_id: str) -> list[DanmuComment]:
         token = await self._ensure_mtop_token(client, video_id)
