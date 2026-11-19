@@ -98,12 +98,16 @@ class YoukuDanmuProvider(BaseDanmuProvider):
 
     def _episode_candidates(self, videos: list) -> list[DanmuEpisodeCandidate]:
         candidates: list[DanmuEpisodeCandidate] = []
+        use_numbered_order = all(
+            str(video_map.get("seq") or "").isdecimal() and int(video_map["seq"]) > 0
+            for video_map in videos
+        )
         for index, video_map in enumerate(videos):
             order = str(video_map.get("seq") or "")
             candidates.append(DanmuEpisodeCandidate(
                 external_id=str(video_map.get("id") or video_map.get("video_id") or ""),
                 titles=[str(video_map.get(key) or "") for key in ("title", "subtitle")],
-                sequence_index=int(order) if order.isdecimal() and int(order) > 0 else index + 1,
+                sequence_index=int(order) if use_numbered_order else index + 1,
             ))
         return candidates
 

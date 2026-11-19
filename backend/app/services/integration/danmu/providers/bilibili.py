@@ -64,12 +64,13 @@ class BilibiliDanmuProvider(BaseDanmuProvider):
 
     def _episode_candidates(self, episodes: list) -> list[DanmuEpisodeCandidate]:
         candidates: list[DanmuEpisodeCandidate] = []
+        use_numbered_order = all(str(episode_map.get("title") or "").isdecimal() for episode_map in episodes)
         for index, episode_map in enumerate(episodes):
             order = str(episode_map.get("title") or "")
             candidates.append(DanmuEpisodeCandidate(
                 external_id=str(episode_map.get("cid") or ""),
                 titles=[str(episode_map.get(key) or "") for key in ("title", "long_title", "share_copy")],
-                sequence_index=int(order) if order.isdecimal() else index + 1,
+                sequence_index=int(order) if use_numbered_order else index + 1,
                 duration_seconds=self._candidate_duration_seconds(episode_map),
             ))
         return candidates

@@ -56,7 +56,7 @@ async def test_qq_regular_video_ordinals_ignore_extras_order_and_duplicates():
             None, "season-4", 13, "intro", absolute_episode_number=83, season_number=4,
         )
         assert result.candidate is None
-        assert result.has_regular_episodes
+        assert result.uses_issue_order
 
 
 @pytest.mark.asyncio
@@ -79,7 +79,9 @@ async def test_qq_counts_actual_regular_parts_without_assuming_two_per_issue(tit
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["title", "play_title", "union_title", "c_title_output"])
+@pytest.mark.parametrize("field", [
+    "title", "play_title", "union_title", "c_title_output", "unionTitle", "playTitle", "htmlTitle", "videoSubTitle", "video_subtitle",
+])
 @pytest.mark.parametrize("keyword", ["预告", "花絮", "片花", "彩蛋", "先导片", "加更"])
 @pytest.mark.parametrize("duration", ["3600", ""])
 async def test_qq_long_or_unknown_duration_extras_in_any_title_do_not_conflict_with_regular_video(field, keyword, duration):
@@ -111,7 +113,7 @@ async def test_qq_does_not_renumber_incomplete_or_ambiguous_regular_lists(cards)
             None, "season-4", 1, None, season_number=4,
         )
         assert result.candidate is None
-        assert result.has_regular_episodes
+        assert result.uses_issue_order
 
 
 @pytest.mark.asyncio
@@ -248,3 +250,34 @@ async def test_qq_cover_variety_match_collects_regular_parts_despite_an_unrelate
     ])) as fetch:
         assert await provider._resolve_episode_vid_from_cover_page(client, "album", 2, "intro") == "lower"
     assert fetch.await_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("season_number", [None, 1])
+async def test_qq_partial_numbered_vector_catalog_still_uses_verified_cover_fallback(season_number):
+    provider = QQDanmuProvider()
+    cards = [_card("第1集", "first")]
+    with (
+        patch.object(provider, "_fetch_vector_page", AsyncMock(return_value=_season_page(cards))),
+        patch.object(provider, "_resolve_episode_vid_from_cover_page", AsyncMock(return_value="cover-third")) as cover,
+    ):
+        assert await provider._resolve_episode_vid(
+            _legacy_client({}), "season-4", 3, "intro", season_number=season_number,
+        ) == "cover-third"
+    cover.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keyword", ["花絮", "彩蛋"])
+@pytest.mark.parametrize("duration", ["3600", ""])
+async def test_qq_cover_subtitle_alone_can_exclude_a_non_regular_video(keyword, duration):
+    response = httpx.Response(
+        200, text='video_ids:["extra","regular"]', request=httpx.Request("GET", "https://example.test/cover"),
+    )
+    client = SimpleNamespace(get=AsyncMock(return_value=response))
+    provider = QQDanmuProvider()
+    with patch.object(provider, "_fetch_video_page_candidate", AsyncMock(side_effect=[
+        {"title": "第1集", "videoSubTitle": keyword, "duration": duration},
+        {"title": "第1集", "duration": "3600"},
+    ])):
+        assert await provider._resolve_episode_vid_from_cover_page(client, "album", 1, "intro") == "regular"

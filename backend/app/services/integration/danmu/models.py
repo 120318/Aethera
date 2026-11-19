@@ -25,7 +25,6 @@ class DanmuEpisodeCandidate(BaseModel):
 
 class DanmuEpisodeMatch(BaseModel):
     candidate: DanmuEpisodeCandidate | None = None
-    has_regular_episodes: bool = False
     uses_issue_order: bool = False
 
 

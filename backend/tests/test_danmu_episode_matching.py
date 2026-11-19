@@ -156,6 +156,34 @@ async def test_ordered_providers_filter_extras_before_counting_videos_without_is
     assert result.source_id == "second"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("episode", [1, 2, 3])
+async def test_bilibili_mixed_numeric_titles_use_one_catalog_ordering_basis(episode):
+    cards = [
+        {"id": 1, "cid": "first", "title": "1", "long_title": "Opening"},
+        {"id": 2, "cid": "middle", "title": "1.5", "long_title": "Journey"},
+        {"id": 3, "cid": "last", "title": "2", "long_title": "Ending"},
+    ]
+    result = await _fetch("bilibili", cards, episode, 3)
+    assert result is not None
+    assert result.source_id == ["first", "middle", "last"][episode - 1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform,order_field", [("iqiyi", "order"), ("youku", "seq")])
+async def test_partial_native_order_metadata_does_not_mix_with_list_positions(platform, order_field):
+    cards = [
+        _platform_card(platform, "first", "Opening", 2),
+        _platform_card(platform, "middle", "Journey", 3),
+        _platform_card(platform, "last", "Ending", 4),
+    ]
+    cards[1].pop(order_field)
+    for episode, video_id in enumerate(["first", "middle", "last"], 1):
+        result = await _fetch(platform, cards, episode, 3)
+        assert result is not None
+        assert result.source_id == video_id
+
+
 def test_numbered_catalog_keeps_episode_identity_when_earlier_episodes_are_missing():
     candidates = [DanmuEpisodeCandidate(external_id="third", titles=["第3集"])]
     matcher = DanmuEpisodeMatcher()

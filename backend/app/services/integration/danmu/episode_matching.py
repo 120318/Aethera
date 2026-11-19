@@ -33,7 +33,6 @@ class DanmuEpisodeMatcher:
         if issues:
             return DanmuEpisodeMatch(
                 candidate=self._select_issue_episode(issues, episode_number),
-                has_regular_episodes=True,
                 uses_issue_order=True,
             )
         if regular and all(candidate.sequence_index is not None for candidate in regular):
@@ -44,7 +43,7 @@ class DanmuEpisodeMatcher:
             number = self._episode_number(candidate)
             if number is not None:
                 if candidate.external_id in number_by_video and number_by_video[candidate.external_id] != number:
-                    return DanmuEpisodeMatch(has_regular_episodes=True)
+                    return DanmuEpisodeMatch()
                 number_by_video[candidate.external_id] = number
                 numbered.setdefault(number, []).append(candidate)
         if numbered:
@@ -54,9 +53,8 @@ class DanmuEpisodeMatcher:
                 matches = {candidate.external_id: candidate for candidate in numbered[number]}
                 return DanmuEpisodeMatch(
                     candidate=next(iter(matches.values())) if len(matches) == 1 else None,
-                    has_regular_episodes=True,
                 )
-            return DanmuEpisodeMatch(has_regular_episodes=True)
+            return DanmuEpisodeMatch()
         return self._select_ordered_episode(regular, episode_number)
 
     def _is_regular(self, candidate: DanmuEpisodeCandidate) -> bool:
@@ -125,10 +123,9 @@ class DanmuEpisodeMatcher:
                 by_video[candidate.external_id] = candidate
         ordered = sorted(by_video.values(), key=lambda candidate: candidate.sequence_index)
         if len({candidate.sequence_index for candidate in ordered}) != len(ordered):
-            return DanmuEpisodeMatch(has_regular_episodes=True)
+            return DanmuEpisodeMatch()
         return DanmuEpisodeMatch(
             candidate=ordered[episode_number - 1] if 1 <= episode_number <= len(ordered) else None,
-            has_regular_episodes=True,
         )
 
 

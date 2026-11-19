@@ -157,7 +157,7 @@ class QQDanmuProvider(BaseDanmuProvider):
             absolute_episode_number=absolute_episode_number,
             season_number=season_number,
         )
-        if vector_match.candidate or vector_match.has_regular_episodes or legacy_match.uses_issue_order:
+        if vector_match.candidate or vector_match.uses_issue_order or legacy_match.uses_issue_order:
             return vector_match.candidate.external_id if vector_match.candidate else None
         if not season_number or season_number <= 1:
             cover_vid = await self._resolve_episode_vid_from_cover_page(
@@ -218,6 +218,7 @@ class QQDanmuProvider(BaseDanmuProvider):
                 external_id=str(item_map.get("vid") or ""),
                 titles=[str(item_map.get(key) or "") for key in (
                     "title", "play_title", "union_title", "c_title_output", "unionTitle", "playTitle", "htmlTitle",
+                    "videoSubTitle", "video_subtitle",
                 )],
                 duration_seconds=duration,
                 excluded=str(item_map.get("is_trailer") or "") == "1" or (duration is not None and duration < 600),

@@ -71,12 +71,16 @@ class IqiyiDanmuProvider(BaseDanmuProvider):
 
     def _episode_candidates(self, items: list) -> list[DanmuEpisodeCandidate]:
         candidates: list[DanmuEpisodeCandidate] = []
+        use_numbered_order = all(
+            str(item_map.get("order") or "").isdecimal() and int(item_map["order"]) > 0
+            for item_map in items
+        )
         for index, item_map in enumerate(items):
             order = str(item_map.get("order") or "")
             candidates.append(DanmuEpisodeCandidate(
                 external_id=str(item_map.get("tvId") or ""),
                 titles=[str(item_map.get(key) or "") for key in ("name", "subtitle", "shortTitle", "orderName")],
-                sequence_index=int(order) if order.isdecimal() and int(order) > 0 else index + 1,
+                sequence_index=int(order) if use_numbered_order else index + 1,
             ))
         return candidates
 
