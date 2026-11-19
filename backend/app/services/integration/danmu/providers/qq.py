@@ -138,7 +138,7 @@ class QQDanmuProvider(BaseDanmuProvider):
                 if absolute_episode_number and absolute_episode_number != episode_number
                 else []
             )
-        legacy_candidates = self._episode_candidates(items)
+        legacy_candidates = self._episode_candidates(items, cid, allow_unscoped_numbered=True)
         legacy_match = danmu_episode_matcher.select(legacy_candidates, episode_number)
         if legacy_match.uses_issue_order:
             if not season_number or season_number <= 1:
@@ -201,20 +201,30 @@ class QQDanmuProvider(BaseDanmuProvider):
             absolute_episode_number=absolute_episode_number,
         )
 
-    def _episode_candidates(self, items: list, cid: str | None = None) -> list[DanmuEpisodeCandidate]:
+    def _episode_candidates(
+        self,
+        items: list,
+        cid: str | None = None,
+        *,
+        allow_unscoped_numbered: bool = False,
+    ) -> list[DanmuEpisodeCandidate]:
         episodes: list[DanmuEpisodeCandidate] = []
         for item_map in items:
-            if cid is not None and str(item_map.get("cid") or "") != cid:
+            item_cid = str(item_map.get("cid") or "")
+            if cid is not None and item_cid != cid and (item_cid or not allow_unscoped_numbered):
                 continue
             duration = self._candidate_duration_seconds(item_map)
-            episodes.append(DanmuEpisodeCandidate(
+            candidate = DanmuEpisodeCandidate(
                 external_id=str(item_map.get("vid") or ""),
                 titles=[str(item_map.get(key) or "") for key in (
                     "title", "play_title", "union_title", "c_title_output", "unionTitle", "playTitle", "htmlTitle",
                 )],
                 duration_seconds=duration,
                 excluded=str(item_map.get("is_trailer") or "") == "1" or (duration is not None and duration < 600),
-            ))
+            )
+            if cid is not None and not item_cid and danmu_episode_matcher.has_issue_label(candidate):
+                continue
+            episodes.append(candidate)
         return episodes
 
     async def _fetch_vector_page(
@@ -371,9 +381,18 @@ class QQDanmuProvider(BaseDanmuProvider):
         video_ids = self._extract_video_ids(response.text)
         items = []
         for video_id in video_ids:
-            candidate = await self._fetch_video_page_candidate(client, cid, video_id)
+            try:
+                candidate = await self._fetch_video_page_candidate(client, cid, video_id)
+            except (httpx.HTTPError, ValueError, TypeError):
+                continue
             candidate["vid"] = video_id
             items.append(candidate)
+            match = danmu_episode_matcher.select(
+                self._episode_candidates(items), episode_number,
+                absolute_episode_number=absolute_episode_number,
+            )
+            if match.candidate and not match.uses_issue_order:
+                return match.candidate.external_id
         match = danmu_episode_matcher.select(
             self._episode_candidates(items),
             episode_number,

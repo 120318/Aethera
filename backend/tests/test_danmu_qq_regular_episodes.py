@@ -176,3 +176,75 @@ async def test_qq_catalog_with_only_extras_does_not_reuse_an_unverified_intro():
         assert await provider._resolve_episode_vid(
             _legacy_client({}), "season-4", 1, "intro", season_number=1,
         ) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("foreign_cid", ["other-album", ""])
+@pytest.mark.parametrize("include_target", [False, True])
+async def test_qq_legacy_issue_sequence_only_uses_videos_verified_in_the_target_album(foreign_cid, include_target):
+    items = [
+        {"item_params": _card("第1期上：正文", "foreign-upper", cid=foreign_cid)["params"]},
+        {"item_params": _card("第1期下：正文", "foreign-lower", cid=foreign_cid)["params"]},
+    ]
+    if include_target:
+        items.extend([
+            {"item_params": _card("第1期上：正文", "target-upper")["params"]},
+            {"item_params": _card("第1期下：正文", "target-lower")["params"]},
+        ])
+    provider = QQDanmuProvider()
+    with (
+        patch.object(provider, "_fetch_vector_page", AsyncMock(return_value={})),
+        patch.object(provider, "_resolve_episode_vid_from_cover_page", AsyncMock(return_value=None)),
+    ):
+        result = await provider._resolve_episode_vid(
+            _legacy_client({"items": items}), "season-4", 1, "intro", season_number=1,
+        )
+    assert result == ("target-upper" if include_target else None)
+
+
+@pytest.mark.asyncio
+async def test_qq_legacy_numbered_candidates_allow_missing_cid_but_exclude_foreign_albums():
+    unscoped = _card("第3集", "unscoped")["params"]
+    unscoped.pop("cid")
+    items = [
+        {"item_params": _card("第3集", "foreign", cid="other-album")["params"]},
+        {"item_params": unscoped},
+    ]
+    assert await QQDanmuProvider()._resolve_episode_vid(
+        _legacy_client({"items": items}), "season-4", 3, "intro",
+    ) == "unscoped"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target_first", [False, True])
+@pytest.mark.parametrize("error", [httpx.ReadTimeout("unrelated page"), httpx.HTTPError("unrelated page")])
+async def test_qq_cover_numbered_match_is_independent_of_unrelated_page_failures(target_first, error):
+    ids = ["target", "broken"] if target_first else ["broken", "target"]
+    response = httpx.Response(
+        200, text='video_ids:[' + ','.join(f'"{vid}"' for vid in ids) + ']',
+        request=httpx.Request("GET", "https://example.test/cover"),
+    )
+    client = SimpleNamespace(get=AsyncMock(return_value=response))
+    target = {"title": "第1集", "duration": "3600"}
+    results = [target, error] if target_first else [error, target]
+    provider = QQDanmuProvider()
+    with patch.object(provider, "_fetch_video_page_candidate", AsyncMock(side_effect=results)) as fetch:
+        assert await provider._resolve_episode_vid_from_cover_page(client, "album", 1, "intro") == "target"
+    assert fetch.await_count == (1 if target_first else 2)
+
+
+@pytest.mark.asyncio
+async def test_qq_cover_variety_match_collects_regular_parts_despite_an_unrelated_page_failure():
+    response = httpx.Response(
+        200, text='video_ids:["broken","upper","lower"]',
+        request=httpx.Request("GET", "https://example.test/cover"),
+    )
+    client = SimpleNamespace(get=AsyncMock(return_value=response))
+    provider = QQDanmuProvider()
+    with patch.object(provider, "_fetch_video_page_candidate", AsyncMock(side_effect=[
+        httpx.ReadTimeout("unrelated page"),
+        {"title": "第1期上：正文", "duration": "3600"},
+        {"title": "第1期下：正文", "duration": "3600"},
+    ])) as fetch:
+        assert await provider._resolve_episode_vid_from_cover_page(client, "album", 2, "intro") == "lower"
+    assert fetch.await_count == 3

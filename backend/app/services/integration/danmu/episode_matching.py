@@ -16,6 +16,9 @@ class _IssueEpisode(BaseModel):
 class DanmuEpisodeMatcher:
     """Select a regular video from a normalized, season-scoped provider catalog."""
 
+    def has_issue_label(self, candidate: DanmuEpisodeCandidate) -> bool:
+        return self._issue_episode(candidate) is not None
+
     def select(
         self,
         candidates: list[DanmuEpisodeCandidate],
